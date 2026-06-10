@@ -7,9 +7,9 @@ edition = "2024"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 glam = "0.33.1"
 iced = "0.14.0"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
 
-# Texture decoding is too slow unoptimized: the day albedo alone is 33 MP.
+# Texture decoding is too slow unoptimized: every earth map is 33 MP.
 [profile.dev.package.image]
 opt-level = 3
 
@@ -17,4 +17,13 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.tiff]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.weezl]
 opt-level = 3

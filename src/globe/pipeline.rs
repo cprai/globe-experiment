@@ -123,17 +123,35 @@ impl shader::Pipeline for Pipeline {
             mapped_at_creation: false,
         });
 
-        let day_view = upload_jpeg(
+        // Color maps are sRGB; the normal and specular maps are data and
+        // must stay linear.
+        let day_view = upload_texture(
             device,
             queue,
             "earth day texture",
             include_bytes!("../../assets/earth_albedo_day.jpg"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
         );
-        let night_view = upload_jpeg(
+        let night_view = upload_texture(
             device,
             queue,
             "earth night texture",
             include_bytes!("../../assets/earth_albedo_night.jpg"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let normal_view = upload_texture(
+            device,
+            queue,
+            "earth normal texture",
+            include_bytes!("../../assets/earth_normal.tif"),
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        let specular_view = upload_texture(
+            device,
+            queue,
+            "earth specular texture",
+            include_bytes!("../../assets/earth_specular.tif"),
+            wgpu::TextureFormat::Rgba8Unorm,
         );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -193,6 +211,30 @@ impl shader::Pipeline for Pipeline {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -217,6 +259,18 @@ impl shader::Pipeline for Pipeline {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(
                         &night_view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        &normal_view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(
+                        &specular_view,
                     ),
                 },
             ],
@@ -278,11 +332,12 @@ impl shader::Pipeline for Pipeline {
     }
 }
 
-fn upload_jpeg(
+fn upload_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
     bytes: &[u8],
+    format: wgpu::TextureFormat,
 ) -> wgpu::TextureView {
     let image = image::load_from_memory(bytes)
         .unwrap_or_else(|error| panic!("decode {label}: {error}"))
@@ -300,7 +355,7 @@ fn upload_jpeg(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         },
