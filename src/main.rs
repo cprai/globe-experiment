@@ -16,6 +16,7 @@ struct App {
 enum Message {
     Globe(Interaction),
     SunLatitude(f32),
+    SunLongitude(f32),
 }
 
 fn main() -> iced::Result {
@@ -32,6 +33,7 @@ fn update(state: &mut App, message: Message) {
             Interaction::Tilt { degrees } => state.camera.tilt_by(degrees),
         },
         Message::SunLatitude(latitude) => state.sun.latitude = latitude,
+        Message::SunLongitude(longitude) => state.sun.longitude = longitude,
     }
 }
 
@@ -43,13 +45,22 @@ fn view(state: &App) -> Element<'_, Message> {
     )
     .map(Message::Globe);
 
-    // Solar declination spans ±23.44° over the year.
+    // Solar declination spans ±23.44° over the year; the subsolar
+    // longitude sweeps the full globe over a day.
     let sun_control = container(
         column![
             text(format!("Sun latitude: {:.1}°", state.sun.latitude))
                 .color(Color::WHITE),
             slider(-23.44..=23.44, state.sun.latitude, Message::SunLatitude)
                 .step(0.1),
+            text(format!("Sun longitude: {:.1}°", state.sun.longitude))
+                .color(Color::WHITE),
+            slider(
+                -180.0..=180.0,
+                state.sun.longitude,
+                Message::SunLongitude,
+            )
+            .step(0.5),
         ]
         .spacing(5)
         .width(260),
