@@ -35,7 +35,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 const DAY_AMBIENT: f32 = 0.04;
 const ATMOSPHERE_COLOR: vec3<f32> = vec3<f32>(0.3, 0.55, 1.0);
 // How strongly the normal map perturbs the geometric normal.
-const NORMAL_STRENGTH: f32 = 1.2;
+// 1.0 is the map's face value; higher exaggerates the terrain relief
+// (deliberately past photorealism).
+const NORMAL_STRENGTH: f32 = 4.5;
 // Roughness for rough land and smooth ocean; the specular map blends
 // between them.
 const LAND_ROUGHNESS: f32 = 0.9;
