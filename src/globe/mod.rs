@@ -1,12 +1,14 @@
 pub mod camera;
 mod mesh;
 mod pipeline;
+pub mod sun;
 
 use iced::time::Instant;
 use iced::widget::shader::{self, Action};
 use iced::{Event, Point, Rectangle, mouse, window};
 
 use camera::Camera;
+use sun::Sun;
 
 /// Minimum release speed, in px/s, for a drag to keep coasting.
 const FLICK_SPEED: f32 = 50.0;
@@ -31,11 +33,12 @@ pub enum Interaction {
 
 pub struct Globe {
     camera: Camera,
+    sun: Sun,
 }
 
 impl Globe {
-    pub fn new(camera: Camera) -> Self {
-        Self { camera }
+    pub fn new(camera: Camera, sun: Sun) -> Self {
+        Self { camera, sun }
     }
 }
 
@@ -219,6 +222,7 @@ impl shader::Program<Interaction> for Globe {
     ) -> Self::Primitive {
         pipeline::Primitive {
             camera: self.camera,
+            sun: self.sun,
         }
     }
 

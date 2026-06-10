@@ -2,12 +2,14 @@ mod globe;
 
 use globe::{Globe, Interaction};
 use globe::camera::Camera;
+use globe::sun::Sun;
 use iced::widget::shader;
 use iced::{Element, Fill};
 
 #[derive(Default)]
 struct App {
     camera: Camera,
+    sun: Sun,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,10 @@ fn update(state: &mut App, message: Message) {
 }
 
 fn view(state: &App) -> Element<'_, Message> {
-    Element::from(shader(Globe::new(state.camera)).width(Fill).height(Fill))
-        .map(Message::Globe)
+    Element::from(
+        shader(Globe::new(state.camera, state.sun))
+            .width(Fill)
+            .height(Fill),
+    )
+    .map(Message::Globe)
 }

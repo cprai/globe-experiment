@@ -5,13 +5,27 @@ use iced::widget::shader::{self, Viewport};
 
 use super::camera::Camera;
 use super::mesh::{self, Vertex};
+use super::sun::Sun;
 
 const STACKS: u32 = 64;
 const SLICES: u32 = 128;
 
+/// Per-frame shader uniforms. Layout must match `Uniforms` in globe.wgsl:
+/// vec3 fields are padded to 16-byte alignment.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Uniforms {
+    view_proj: [f32; 16],
+    camera_pos: [f32; 3],
+    _pad0: f32,
+    sun_dir: [f32; 3],
+    _pad1: f32,
+}
+
 #[derive(Debug)]
 pub struct Primitive {
     pub camera: Camera,
+    pub sun: Sun,
 }
 
 impl shader::Primitive for Primitive {
@@ -31,11 +45,17 @@ impl shader::Primitive for Primitive {
             1.0
         };
 
-        let view_proj = self.camera.view_proj(aspect).to_cols_array();
+        let uniforms = Uniforms {
+            view_proj: self.camera.view_proj(aspect).to_cols_array(),
+            camera_pos: self.camera.eye().to_array(),
+            _pad0: 0.0,
+            sun_dir: self.sun.direction().to_array(),
+            _pad1: 0.0,
+        };
         queue.write_buffer(
             &pipeline.uniforms,
             0,
-            bytemuck::cast_slice(&view_proj),
+            bytemuck::bytes_of(&uniforms),
         );
     }
 
@@ -98,7 +118,7 @@ impl shader::Pipeline for Pipeline {
 
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globe uniforms"),
-            size: std::mem::size_of::<[f32; 16]>() as u64,
+            size: std::mem::size_of::<Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -149,7 +169,7 @@ impl shader::Pipeline for Pipeline {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,

@@ -66,6 +66,26 @@ impl Camera {
     }
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
+        let (eye, target, up) = self.frame();
+
+        let view = Mat4::look_at_rh(eye, target, up);
+        let proj = Mat4::perspective_rh(
+            Self::FOV_Y.to_radians(),
+            aspect.max(0.01),
+            0.01,
+            50.0,
+        );
+
+        proj * view
+    }
+
+    /// The camera position in world space.
+    pub fn eye(&self) -> Vec3 {
+        self.frame().0
+    }
+
+    /// Computes the camera's (eye, target, up) in world space.
+    fn frame(&self) -> (Vec3, Vec3, Vec3) {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();
         let lon = self.longitude.to_radians();
 
@@ -88,14 +108,6 @@ impl Camera {
         let eye = target + tilt * radial * self.distance;
         let up = tilt * north;
 
-        let view = Mat4::look_at_rh(eye, target, up);
-        let proj = Mat4::perspective_rh(
-            Self::FOV_Y.to_radians(),
-            aspect.max(0.01),
-            0.01,
-            50.0,
-        );
-
-        proj * view
+        (eye, target, up)
     }
 }

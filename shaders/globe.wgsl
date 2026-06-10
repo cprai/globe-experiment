@@ -1,5 +1,7 @@
 struct Uniforms {
     view_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    sun_dir: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -27,15 +29,30 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+const NIGHT_AMBIENT: f32 = 0.04;
+const ATMOSPHERE_COLOR: vec3<f32> = vec3<f32>(0.3, 0.55, 1.0);
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base = textureSample(earth_texture, earth_sampler, in.uv).rgb;
 
-    // Mild directional lighting to keep the curvature readable; proper sun
-    // lighting comes with the polish milestone.
     let n = normalize(in.normal);
-    let light = normalize(vec3<f32>(0.5, 0.8, 1.0));
-    let shade = 0.35 + 0.65 * max(dot(n, light), 0.0);
+    let sun = normalize(uniforms.sun_dir);
+    // The mesh is a unit sphere, so the normal is also the world position.
+    let view_dir = normalize(uniforms.camera_pos - in.normal);
 
-    return vec4<f32>(base * shade, 1.0);
+    // Sun lighting, with the terminator softened a touch so the day/night
+    // edge doesn't alias.
+    let cos_sun = dot(n, sun);
+    let daylight = smoothstep(-0.08, 0.2, cos_sun) * max(cos_sun, 0.0)
+        + smoothstep(-0.15, 0.05, cos_sun) * 0.08;
+    let surface = base * (NIGHT_AMBIENT + (1.0 - NIGHT_AMBIENT) * daylight);
+
+    // Atmosphere: a fresnel rim that fades toward the night side.
+    let fresnel = pow(1.0 - max(dot(n, view_dir), 0.0), 3.0);
+    let glow = fresnel
+        * ATMOSPHERE_COLOR
+        * (0.1 + 0.9 * smoothstep(-0.2, 0.3, cos_sun));
+
+    return vec4<f32>(surface + glow, 1.0);
 }
