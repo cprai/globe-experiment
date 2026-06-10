@@ -34,6 +34,12 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 const DAY_AMBIENT: f32 = 0.04;
 const ATMOSPHERE_COLOR: vec3<f32> = vec3<f32>(0.3, 0.55, 1.0);
+// The haze shell extends this far beyond the planet's unit radius.
+const HAZE_RADIUS: f32 = 1.04;
+// Peak haze brightness at the limb.
+const HAZE_STRENGTH: f32 = 0.45;
+// Higher exponents hug the haze tighter against the limb.
+const HAZE_FALLOFF: f32 = 2.5;
 // How strongly the normal map perturbs the geometric normal.
 // 1.0 is the map's face value; higher exaggerates the terrain relief
 // (deliberately past photorealism).
@@ -115,4 +121,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         * (0.1 + 0.9 * smoothstep(-0.2, 0.3, cos_sun));
 
     return vec4<f32>(surface + glow, 1.0);
+}
+
+// Atmospheric haze: the same sphere mesh, inflated to HAZE_RADIUS and
+// rendered far-side-only with additive blending, before the globe draws
+// over its interior. What survives is a soft ring of scattered light
+// around the limb.
+
+struct HazeOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_haze(in: VertexInput) -> HazeOutput {
+    var out: HazeOutput;
+    let world = in.position * HAZE_RADIUS;
+    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.world_pos = world;
+    return out;
+}
+
+@fragment
+fn fs_haze(in: HazeOutput) -> @location(0) vec4<f32> {
+    // Closest approach of the view ray to the globe center: 1.0 when the
+    // ray grazes the surface, HAZE_RADIUS at the shell's outer edge.
+    let v = normalize(uniforms.camera_pos - in.world_pos);
+    let closest = length(in.world_pos - dot(in.world_pos, v) * v);
+
+    let t = clamp(
+        (HAZE_RADIUS - closest) / (HAZE_RADIUS - 1.0),
+        0.0,
+        1.0,
+    );
+    let falloff = pow(t, HAZE_FALLOFF);
+
+    // Haze is scattered sunlight: fade it out around the night side.
+    let day = smoothstep(
+        -0.2,
+        0.3,
+        dot(normalize(in.world_pos), normalize(uniforms.sun_dir)),
+    );
+
+    let intensity = HAZE_STRENGTH * falloff * (0.05 + 0.95 * day);
+    return vec4<f32>(ATMOSPHERE_COLOR * intensity, intensity);
 }

@@ -64,13 +64,19 @@ impl shader::Primitive for Primitive {
         pipeline: &Pipeline,
         render_pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        render_pass.set_pipeline(&pipeline.render_pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
         render_pass.set_vertex_buffer(0, pipeline.vertices.slice(..));
         render_pass.set_index_buffer(
             pipeline.indices.slice(..),
             wgpu::IndexFormat::Uint32,
         );
+
+        // The haze shell goes first; the globe then draws over its
+        // interior, leaving haze only around the limb.
+        render_pass.set_pipeline(&pipeline.haze_pipeline);
+        render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
+
+        render_pass.set_pipeline(&pipeline.render_pipeline);
         render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
 
         true
@@ -79,6 +85,7 @@ impl shader::Primitive for Primitive {
 
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
+    haze_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -321,8 +328,61 @@ impl shader::Pipeline for Pipeline {
                 cache: None,
             });
 
+        let haze_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("haze pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_haze"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_haze"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // Additive: haze brightens whatever is behind it.
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // Render the far side of the shell so it spans the
+                    // whole silhouette, beyond the planet's limb.
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             render_pipeline,
+            haze_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
