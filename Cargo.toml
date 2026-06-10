@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 glam = "0.33.1"
+half = { version = "2.7.1", features = ["bytemuck"] }
 iced = "0.14.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
 

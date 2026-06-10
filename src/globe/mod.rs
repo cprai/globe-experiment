@@ -1,3 +1,4 @@
+mod atmosphere;
 pub mod camera;
 mod mesh;
 mod pipeline;

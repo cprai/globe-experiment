@@ -3,6 +3,7 @@ use iced::wgpu;
 use iced::wgpu::util::DeviceExt;
 use iced::widget::shader::{self, Viewport};
 
+use super::atmosphere;
 use super::camera::Camera;
 use super::mesh::{self, Vertex};
 use super::sun::Sun;
@@ -71,12 +72,12 @@ impl shader::Primitive for Primitive {
             wgpu::IndexFormat::Uint32,
         );
 
-        // The haze shell goes first; the globe then draws over its
-        // interior, leaving haze only around the limb.
-        render_pass.set_pipeline(&pipeline.haze_pipeline);
+        // Surface first; the scattering pass then adds atmosphere over
+        // the whole disc (aerial perspective) and beyond the limb.
+        render_pass.set_pipeline(&pipeline.render_pipeline);
         render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
 
-        render_pass.set_pipeline(&pipeline.render_pipeline);
+        render_pass.set_pipeline(&pipeline.atmosphere_pipeline);
         render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
 
         true
@@ -85,7 +86,7 @@ impl shader::Primitive for Primitive {
 
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
-    haze_pipeline: wgpu::RenderPipeline,
+    atmosphere_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -160,6 +161,38 @@ impl shader::Pipeline for Pipeline {
             include_bytes!("../../assets/earth_specular.tif"),
             wgpu::TextureFormat::Rgba8Unorm,
         );
+
+        let lut = atmosphere::transmittance_lut();
+        let lut_texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("transmittance lut"),
+                size: wgpu::Extent3d {
+                    width: atmosphere::TRANSMITTANCE_WIDTH,
+                    height: atmosphere::TRANSMITTANCE_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            bytemuck::cast_slice(&lut),
+        );
+        let lut_view =
+            lut_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("transmittance lut sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("earth sampler"),
@@ -242,6 +275,26 @@ impl shader::Pipeline for Pipeline {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(
+                            wgpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
+                    },
                 ],
             },
         );
@@ -279,6 +332,14 @@ impl shader::Pipeline for Pipeline {
                     resource: wgpu::BindingResource::TextureView(
                         &specular_view,
                     ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&lut_sampler),
                 },
             ],
         });
@@ -328,13 +389,13 @@ impl shader::Pipeline for Pipeline {
                 cache: None,
             });
 
-        let haze_pipeline =
+        let atmosphere_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("haze pipeline"),
+                label: Some("atmosphere pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
-                    entry_point: Some("vs_haze"),
+                    entry_point: Some("vs_atmosphere"),
                     compilation_options: Default::default(),
                     buffers: &[wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -347,11 +408,11 @@ impl shader::Pipeline for Pipeline {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fs_haze"),
+                    entry_point: Some("fs_atmosphere"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        // Additive: haze brightens whatever is behind it.
+                        // Additive: scattering brightens what's behind it.
                         blend: Some(wgpu::BlendState {
                             color: wgpu::BlendComponent {
                                 src_factor: wgpu::BlendFactor::One,
@@ -382,7 +443,7 @@ impl shader::Pipeline for Pipeline {
 
         Self {
             render_pipeline,
-            haze_pipeline,
+            atmosphere_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
