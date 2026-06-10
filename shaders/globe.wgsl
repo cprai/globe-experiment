@@ -3,6 +3,8 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var earth_texture: texture_2d<f32>;
+@group(0) @binding(2) var earth_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -27,18 +29,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Placeholder shading until the Earth texture lands: a 15° lat/lon grid
-    // over a blue base, with simple directional lighting.
-    let grid = vec2<f32>(fract(in.uv.x * 24.0), fract(in.uv.y * 12.0));
+    let base = textureSample(earth_texture, earth_sampler, in.uv).rgb;
 
-    var base = vec3<f32>(0.18, 0.35, 0.65);
-    if grid.x < 0.04 || grid.y < 0.04 {
-        base = vec3<f32>(0.9, 0.9, 0.9);
-    }
-
+    // Mild directional lighting to keep the curvature readable; proper sun
+    // lighting comes with the polish milestone.
     let n = normalize(in.normal);
     let light = normalize(vec3<f32>(0.5, 0.8, 1.0));
-    let shade = 0.25 + 0.75 * max(dot(n, light), 0.0);
+    let shade = 0.35 + 0.65 * max(dot(n, light), 0.0);
 
     return vec4<f32>(base * shade, 1.0);
 }
