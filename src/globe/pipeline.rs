@@ -124,7 +124,7 @@ impl shader::Pipeline for Pipeline {
         });
 
         let earth = image::load_from_memory(include_bytes!(
-            "../../assets/earth.jpg"
+            "../../assets/earth_albedo_day.jpg"
         ))
         .expect("decode earth texture")
         .to_rgba8();
