@@ -1,10 +1,22 @@
+pub mod camera;
+mod mesh;
 mod pipeline;
 
 use iced::Rectangle;
 use iced::mouse;
 use iced::widget::shader;
 
-pub struct Globe;
+use camera::Camera;
+
+pub struct Globe {
+    camera: Camera,
+}
+
+impl Globe {
+    pub fn new(camera: Camera) -> Self {
+        Self { camera }
+    }
+}
 
 impl<Message> shader::Program<Message> for Globe {
     type State = ();
@@ -16,6 +28,8 @@ impl<Message> shader::Program<Message> for Globe {
         _cursor: mouse::Cursor,
         _bounds: Rectangle,
     ) -> Self::Primitive {
-        pipeline::Primitive
+        pipeline::Primitive {
+            camera: self.camera,
+        }
     }
 }
