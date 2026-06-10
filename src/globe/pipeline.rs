@@ -123,34 +123,18 @@ impl shader::Pipeline for Pipeline {
             mapped_at_creation: false,
         });
 
-        let earth = image::load_from_memory(include_bytes!(
-            "../../assets/earth_albedo_day.jpg"
-        ))
-        .expect("decode earth texture")
-        .to_rgba8();
-
-        let texture = device.create_texture_with_data(
+        let day_view = upload_jpeg(
+            device,
             queue,
-            &wgpu::TextureDescriptor {
-                label: Some("earth texture"),
-                size: wgpu::Extent3d {
-                    width: earth.width(),
-                    height: earth.height(),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &earth,
+            "earth day texture",
+            include_bytes!("../../assets/earth_albedo_day.jpg"),
         );
-
-        let texture_view =
-            texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let night_view = upload_jpeg(
+            device,
+            queue,
+            "earth night texture",
+            include_bytes!("../../assets/earth_albedo_night.jpg"),
+        );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("earth sampler"),
@@ -197,6 +181,18 @@ impl shader::Pipeline for Pipeline {
                         ),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -211,13 +207,17 @@ impl shader::Pipeline for Pipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &texture_view,
-                    ),
+                    resource: wgpu::BindingResource::TextureView(&day_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(
+                        &night_view,
+                    ),
                 },
             ],
         });
@@ -276,4 +276,37 @@ impl shader::Pipeline for Pipeline {
             bind_group,
         }
     }
+}
+
+fn upload_jpeg(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    bytes: &[u8],
+) -> wgpu::TextureView {
+    let image = image::load_from_memory(bytes)
+        .unwrap_or_else(|error| panic!("decode {label}: {error}"))
+        .to_rgba8();
+
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &image,
+    );
+
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
