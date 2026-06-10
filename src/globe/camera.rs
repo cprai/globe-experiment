@@ -28,6 +28,42 @@ impl Default for Camera {
 
 impl Camera {
     const FOV_Y: f32 = 45.0;
+    const MIN_DISTANCE: f32 = 0.01;
+    const MAX_DISTANCE: f32 = 10.0;
+    const MAX_TILT: f32 = 80.0;
+
+    /// Moves the look-at point by the given degrees, wrapping longitude
+    /// across the dateline and clamping latitude short of the poles.
+    pub fn pan(&mut self, dlon: f32, dlat: f32) {
+        self.longitude =
+            (self.longitude + dlon + 180.0).rem_euclid(360.0) - 180.0;
+        self.latitude = (self.latitude + dlat).clamp(-89.0, 89.0);
+    }
+
+    /// Scales the camera distance, clamped between just above the surface
+    /// and a full-globe view.
+    pub fn zoom(&mut self, factor: f32) {
+        self.distance = (self.distance * factor)
+            .clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    }
+
+    /// Adjusts the tilt, clamped between straight-down and near-horizon.
+    pub fn tilt_by(&mut self, degrees: f32) {
+        self.tilt = (self.tilt + degrees).clamp(0.0, Self::MAX_TILT);
+    }
+
+    /// Degrees of arc panned per pixel of cursor movement, scaled so the
+    /// ground under the cursor approximately follows it at any altitude.
+    pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
+        let world_per_pixel = 2.0
+            * self.distance
+            * (Self::FOV_Y / 2.0).to_radians().tan()
+            / viewport_height.max(1.0);
+
+        // The globe is a unit sphere, so a world-unit of ground distance is
+        // one radian of arc.
+        world_per_pixel.to_degrees()
+    }
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();

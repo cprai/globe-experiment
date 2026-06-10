@@ -1,6 +1,6 @@
 mod globe;
 
-use globe::Globe;
+use globe::{Globe, Interaction};
 use globe::camera::Camera;
 use iced::widget::shader;
 use iced::{Element, Fill};
@@ -11,7 +11,9 @@ struct App {
 }
 
 #[derive(Debug, Clone)]
-enum Message {}
+enum Message {
+    Globe(Interaction),
+}
 
 fn main() -> iced::Result {
     iced::application(App::default, update, view)
@@ -19,8 +21,17 @@ fn main() -> iced::Result {
         .run()
 }
 
-fn update(_state: &mut App, _message: Message) {}
+fn update(state: &mut App, message: Message) {
+    match message {
+        Message::Globe(interaction) => match interaction {
+            Interaction::Pan { dlon, dlat } => state.camera.pan(dlon, dlat),
+            Interaction::Zoom { factor } => state.camera.zoom(factor),
+            Interaction::Tilt { degrees } => state.camera.tilt_by(degrees),
+        },
+    }
+}
 
 fn view(state: &App) -> Element<'_, Message> {
-    shader(Globe::new(state.camera)).width(Fill).height(Fill).into()
+    Element::from(shader(Globe::new(state.camera)).width(Fill).height(Fill))
+        .map(Message::Globe)
 }
