@@ -1,20 +1,22 @@
-use iced::Element;
-use iced::widget::{center, text};
+mod globe;
+
+use iced::widget::shader;
+use iced::{Element, Fill};
 
 #[derive(Default)]
-struct HelloApp;
+struct App;
 
 #[derive(Debug, Clone)]
 enum Message {}
 
 fn main() -> iced::Result {
-    iced::application(HelloApp::default, update, view)
-        .title("Hello, iced!")
+    iced::application(App::default, update, view)
+        .title("Globe")
         .run()
 }
 
-fn update(_state: &mut HelloApp, _message: Message) {}
+fn update(_state: &mut App, _message: Message) {}
 
-fn view(_state: &HelloApp) -> Element<'_, Message> {
-    center(text("Hello, world!").size(50)).into()
+fn view(_state: &App) -> Element<'_, Message> {
+    shader(globe::Globe).width(Fill).height(Fill).into()
 }
