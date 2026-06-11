@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{Mat3, Quat, Vec3};
 
 /// Position of the sun, expressed as the subsolar point — the spot on the
 /// globe where the sun is directly overhead.
@@ -34,5 +34,19 @@ impl Sun {
         let lon = self.longitude.to_radians();
 
         Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos())
+    }
+
+    /// Orientation of the star map, which is rigidly attached to the sun:
+    /// the sun is pinned at the map's center (latitude 0, longitude 0),
+    /// so the longitude slider spins the sky about the polar axis while
+    /// the latitude slider tilts it about the horizontal (equinox) axis.
+    ///
+    /// Returns the rotation taking the map's base orientation to the
+    /// current sun direction.
+    pub fn star_rotation(&self) -> Mat3 {
+        Mat3::from_quat(
+            Quat::from_rotation_y(self.longitude.to_radians())
+                * Quat::from_rotation_x(-self.latitude.to_radians()),
+        )
     }
 }

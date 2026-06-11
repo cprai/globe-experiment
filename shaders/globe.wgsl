@@ -2,6 +2,10 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     sun_dir: vec3<f32>,
+    // Inverse of the star map's orientation (sky is rigidly attached to
+    // the sun: longitude spins it about the polar axis, latitude tilts
+    // it about the horizontal equinox axis).
+    star_rot_inv: mat3x3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -280,7 +284,8 @@ const STARS_BRIGHTNESS: f32 = 0.8;
 
 struct StarsOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
+    // View direction rotated into the star map's base frame.
+    @location(0) dir: vec3<f32>,
 };
 
 @vertex
@@ -288,12 +293,22 @@ fn vs_stars(in: VertexInput) -> StarsOutput {
     var out: StarsOutput;
     out.position =
         uniforms.view_proj * vec4<f32>(in.position * STARS_RADIUS, 1.0);
-    out.uv = in.uv;
+    out.dir = uniforms.star_rot_inv * in.position;
     return out;
 }
 
 @fragment
 fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
-    let stars = textureSample(stars_texture, earth_sampler, in.uv).rgb;
+    // Equirectangular lookup from the rotated direction. Computed per
+    // fragment (not per vertex) so the dateline seam doesn't smear.
+    let d = normalize(in.dir);
+    let lon = atan2(d.x, d.z);
+    let uv = vec2<f32>(
+        lon / (2.0 * PI) + 0.5,
+        acos(clamp(d.y, -1.0, 1.0)) / PI,
+    );
+
+    let stars =
+        textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
     return vec4<f32>(stars * STARS_BRIGHTNESS, 1.0);
 }

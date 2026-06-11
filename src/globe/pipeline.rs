@@ -21,6 +21,8 @@ struct Uniforms {
     _pad0: f32,
     sun_dir: [f32; 3],
     _pad1: f32,
+    /// Inverse star map rotation; mat3x3 columns padded to vec4 stride.
+    star_rot_inv: [[f32; 4]; 3],
 }
 
 #[derive(Debug)]
@@ -46,12 +48,20 @@ impl shader::Primitive for Primitive {
             1.0
         };
 
+        // The shader maps view directions back onto the star texture, so
+        // it needs the inverse rotation (= transpose, it's orthonormal).
+        let star_rot_inv = self.sun.star_rotation().transpose();
+        let star_cols = star_rot_inv.to_cols_array_2d();
+
         let uniforms = Uniforms {
             view_proj: self.camera.view_proj(aspect).to_cols_array(),
             camera_pos: self.camera.eye().to_array(),
             _pad0: 0.0,
             sun_dir: self.sun.direction().to_array(),
             _pad1: 0.0,
+            star_rot_inv: std::array::from_fn(|c| {
+                [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
+            }),
         };
         queue.write_buffer(
             &pipeline.uniforms,
