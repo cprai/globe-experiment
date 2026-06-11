@@ -162,28 +162,31 @@ impl shader::Pipeline for Pipeline {
             wgpu::TextureFormat::Rgba8Unorm,
         );
 
-        let lut = atmosphere::transmittance_lut();
-        let lut_texture = device.create_texture_with_data(
+        let luts = atmosphere::bake();
+        let transmittance_view = upload_lut(
+            device,
             queue,
-            &wgpu::TextureDescriptor {
-                label: Some("transmittance lut"),
-                size: wgpu::Extent3d {
-                    width: atmosphere::TRANSMITTANCE_WIDTH,
-                    height: atmosphere::TRANSMITTANCE_HEIGHT,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            bytemuck::cast_slice(&lut),
+            "transmittance lut",
+            atmosphere::TRANSMITTANCE_WIDTH,
+            atmosphere::TRANSMITTANCE_HEIGHT,
+            &luts.transmittance,
         );
-        let lut_view =
-            lut_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let inscatter_rayleigh_view = upload_lut(
+            device,
+            queue,
+            "inscatter rayleigh lut",
+            atmosphere::INSCATTER_WIDTH,
+            atmosphere::INSCATTER_HEIGHT,
+            &luts.inscatter_rayleigh,
+        );
+        let inscatter_mie_view = upload_lut(
+            device,
+            queue,
+            "inscatter mie lut",
+            atmosphere::INSCATTER_WIDTH,
+            atmosphere::INSCATTER_HEIGHT,
+            &luts.inscatter_mie,
+        );
 
         let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("transmittance lut sampler"),
@@ -295,6 +298,30 @@ impl shader::Pipeline for Pipeline {
                         ),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -335,11 +362,25 @@ impl shader::Pipeline for Pipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&lut_view),
+                    resource: wgpu::BindingResource::TextureView(
+                        &transmittance_view,
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&lut_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(
+                        &inscatter_rayleigh_view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(
+                        &inscatter_mie_view,
+                    ),
                 },
             ],
         });
@@ -451,6 +492,37 @@ impl shader::Pipeline for Pipeline {
             bind_group,
         }
     }
+}
+
+fn upload_lut(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    texels: &[half::f16],
+) -> wgpu::TextureView {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        bytemuck::cast_slice(texels),
+    );
+
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 fn upload_texture(

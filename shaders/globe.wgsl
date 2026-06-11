@@ -12,6 +12,8 @@ struct Uniforms {
 @group(0) @binding(5) var specular_texture: texture_2d<f32>;
 @group(0) @binding(6) var transmittance_lut: texture_2d<f32>;
 @group(0) @binding(7) var lut_sampler: sampler;
+@group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
+@group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -49,49 +51,20 @@ const OCEAN_F0: f32 = 0.05;
 
 const PI: f32 = 3.14159265;
 
-// --- Atmosphere medium, after Hillaire 2020. ---
-// Earth parameters; lengths in km, coefficients per km. The Rust twins
-// of these constants live in src/globe/atmosphere.rs and bake the
-// transmittance LUT — keep them in sync.
+// --- Atmosphere, after Hillaire 2020. ---
+// The medium definition and all scattering integrals live in
+// src/globe/atmosphere.rs, which bakes them into LUTs at startup. The
+// geometric constants here must stay in sync with the Rust twins.
+// Lengths are kilometers.
 const PLANET_RADIUS_KM: f32 = 6360.0;
 const ATMOSPHERE_TOP_KM: f32 = 6460.0;
-const RAYLEIGH_SCATTERING: vec3<f32> =
-    vec3<f32>(0.005802, 0.013558, 0.0331);
-const RAYLEIGH_SCALE_HEIGHT: f32 = 8.0;
-const MIE_SCATTERING: f32 = 0.003996;
-const MIE_EXTINCTION: f32 = 0.00440;
-const MIE_SCALE_HEIGHT: f32 = 1.2;
 const MIE_G: f32 = 0.8;
-const OZONE_ABSORPTION: vec3<f32> =
-    vec3<f32>(0.000650, 0.001881, 0.000085);
 
 const SUN_INTENSITY: f32 = 12.0;
-const RAYMARCH_SAMPLES: i32 = 24;
 
 // World space is in planet radii; the atmosphere shell sits at the
 // top-of-atmosphere radius.
 const ATMOSPHERE_SHELL: f32 = ATMOSPHERE_TOP_KM / PLANET_RADIUS_KM;
-
-struct Medium {
-    scatter_r: vec3<f32>,
-    scatter_m: f32,
-    extinction: vec3<f32>,
-};
-
-fn sample_medium(h: f32) -> Medium {
-    let density_r = exp(-h / RAYLEIGH_SCALE_HEIGHT);
-    let density_m = exp(-h / MIE_SCALE_HEIGHT);
-    // Ozone concentration is a tent function peaking at 25 km.
-    let density_o = max(0.0, 1.0 - abs(h - 25.0) / 15.0);
-
-    var medium: Medium;
-    medium.scatter_r = RAYLEIGH_SCATTERING * density_r;
-    medium.scatter_m = MIE_SCATTERING * density_m;
-    medium.extinction = medium.scatter_r
-        + vec3<f32>(MIE_EXTINCTION * density_m)
-        + OZONE_ABSORPTION * density_o;
-    return medium;
-}
 
 // Transmittance from a point at radius `r` km toward the sun at zenith
 // cosine `mu`, via the precomputed LUT (Bruneton parameterization).
@@ -211,10 +184,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 // Atmospheric scattering, after Hillaire 2020: the same sphere mesh,
 // inflated to the top-of-atmosphere radius and rendered far-side-only
-// with additive blending after the globe. Each fragment raymarches
-// single scattering along its view ray, using the transmittance LUT for
-// sunlight attenuation — long grazing paths near the terminator lose
-// their blue to scattering and the inscattered light turns orange.
+// with additive blending after the globe.
+//
+// Because the scene is a sphere viewed from outside, the inscatter
+// integral along any view ray is precomputed: a ray is identified by its
+// impact parameter and the sun cosine at its reference point (ground hit,
+// or closest approach for limb rays). Per fragment this costs two LUT
+// samples; the phase functions are constant per ray and applied here.
+// Long grazing paths near the terminator lose their blue to scattering
+// and the inscattered light turns orange.
 
 struct AtmosphereOutput {
     @builtin(position) position: vec4<f32>,
@@ -237,20 +215,44 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_pos * PLANET_RADIUS_KM - origin);
     let sun = normalize(uniforms.sun_dir);
 
-    // March from where the ray enters the atmosphere to where it exits
-    // or hits the ground.
     let shell = ray_sphere(origin, dir, ATMOSPHERE_TOP_KM);
     if shell.y <= 0.0 {
         return vec4<f32>(0.0);
     }
-    let t_start = max(shell.x, 0.0);
-    var t_end = shell.y;
 
+    // Impact parameter: the ray's closest approach to the planet center.
+    let b = length(origin - dot(origin, dir) * dir);
+
+    // Reference point and the LUT's split row mapping: lower half is
+    // ground-hitting rays, upper half limb rays. Must match the bake in
+    // src/globe/atmosphere.rs.
     let ground = ray_sphere(origin, dir, PLANET_RADIUS_KM);
+    var reference: vec3<f32>;
+    var v: f32;
     if ground.x > 0.0 {
-        t_end = min(t_end, ground.x);
+        reference = origin + dir * ground.x;
+        v = 0.5 * clamp(b / PLANET_RADIUS_KM, 0.0, 1.0);
+    } else {
+        reference = origin - dot(origin, dir) * dir;
+        v = 0.5
+            + 0.5
+                * clamp(
+                    (b - PLANET_RADIUS_KM)
+                        / (ATMOSPHERE_TOP_KM - PLANET_RADIUS_KM),
+                    0.0,
+                    1.0,
+                );
     }
 
+    let mu_ref = dot(normalize(reference), sun);
+    let uv = vec2<f32>(mu_ref * 0.5 + 0.5, v);
+
+    let sum_r =
+        textureSampleLevel(inscatter_rayleigh_lut, lut_sampler, uv, 0.0).rgb;
+    let sum_m =
+        textureSampleLevel(inscatter_mie_lut, lut_sampler, uv, 0.0).rgb;
+
+    // Phase functions are constant along the ray.
     let mu = dot(dir, sun);
     let phase_r = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
     // Cornette-Shanks phase for Mie.
@@ -258,32 +260,7 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     let phase_m = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu * mu))
         / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * MIE_G * mu, 1.5));
 
-    let dt = (t_end - t_start) / f32(RAYMARCH_SAMPLES);
-    var transmittance = vec3<f32>(1.0);
-    var luminance = vec3<f32>(0.0);
-
-    for (var s = 0; s < RAYMARCH_SAMPLES; s++) {
-        let t = t_start + (f32(s) + 0.5) * dt;
-        let p = origin + dir * t;
-        let r = length(p);
-        let h = max(r - PLANET_RADIUS_KM, 0.0);
-
-        let medium = sample_medium(h);
-        let mu_sun = dot(p / r, sun);
-        let t_sun = sun_transmittance(r, mu_sun);
-
-        let inscatter = (medium.scatter_r * phase_r
-            + vec3<f32>(medium.scatter_m * phase_m))
-            * t_sun;
-
-        // Analytic integration of the inscatter across the step
-        // (Hillaire 2020, eq. 11): exact for constant medium per step.
-        let step_trans = exp(-medium.extinction * dt);
-        luminance += transmittance
-            * (inscatter - inscatter * step_trans)
-            / max(medium.extinction, vec3<f32>(1e-6));
-        transmittance *= step_trans;
-    }
+    let luminance = sum_r * phase_r + sum_m * phase_m;
 
     // Soft exposure roll-off keeps the bright limb from clipping.
     let color = 1.0 - exp(-luminance * SUN_INTENSITY);
