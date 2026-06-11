@@ -47,9 +47,10 @@ const DAY_AMBIENT: f32 = 0.04;
 // (deliberately past photorealism).
 const NORMAL_STRENGTH: f32 = 4.5;
 // Roughness for rough land and smooth ocean; the specular map blends
-// between them.
+// between them. The ocean value sets how wide the GGX sun glint spreads:
+// 0.25 reads glassy-sharp, 0.45 approximates a wave-roughened sea.
 const LAND_ROUGHNESS: f32 = 0.9;
-const OCEAN_ROUGHNESS: f32 = 0.25;
+const OCEAN_ROUGHNESS: f32 = 0.35;
 // Dielectric reflectance at normal incidence.
 const LAND_F0: f32 = 0.015;
 const OCEAN_F0: f32 = 0.05;
