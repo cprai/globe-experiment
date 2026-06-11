@@ -320,18 +320,37 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
 const STARS_RADIUS: f32 = 35.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
+// The sun disc, drawn into the backdrop along the sun direction. The
+// real sun subtends ~0.0046 rad (0.53°); this one is drawn a little
+// larger because it reads better. The glow is the standard LDR cheat
+// for brightness: a clipped-white core inside a wide soft falloff.
+const SUN_ANGULAR_RADIUS: f32 = 0.012;
+const SUN_GLOW_RADIUS: f32 = 0.12;
+const SUN_GLOW_STRENGTH: f32 = 0.5;
+const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.96, 0.9);
+
 struct StarsOutput {
     @builtin(position) position: vec4<f32>,
-    // View direction rotated into the star map's base frame.
+    // Camera-relative view direction, rotated into the star map's base
+    // frame. The backdrop is at infinity, so everything on it is a
+    // function of view direction from the eye — anchoring it to the sky
+    // sphere's surface instead would parallax against the sun.
     @location(0) dir: vec3<f32>,
+    // The same view direction in the world frame, for the sun.
+    @location(1) view: vec3<f32>,
 };
 
 @vertex
 fn vs_stars(in: VertexInput) -> StarsOutput {
     var out: StarsOutput;
-    out.position =
-        uniforms.view_proj * vec4<f32>(in.position * STARS_RADIUS, 1.0);
-    out.dir = uniforms.star_rot_inv * in.position;
+    let world = in.position * STARS_RADIUS;
+    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+
+    // Linear in the vertex position, so interpolation is exact; both
+    // outputs are normalized per fragment.
+    let relative = world - uniforms.camera_pos;
+    out.dir = uniforms.star_rot_inv * relative;
+    out.view = relative;
     return out;
 }
 
@@ -348,5 +367,21 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
 
     let stars =
         textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
-    return vec4<f32>(stars * STARS_BRIGHTNESS, 1.0);
+
+    // The sun, along the same camera-relative view direction as the
+    // stars, so the two stay locked under rotation and zoom. The globe
+    // draws after the backdrop and occludes it; the atmosphere pass
+    // then glows over it near the limb.
+    let view = normalize(in.view);
+    let sun = normalize(uniforms.sun_dir);
+    let angle = acos(clamp(dot(view, sun), -1.0, 1.0));
+
+    // Anti-aliased disc core plus a soft glow falloff.
+    let disc = 1.0
+        - smoothstep(SUN_ANGULAR_RADIUS * 0.85, SUN_ANGULAR_RADIUS, angle);
+    let glow = SUN_GLOW_STRENGTH
+        * pow(max(1.0 - angle / SUN_GLOW_RADIUS, 0.0), 3.0);
+
+    let color = stars * STARS_BRIGHTNESS + SUN_COLOR * (disc + glow);
+    return vec4<f32>(color, 1.0);
 }
