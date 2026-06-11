@@ -72,8 +72,12 @@ impl shader::Primitive for Primitive {
             wgpu::IndexFormat::Uint32,
         );
 
-        // Surface first; the scattering pass then adds atmosphere over
-        // the whole disc (aerial perspective) and beyond the limb.
+        // Backdrop first, then the surface; the scattering pass then adds
+        // atmosphere over the whole disc (aerial perspective) and beyond
+        // the limb.
+        render_pass.set_pipeline(&pipeline.stars_pipeline);
+        render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
+
         render_pass.set_pipeline(&pipeline.render_pipeline);
         render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
 
@@ -87,6 +91,7 @@ impl shader::Primitive for Primitive {
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
+    stars_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -160,6 +165,14 @@ impl shader::Pipeline for Pipeline {
             "earth specular texture",
             include_bytes!("../../assets/earth_specular.tif"),
             wgpu::TextureFormat::Rgba8Unorm,
+        );
+
+        let stars_view = upload_texture(
+            device,
+            queue,
+            "stars texture",
+            include_bytes!("../../assets/stars_albedo.jpg"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
         );
 
         let luts = atmosphere::bake();
@@ -322,6 +335,18 @@ impl shader::Pipeline for Pipeline {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -380,6 +405,12 @@ impl shader::Pipeline for Pipeline {
                     binding: 9,
                     resource: wgpu::BindingResource::TextureView(
                         &inscatter_mie_view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(
+                        &stars_view,
                     ),
                 },
             ],
@@ -482,9 +513,49 @@ impl shader::Pipeline for Pipeline {
                 cache: None,
             });
 
+        let stars_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("stars pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_stars"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_stars"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // The sky sphere is seen from inside.
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             render_pipeline,
             atmosphere_pipeline,
+            stars_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,

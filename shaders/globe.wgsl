@@ -14,6 +14,7 @@ struct Uniforms {
 @group(0) @binding(7) var lut_sampler: sampler;
 @group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
 @group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
+@group(0) @binding(10) var stars_texture: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -265,4 +266,34 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     // Soft exposure roll-off keeps the bright limb from clipping.
     let color = 1.0 - exp(-luminance * SUN_INTENSITY);
     return vec4<f32>(color, 1.0);
+}
+
+// Star backdrop: the same sphere mesh inflated to enclose the camera at
+// any zoom and rendered inside-out, before everything else. It reuses the
+// mesh UVs, so the equirectangular star map shares the earth texture's
+// orientation (celestial poles over the geographic poles).
+
+// Must enclose the camera (max distance ~11 radii) but stay inside the
+// projection's far plane (50 radii) from any camera position.
+const STARS_RADIUS: f32 = 35.0;
+const STARS_BRIGHTNESS: f32 = 0.8;
+
+struct StarsOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_stars(in: VertexInput) -> StarsOutput {
+    var out: StarsOutput;
+    out.position =
+        uniforms.view_proj * vec4<f32>(in.position * STARS_RADIUS, 1.0);
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
+    let stars = textureSample(stars_texture, earth_sampler, in.uv).rgb;
+    return vec4<f32>(stars * STARS_BRIGHTNESS, 1.0);
 }
