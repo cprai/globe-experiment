@@ -35,16 +35,14 @@ impl Camera {
     /// Moves the look-at point by the given degrees, wrapping longitude
     /// across the dateline and clamping latitude short of the poles.
     pub fn pan(&mut self, dlon: f32, dlat: f32) {
-        self.longitude =
-            (self.longitude + dlon + 180.0).rem_euclid(360.0) - 180.0;
+        self.longitude = (self.longitude + dlon + 180.0).rem_euclid(360.0) - 180.0;
         self.latitude = (self.latitude + dlat).clamp(-89.0, 89.0);
     }
 
     /// Scales the camera distance, clamped between just above the surface
     /// and a full-globe view.
     pub fn zoom(&mut self, factor: f32) {
-        self.distance = (self.distance * factor)
-            .clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+        self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
     }
 
     /// Adjusts the tilt, clamped between straight-down and near-horizon.
@@ -55,10 +53,8 @@ impl Camera {
     /// Degrees of arc panned per pixel of cursor movement, scaled so the
     /// ground under the cursor approximately follows it at any altitude.
     pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
-        let world_per_pixel = 2.0
-            * self.distance
-            * (Self::FOV_Y / 2.0).to_radians().tan()
-            / viewport_height.max(1.0);
+        let world_per_pixel =
+            2.0 * self.distance * (Self::FOV_Y / 2.0).to_radians().tan() / viewport_height.max(1.0);
 
         // The globe is a unit sphere, so a world-unit of ground distance is
         // one radian of arc.
@@ -69,12 +65,7 @@ impl Camera {
         let (eye, target, up) = self.frame();
 
         let view = Mat4::look_at_rh(eye, target, up);
-        let proj = Mat4::perspective_rh(
-            Self::FOV_Y.to_radians(),
-            aspect.max(0.01),
-            0.01,
-            50.0,
-        );
+        let proj = Mat4::perspective_rh(Self::FOV_Y.to_radians(), aspect.max(0.01), 0.01, 50.0);
 
         proj * view
     }
@@ -91,11 +82,7 @@ impl Camera {
 
         // Look-at point on the unit sphere surface; also the radial (up
         // from surface) direction.
-        let radial = Vec3::new(
-            lat.cos() * lon.sin(),
-            lat.sin(),
-            lat.cos() * lon.cos(),
-        );
+        let radial = Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos());
         let target = radial;
 
         // Local tangent frame at the look-at point.

@@ -115,9 +115,7 @@ impl shader::Program<Interaction> for Globe {
                             tick: Instant::now(),
                         });
 
-                        return Some(
-                            Action::request_redraw().and_capture(),
-                        );
+                        return Some(Action::request_redraw().and_capture());
                     }
                 }
 
@@ -143,17 +141,13 @@ impl shader::Program<Interaction> for Globe {
                 // independent.
                 let alpha = 1.0 - (-dt * 20.0).exp();
                 let (vx, vy) = drag.velocity;
-                drag.velocity = (
-                    vx + (dx / dt - vx) * alpha,
-                    vy + (dy / dt - vy) * alpha,
-                );
+                drag.velocity = (vx + (dx / dt - vx) * alpha, vy + (dy / dt - vy) * alpha);
 
                 let interaction = match drag.button {
                     // Drag moves the globe with the cursor: dragging right
                     // pulls the view west, dragging down pulls it north.
                     mouse::Button::Left => {
-                        let scale =
-                            self.camera.pan_degrees_per_pixel(bounds.height);
+                        let scale = self.camera.pan_degrees_per_pixel(bounds.height);
 
                         Interaction::Pan {
                             dlon: -dx * scale,

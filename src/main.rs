@@ -1,8 +1,8 @@
 mod globe;
 
-use globe::{Globe, Interaction};
 use globe::camera::Camera;
 use globe::sun::Sun;
+use globe::{Globe, Interaction};
 use iced::widget::{column, container, shader, slider, stack, text};
 use iced::{Color, Element, Fill};
 
@@ -49,18 +49,10 @@ fn view(state: &App) -> Element<'_, Message> {
     // longitude sweeps the full globe over a day.
     let sun_control = container(
         column![
-            text(format!("Sun latitude: {:.1}°", state.sun.latitude))
-                .color(Color::WHITE),
-            slider(-23.44..=23.44, state.sun.latitude, Message::SunLatitude)
-                .step(0.1),
-            text(format!("Sun longitude: {:.1}°", state.sun.longitude))
-                .color(Color::WHITE),
-            slider(
-                -180.0..=180.0,
-                state.sun.longitude,
-                Message::SunLongitude,
-            )
-            .step(0.5),
+            text(format!("Sun latitude: {:.1}°", state.sun.latitude)).color(Color::WHITE),
+            slider(-23.44..=23.44, state.sun.latitude, Message::SunLatitude).step(0.1),
+            text(format!("Sun longitude: {:.1}°", state.sun.longitude)).color(Color::WHITE),
+            slider(-180.0..=180.0, state.sun.longitude, Message::SunLongitude,).step(0.5),
         ]
         .spacing(5)
         .width(260),

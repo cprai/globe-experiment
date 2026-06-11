@@ -19,8 +19,7 @@ pub struct Mesh {
 /// equirectangular texture. The seam column at u=0/u=1 is duplicated so the
 /// texture can wrap. Longitude 0°, latitude 0° faces +Z; +Y is north.
 pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
-    let mut vertices =
-        Vec::with_capacity(((stacks + 1) * (slices + 1)) as usize);
+    let mut vertices = Vec::with_capacity(((stacks + 1) * (slices + 1)) as usize);
 
     for i in 0..=stacks {
         let v = i as f32 / stacks as f32;
@@ -31,11 +30,7 @@ pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
             let lon = (360.0 * u - 180.0).to_radians();
 
             vertices.push(Vertex {
-                position: [
-                    lat.cos() * lon.sin(),
-                    lat.sin(),
-                    lat.cos() * lon.cos(),
-                ],
+                position: [lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos()],
                 uv: [u, v],
             });
         }

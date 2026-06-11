@@ -54,8 +54,7 @@ pub struct Luts {
 
 pub fn bake() -> Luts {
     let transmittance = bake_transmittance();
-    let (inscatter_rayleigh, inscatter_mie) =
-        bake_inscatter(&transmittance);
+    let (inscatter_rayleigh, inscatter_mie) = bake_inscatter(&transmittance);
 
     Luts {
         transmittance: to_f16_texels(&transmittance),
@@ -72,9 +71,7 @@ fn extinction(h: f32) -> [f32; 3] {
     let ozone = (1.0 - (h - 25.0).abs() / 15.0).max(0.0);
 
     std::array::from_fn(|i| {
-        RAYLEIGH_SCATTERING[i] * rayleigh
-            + MIE_EXTINCTION * mie
-            + OZONE_ABSORPTION[i] * ozone
+        RAYLEIGH_SCATTERING[i] * rayleigh + MIE_EXTINCTION * mie + OZONE_ABSORPTION[i] * ozone
     })
 }
 
@@ -98,9 +95,7 @@ fn bake_transmittance() -> Vec<[f32; 3]> {
     // Distance to the atmosphere top along the horizon, from the ground.
     let h_top = (ra * ra - rp * rp).sqrt();
 
-    let mut table = Vec::with_capacity(
-        (TRANSMITTANCE_WIDTH * TRANSMITTANCE_HEIGHT) as usize,
-    );
+    let mut table = Vec::with_capacity((TRANSMITTANCE_WIDTH * TRANSMITTANCE_HEIGHT) as usize);
 
     for j in 0..TRANSMITTANCE_HEIGHT {
         let x_r = (j as f32 + 0.5) / TRANSMITTANCE_HEIGHT as f32;
@@ -118,8 +113,7 @@ fn bake_transmittance() -> Vec<[f32; 3]> {
             let mu = if d <= 0.0 {
                 1.0
             } else {
-                ((h_top * h_top - rho * rho - d * d) / (2.0 * r * d))
-                    .clamp(-1.0, 1.0)
+                ((h_top * h_top - rho * rho - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0)
             };
 
             let dt = d / TRANSMITTANCE_STEPS as f32;
@@ -172,10 +166,8 @@ fn sample_transmittance(table: &[[f32; 3]], r: f32, mu: f32) -> [f32; 3] {
     let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
 
     std::array::from_fn(|c| {
-        let top = table[y0 * w + x0][c] * (1.0 - tx)
-            + table[y0 * w + x1][c] * tx;
-        let bottom = table[y1 * w + x0][c] * (1.0 - tx)
-            + table[y1 * w + x1][c] * tx;
+        let top = table[y0 * w + x0][c] * (1.0 - tx) + table[y0 * w + x1][c] * tx;
+        let bottom = table[y1 * w + x0][c] * (1.0 - tx) + table[y1 * w + x1][c] * tx;
         top * (1.0 - ty) + bottom * ty
     })
 }
@@ -188,9 +180,7 @@ fn sample_transmittance(table: &[[f32; 3]], r: f32, mu: f32) -> [f32; 3] {
 /// reference point's zenith, tilted out of the ray plane, so the sun
 /// cosine elsewhere on the ray follows the sphere's geometry:
 /// `mu(t) = mu_ref * dot(p_hat, r_hat_ref)`.
-fn bake_inscatter(
-    transmittance: &[[f32; 3]],
-) -> (Vec<f16>, Vec<f16>) {
+fn bake_inscatter(transmittance: &[[f32; 3]]) -> (Vec<f16>, Vec<f16>) {
     let rp = PLANET_RADIUS_KM;
     let ra = ATMOSPHERE_TOP_KM;
 
@@ -217,20 +207,14 @@ fn bake_inscatter(
         };
 
         // Reference point: ground hit, or closest approach for limb rays.
-        let ref_point = if hits_ground {
-            [t_exit, b]
-        } else {
-            [0.0, b]
-        };
-        let ref_r = (ref_point[0] * ref_point[0]
-            + ref_point[1] * ref_point[1])
+        let ref_point = if hits_ground { [t_exit, b] } else { [0.0, b] };
+        let ref_r = (ref_point[0] * ref_point[0] + ref_point[1] * ref_point[1])
             .sqrt()
             .max(1e-3);
         let ref_hat = [ref_point[0] / ref_r, ref_point[1] / ref_r];
 
         for i in 0..INSCATTER_WIDTH {
-            let mu_ref =
-                2.0 * (i as f32 + 0.5) / INSCATTER_WIDTH as f32 - 1.0;
+            let mu_ref = 2.0 * (i as f32 + 0.5) / INSCATTER_WIDTH as f32 - 1.0;
 
             let dt = (t_exit - t_entry) / INSCATTER_STEPS as f32;
             let mut view_trans = [1.0f32; 3];
@@ -242,8 +226,7 @@ fn bake_inscatter(
                 let r = (t * t + b * b).sqrt();
                 let h = (r - rp).max(0.0);
 
-                let mu_sun =
-                    mu_ref * (t * ref_hat[0] + b * ref_hat[1]) / r;
+                let mu_sun = mu_ref * (t * ref_hat[0] + b * ref_hat[1]) / r;
                 let t_sun = sample_transmittance(transmittance, r, mu_sun);
 
                 let (scatter_r, scatter_m) = scattering(h);
@@ -253,9 +236,8 @@ fn bake_inscatter(
                     // Analytic integration of the inscatter across the
                     // step (Hillaire 2020, eq. 11).
                     let step_trans = (-sigma_t[c] * dt).exp();
-                    let integ = view_trans[c] * t_sun[c]
-                        * (1.0 - step_trans)
-                        / sigma_t[c].max(1e-6);
+                    let integ =
+                        view_trans[c] * t_sun[c] * (1.0 - step_trans) / sigma_t[c].max(1e-6);
 
                     sum_rayleigh[c] += scatter_r[c] * integ;
                     sum_mie[c] += scatter_m * integ;
