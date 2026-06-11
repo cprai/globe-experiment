@@ -28,3 +28,6 @@ opt-level = 3
 
 [profile.dev.package.weezl]
 opt-level = 3
+
+[build-dependencies]
+ureq = "3.3.0"

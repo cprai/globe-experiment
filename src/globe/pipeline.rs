@@ -132,28 +132,28 @@ impl shader::Pipeline for Pipeline {
             device,
             queue,
             "earth day texture",
-            include_bytes!("../../assets/earth_albedo_day.jpg"),
+            include_bytes!("../../assets/8k_earth_daymap.jpg"),
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         let night_view = upload_texture(
             device,
             queue,
             "earth night texture",
-            include_bytes!("../../assets/earth_albedo_night.jpg"),
+            include_bytes!("../../assets/8k_earth_nightmap.jpg"),
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         let normal_view = upload_texture(
             device,
             queue,
             "earth normal texture",
-            include_bytes!("../../assets/earth_normal.tif"),
+            include_bytes!("../../assets/8k_earth_normal_map.tif"),
             wgpu::TextureFormat::Rgba8Unorm,
         );
         let specular_view = upload_texture(
             device,
             queue,
             "earth specular texture",
-            include_bytes!("../../assets/earth_specular.tif"),
+            include_bytes!("../../assets/8k_earth_specular_map.tif"),
             wgpu::TextureFormat::Rgba8Unorm,
         );
 
@@ -161,7 +161,7 @@ impl shader::Pipeline for Pipeline {
             device,
             queue,
             "stars texture",
-            include_bytes!("../../assets/stars_albedo.jpg"),
+            include_bytes!("../../assets/8k_stars_milky_way.jpg"),
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
 
