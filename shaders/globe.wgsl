@@ -57,6 +57,37 @@ const OCEAN_F0: f32 = 0.05;
 
 const PI: f32 = 3.14159265;
 
+// Wave texture on the ocean specular: scale is in noise cells across the
+// equirectangular map, strength is the +/- fraction of the glint
+// modulated. Keep the strength low — it should read as surface texture,
+// not sparkle.
+const WAVE_SCALE: f32 = 2200.0;
+const WAVE_STRENGTH: f32 = 0.04;
+
+fn hash2(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+
+    let a = hash2(i);
+    let b = hash2(i + vec2<f32>(1.0, 0.0));
+    let c = hash2(i + vec2<f32>(0.0, 1.0));
+    let d = hash2(i + vec2<f32>(1.0, 1.0));
+
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Two octaves of value noise for a natural, non-repeating wave texture.
+fn wave_noise(uv: vec2<f32>) -> f32 {
+    let n1 = value_noise(uv * WAVE_SCALE);
+    let n2 = value_noise(uv * WAVE_SCALE * 2.3);
+    return n1 * 0.65 + n2 * 0.35;
+}
+
 // --- Atmosphere, after Hillaire 2020. ---
 // The medium definition and all scattering integrals live in
 // src/globe/atmosphere.rs, which bakes them into LUTs at startup. The
@@ -164,8 +195,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let f = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
 
-    let specular =
+    var specular =
         d * g * f / max(4.0 * n_dot_v * n_dot_l, 1e-4) * n_dot_l;
+
+    // Wave texture, water only: modulate the glint around its mean so
+    // the average brightness stays put.
+    let wave = wave_noise(in.uv);
+    let shimmer = 1.0 + WAVE_STRENGTH * (2.0 * wave - 1.0);
+    specular *= mix(1.0, shimmer, specular_mask);
 
     // Sunlight reaching the surface is filtered by the atmosphere: near
     // the terminator the blue is scattered away on the long grazing path
