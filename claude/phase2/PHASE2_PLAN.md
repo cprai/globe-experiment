@@ -311,3 +311,25 @@ All five milestones implemented in one pass. Notes for future sessions:
   don't coast. Feel knobs: `ZOOM_COAST_HALF_LIFE` (coast length),
   `ZOOM_STOP_RATE` (when it ends), `ZOOM_HALF_LIFE_MIN/MAX` (glide
   response).
+- **BC7/KTX2 texture pipeline (2026-06-12, OPTIMIZE.md idea 3b):**
+  `build.rs` now transcodes each downloaded texture to BC7 and wraps
+  it in a KTX2 container in `OUT_DIR` (`intel_tex_2` ISPC encoder,
+  `opaque_basic` profile; color maps `BC7_SRGB_BLOCK`, normal/
+  specular `BC7_UNORM_BLOCK`, no supercompression, single mip). The
+  KTX2 file is written with the `ktx2` crate's own serialization
+  types (header + level index + a basic DFD — the parser *requires*
+  a DFD block, length 0 is rejected) so writer and runtime parser
+  can't drift. The runtime (`renderer.rs::upload_ktx2`) parses the
+  container and memcpys the block data to the GPU — `image` is no
+  longer a runtime dependency and no decoding happens at startup.
+  The device now requires `Features::TEXTURE_COMPRESSION_BC`
+  (universal on desktop; works under WSLg lavapipe too). Notes:
+  encode runs once per texture and caches on existence in `OUT_DIR` —
+  delete the `.ktx2` files there to re-encode after changing encoder
+  settings; embedded bytes grew ~21 MB (JPEG/TIFF) → 160 MB (5 ×
+  32 MiB BC7), so the binary is much larger and links slower —
+  runtime file loading (OPTIMIZE.md idea 5) is the known follow-up
+  if that hurts; `.cargo/config.toml` adds `-lstdc++` on Linux only
+  because intel_tex_2's prebuilt ISPC objects need the GCC C++
+  personality (MSVC on Windows is unaffected); VRAM per texture
+  dropped 128 MB → 32 MB and upload is 4× smaller.

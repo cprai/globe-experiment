@@ -52,6 +52,9 @@ Two levels:
   straight into the texture — plus 4-8x smaller GPU uploads and VRAM
   footprint. This is the "real engine" solution and also what mipmaps
   would want to ride along with.
+  **(Implemented in phase 2, 2026-06-12 — see the status section of
+  claude/phase2/PHASE2_PLAN.md. Was unlocked by the iced removal:
+  iced's `Features::empty()` device had blocked BC formats.)**
 
 - Effort: small (downsize) to large (BC7 pipeline).
 

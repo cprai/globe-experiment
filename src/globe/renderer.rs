@@ -63,43 +63,40 @@ impl GlobeRenderer {
             mapped_at_creation: false,
         });
 
-        // Color maps are sRGB; the normal and specular maps are data and
-        // must stay linear.
-        let day_view = upload_texture(
+        // The build script transcodes every texture to BC7 in a KTX2
+        // container (sRGB for the color maps, linear for the normal and
+        // specular data maps), so uploads are straight memcpys — no
+        // image decoding happens at runtime.
+        let day_view = upload_ktx2(
             device,
             queue,
             "earth day texture",
-            include_bytes!("../../assets/8k_earth_daymap.jpg"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2")),
         );
-        let night_view = upload_texture(
+        let night_view = upload_ktx2(
             device,
             queue,
             "earth night texture",
-            include_bytes!("../../assets/8k_earth_nightmap.jpg"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2")),
         );
-        let normal_view = upload_texture(
+        let normal_view = upload_ktx2(
             device,
             queue,
             "earth normal texture",
-            include_bytes!("../../assets/8k_earth_normal_map.tif"),
-            wgpu::TextureFormat::Rgba8Unorm,
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2")),
         );
-        let specular_view = upload_texture(
+        let specular_view = upload_ktx2(
             device,
             queue,
             "earth specular texture",
-            include_bytes!("../../assets/8k_earth_specular_map.tif"),
-            wgpu::TextureFormat::Rgba8Unorm,
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2")),
         );
 
-        let stars_view = upload_texture(
+        let stars_view = upload_ktx2(
             device,
             queue,
             "stars texture",
-            include_bytes!("../../assets/8k_stars_milky_way.jpg"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2")),
         );
 
         let luts = atmosphere::bake();
@@ -522,24 +519,37 @@ fn upload_lut(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-fn upload_texture(
+/// Uploads a build-script-produced KTX2 texture: the BC7 block data is
+/// copied to the GPU as-is. Requires `Features::TEXTURE_COMPRESSION_BC`
+/// on the device.
+fn upload_ktx2(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
     bytes: &[u8],
-    format: wgpu::TextureFormat,
 ) -> wgpu::TextureView {
-    let image = image::load_from_memory(bytes)
-        .unwrap_or_else(|error| panic!("decode {label}: {error}"))
-        .to_rgba8();
+    let reader =
+        ktx2::Reader::new(bytes).unwrap_or_else(|error| panic!("parse {label}: {error:?}"));
+    let header = reader.header();
+
+    let format = match header.format {
+        Some(ktx2::Format::BC7_SRGB_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+        Some(ktx2::Format::BC7_UNORM_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnorm,
+        other => panic!("{label}: unexpected ktx2 format {other:?}"),
+    };
+
+    let level = reader
+        .levels()
+        .next()
+        .unwrap_or_else(|| panic!("{label}: ktx2 file has no mip levels"));
 
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: image.width(),
-                height: image.height(),
+                width: header.pixel_width,
+                height: header.pixel_height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -550,7 +560,7 @@ fn upload_texture(
             view_formats: &[],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
-        &image,
+        level.data,
     );
 
     texture.create_view(&wgpu::TextureViewDescriptor::default())

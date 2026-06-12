@@ -62,7 +62,9 @@ impl Gfx {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("globe device"),
-            required_features: wgpu::Features::empty(),
+            // The earth/star textures are BC7-compressed at build time.
+            // BC support is universal on desktop GPUs.
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::default(),
