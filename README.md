@@ -44,5 +44,3 @@ first build needs a network connection and takes a little longer.
 - `shaders/globe.wgsl` — all shader code: surface, atmosphere, and
   star/sun backdrop.
 - `build.rs` — downloads the textures on first build.
-- `claude/phase1/PLAN.md` — the original implementation plan and milestones.
-- `claude/phase1/OPTIMIZE.md` — notes on improving startup performance.
