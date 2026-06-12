@@ -5,10 +5,15 @@ edition = "2024"
 
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
+egui = "0.34.3"
+egui-wgpu = "0.34.3"
+egui-winit = "0.34.3"
 glam = "0.33.1"
 half = { version = "2.7.1", features = ["bytemuck"] }
-iced = "0.14.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
+pollster = "0.4"
+wgpu = "29"
+winit = "0.30"
 
 # Texture decoding is too slow unoptimized: every earth map is 33 MP.
 [profile.dev.package.image]

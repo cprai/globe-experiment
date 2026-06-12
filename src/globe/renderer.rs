@@ -1,7 +1,4 @@
-use iced::Rectangle;
-use iced::wgpu;
-use iced::wgpu::util::DeviceExt;
-use iced::widget::shader::{self, Viewport};
+use wgpu::util::DeviceExt;
 
 use super::atmosphere;
 use super::camera::Camera;
@@ -25,69 +22,9 @@ struct Uniforms {
     star_rot_inv: [[f32; 4]; 3],
 }
 
-#[derive(Debug)]
-pub struct Primitive {
-    pub camera: Camera,
-    pub sun: Sun,
-}
-
-impl shader::Primitive for Primitive {
-    type Pipeline = Pipeline;
-
-    fn prepare(
-        &self,
-        pipeline: &mut Pipeline,
-        _device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        bounds: &Rectangle,
-        _viewport: &Viewport,
-    ) {
-        let aspect = if bounds.height > 0.0 {
-            bounds.width / bounds.height
-        } else {
-            1.0
-        };
-
-        // The shader maps view directions back onto the star texture, so
-        // it needs the inverse rotation (= transpose, it's orthonormal).
-        let star_rot_inv = self.sun.star_rotation().transpose();
-        let star_cols = star_rot_inv.to_cols_array_2d();
-
-        let uniforms = Uniforms {
-            view_proj: self.camera.view_proj(aspect).to_cols_array(),
-            camera_pos: self.camera.eye().to_array(),
-            _pad0: 0.0,
-            sun_dir: self.sun.direction().to_array(),
-            _pad1: 0.0,
-            star_rot_inv: std::array::from_fn(|c| {
-                [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
-            }),
-        };
-        queue.write_buffer(&pipeline.uniforms, 0, bytemuck::bytes_of(&uniforms));
-    }
-
-    fn draw(&self, pipeline: &Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
-        render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, pipeline.vertices.slice(..));
-        render_pass.set_index_buffer(pipeline.indices.slice(..), wgpu::IndexFormat::Uint32);
-
-        // Backdrop first, then the surface; the scattering pass then adds
-        // atmosphere over the whole disc (aerial perspective) and beyond
-        // the limb.
-        render_pass.set_pipeline(&pipeline.stars_pipeline);
-        render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
-
-        render_pass.set_pipeline(&pipeline.render_pipeline);
-        render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
-
-        render_pass.set_pipeline(&pipeline.atmosphere_pipeline);
-        render_pass.draw_indexed(0..pipeline.index_count, 0, 0..1);
-
-        true
-    }
-}
-
-pub struct Pipeline {
+/// Owns every long-lived wgpu object for the globe: textures, LUTs,
+/// mesh buffers, and the three render pipelines.
+pub struct GlobeRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
@@ -98,8 +35,8 @@ pub struct Pipeline {
     bind_group: wgpu::BindGroup,
 }
 
-impl shader::Pipeline for Pipeline {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+impl GlobeRenderer {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("globe shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/globe.wgsl").into()),
@@ -207,7 +144,7 @@ impl shader::Pipeline for Pipeline {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
 
@@ -372,8 +309,8 @@ impl shader::Pipeline for Pipeline {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("globe pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -409,7 +346,7 @@ impl shader::Pipeline for Pipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -460,7 +397,7 @@ impl shader::Pipeline for Pipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -498,7 +435,7 @@ impl shader::Pipeline for Pipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -512,6 +449,45 @@ impl shader::Pipeline for Pipeline {
             uniforms,
             bind_group,
         }
+    }
+
+    /// Writes the per-frame uniforms. Call before submitting the frame's
+    /// command buffer; `queue.write_buffer` is ordered before it.
+    pub fn prepare(&self, queue: &wgpu::Queue, camera: &Camera, sun: &Sun, aspect: f32) {
+        // The shader maps view directions back onto the star texture, so
+        // it needs the inverse rotation (= transpose, it's orthonormal).
+        let star_rot_inv = sun.star_rotation().transpose();
+        let star_cols = star_rot_inv.to_cols_array_2d();
+
+        let uniforms = Uniforms {
+            view_proj: camera.view_proj(aspect).to_cols_array(),
+            camera_pos: camera.eye().to_array(),
+            _pad0: 0.0,
+            sun_dir: sun.direction().to_array(),
+            _pad1: 0.0,
+            star_rot_inv: std::array::from_fn(|c| {
+                [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
+            }),
+        };
+        queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'_>) {
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vertices.slice(..));
+        render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
+
+        // Backdrop first, then the surface; the scattering pass then adds
+        // atmosphere over the whole disc (aerial perspective) and beyond
+        // the limb.
+        render_pass.set_pipeline(&self.stars_pipeline);
+        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+
+        render_pass.set_pipeline(&self.atmosphere_pipeline);
+        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 }
 

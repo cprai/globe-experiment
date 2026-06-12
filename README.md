@@ -1,8 +1,9 @@
 # Globe
 
 An interactive 3D Earth viewer, in the spirit of Google Earth, written
-in Rust with [iced](https://iced.rs) for the GUI and
-[wgpu](https://wgpu.rs) for rendering.
+in Rust with [wgpu](https://wgpu.rs) for rendering, [winit](https://github.com/rust-windowing/winit)
+for windowing and input, and [egui](https://github.com/emilk/egui) for
+the control overlay.
 
 ## Building and running
 
@@ -38,9 +39,11 @@ first build needs a network connection and takes a little longer.
 
 ## Project layout
 
-- `src/main.rs` — the iced application: window, sliders, messages.
-- `src/globe/` — the globe widget: camera, input handling, sun model,
-  and the wgpu rendering pipelines.
+- `src/main.rs` — the winit application: window, event loop, wgpu
+  surface, frame rendering, and the egui integration.
+- `src/ui.rs` — the egui sun control panel.
+- `src/globe/` — the globe itself: camera, mouse input handling, sun
+  model, and the wgpu rendering pipelines.
 - `shaders/globe.wgsl` — all shader code: surface, atmosphere, and
   star/sun backdrop.
 - `build.rs` — downloads the textures on first build.
