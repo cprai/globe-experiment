@@ -83,6 +83,11 @@ impl Gfx {
         if let Some(format) = caps.formats.iter().copied().find(|f| !f.is_srgb()) {
             config.format = format;
         }
+        // The default config takes the first advertised present mode, which
+        // is Mailbox on DX12 — unpaced rendering that makes scroll zoom and
+        // inertia judder. Vsync paces the animation loop to the refresh
+        // rate, matching iced's AutoVsync.
+        config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
 
         // All texture decoding, LUT baking, and pipeline creation happens

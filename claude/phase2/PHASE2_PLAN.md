@@ -260,3 +260,16 @@ All five milestones implemented in one pass. Notes for future sessions:
   `globe.wgsl` needs re-tuning. Side benefit: egui's widget colors
   are tuned for non-sRGB framebuffers, so the panel is also more
   faithful now.
+- **Present-mode correction (post-migration):** the owner reported
+  choppy trackpad scroll-zoom and inertia. Root cause:
+  `get_default_config` takes `present_modes.first()`, and wgpu-hal's
+  DX12 backend lists **Mailbox** first — unpaced rendering, so frames
+  follow the bursty input-event cadence and the inertia loop
+  free-runs with jittery dt instead of self-pacing at refresh rate.
+  iced used `AutoVsync`. Fixed by setting
+  `config.present_mode = wgpu::PresentMode::AutoVsync` in `Gfx::new`.
+  Lesson for both regressions: **`get_default_config` defaults
+  (format, present mode) are not iced parity — set them explicitly.**
+  Known residual: Windows precision touchpads quantize scroll to ±1
+  line = discrete ×0.9 zoom steps (also true in phase 1); smoothing
+  via an animated zoom target is the fix if it ever bothers.
