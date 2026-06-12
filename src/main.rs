@@ -74,11 +74,14 @@ impl Gfx {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .expect("surface unsupported by adapter");
-        // The shader writes linear color and relies on hardware sRGB
-        // encode at the surface.
+        // A non-sRGB surface stores the shader's linear output raw, which
+        // the display then reads as sRGB-encoded. That is what iced's
+        // default `web-colors` feature did in phase 1, and every shader
+        // look-tuning constant is calibrated to it; an sRGB surface
+        // (hardware encode) renders visibly brighter.
         let caps = surface.get_capabilities(&adapter);
-        if let Some(srgb) = caps.formats.iter().copied().find(|f| f.is_srgb()) {
-            config.format = srgb;
+        if let Some(format) = caps.formats.iter().copied().find(|f| !f.is_srgb()) {
+            config.format = format;
         }
         surface.configure(&device, &config);
 

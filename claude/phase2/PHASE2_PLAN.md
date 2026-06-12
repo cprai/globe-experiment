@@ -199,6 +199,9 @@ Architecture changes vs. phase 1:
   egui's colors are tuned for non-sRGB framebuffers; minor color
   dilation on widgets is possible and acceptable (two sliders). The
   globe shader *requires* the sRGB target, so the globe wins.
+  **(Disproven post-migration — see Status below: iced's default
+  `web-colors` feature had been selecting a non-sRGB surface all
+  along, and the shader tuning is calibrated to that.)**
 - **`RenderPass<'static>` for egui-wgpu**: use
   `render_pass.forget_lifetime()` — documented egui-wgpu pattern, fine
   as long as the pass doesn't outlive the encoder submission.
@@ -242,5 +245,18 @@ All five milestones implemented in one pass. Notes for future sessions:
   frame (egui resets it); skipped while the pointer is over the panel.
 - Smoke-tested: clean 15 s run, no validation errors, warning-free
   build, `iced` absent from Cargo.lock. Interaction feel and the
-  egui panel still need a manual pass on native Windows (the owner's
-  perf/feel environment).
+  egui panel manually verified by the owner on native Windows.
+- **Surface format correction (post-migration):** the owner reported
+  the migrated app rendered brighter than phase 1. Root cause: iced
+  0.14's *default* `web-colors` feature sets `GAMMA_CORRECTION =
+  false`, so iced's compositor picked a **non-sRGB** surface — the
+  shader's linear output was stored raw and read by the display as
+  sRGB, and all phase-1 look-tuning constants were calibrated to that
+  darker rendition. The migration initially preferred an sRGB surface
+  (hardware encode → brighter mid-tones). Fixed by selecting a
+  non-sRGB format in `Gfx::new` (`find(|f| !f.is_srgb())`), restoring
+  the phase-1 appearance. If the renderer ever moves to a
+  colorimetrically correct sRGB target, every look constant in
+  `globe.wgsl` needs re-tuning. Side benefit: egui's widget colors
+  are tuned for non-sRGB framebuffers, so the panel is also more
+  faithful now.
