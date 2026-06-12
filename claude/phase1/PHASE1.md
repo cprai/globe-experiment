@@ -2,8 +2,8 @@
 
 Snapshot at the end of phase 1 (2026-06-11). This documents everything an
 agent or developer needs to make changes without re-deriving the design.
-Companion docs: `claude/PLAN.md` (original milestones, all of v1 complete
-except tile streaming stretch goals) and `claude/OPTIMIZE.md` (startup
+Companion docs: `claude/phase1/PLAN.md` (original milestones, all of v1 complete
+except tile streaming stretch goals) and `claude/phase1/OPTIMIZE.md` (startup
 performance ideas, partially explored).
 
 ## What the project is
@@ -50,7 +50,7 @@ src/globe/pipeline.rs    shader::Primitive + Pipeline (all wgpu objects)
 src/globe/atmosphere.rs  CPU bake of the atmosphere LUTs
 shaders/globe.wgsl       ALL shader code (3 passes in one module)
 assets/                  gitignored; populated by build.rs on first build
-claude/                  planning/context docs (this file, PLAN, OPTIMIZE)
+claude/phase1/           planning/context docs (this file, PLAN, OPTIMIZE)
 ```
 
 ## iced integration (the part that's easy to get wrong)
