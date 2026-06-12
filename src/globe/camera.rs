@@ -39,10 +39,10 @@ impl Camera {
         self.latitude = (self.latitude + dlat).clamp(-89.0, 89.0);
     }
 
-    /// Scales the camera distance, clamped between just above the surface
-    /// and a full-globe view.
-    pub fn zoom(&mut self, factor: f32) {
-        self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    /// Clamps a camera distance to lie between just above the surface and
+    /// a full-globe view.
+    pub fn clamp_distance(distance: f32) -> f32 {
+        distance.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE)
     }
 
     /// Adjusts the tilt, clamped between straight-down and near-horizon.

@@ -270,6 +270,44 @@ All five milestones implemented in one pass. Notes for future sessions:
   `config.present_mode = wgpu::PresentMode::AutoVsync` in `Gfx::new`.
   Lesson for both regressions: **`get_default_config` defaults
   (format, present mode) are not iced parity — set them explicitly.**
-  Known residual: Windows precision touchpads quantize scroll to ±1
-  line = discrete ×0.9 zoom steps (also true in phase 1); smoothing
-  via an animated zoom target is the fix if it ever bothers.
+  Residual after that fix: Windows precision touchpads quantize
+  scroll (and the OS-synthesized momentum tail) into discrete wheel
+  events = stepped ×0.9 zoom jumps, visible during momentum when
+  events arrive sparsely. **Fixed with a rate-adaptive glide** in
+  `input.rs` (owner-tuned over three iterations): wheel events never
+  change the camera directly — they move a clamped target distance,
+  and `tick_zoom` eases the camera toward it each frame (exponential
+  approach in log space). The glide's half-life tracks an EMA of the
+  wheel-event gap, clamped to `ZOOM_HALF_LIFE_MIN..MAX`
+  (0.01–0.1 s): dense events (active scrolling, ~10 ms apart) make
+  it near-instant; sparse events (momentum tail, single mouse
+  notches) stretch the interpolation across exactly the gap that
+  would otherwise show as a step. Designs that were tried and
+  rejected: fixed-half-life always-glide (laggy during active
+  scrolling, worsened by a bug where each event reset the glide's
+  clock — an in-flight glide must keep its `tick`); a fixed
+  burst-gap split (instant if gap < 0.05 s, glide otherwise) —
+  failed because a trackpad's momentum tail starts dense and decays
+  *through* the threshold, so its mid-tail was classified as
+  "active" and stepped. `Camera::zoom(factor)` was replaced by
+  `Camera::clamp_distance`. (A no-smoothing version — direct
+  per-event zoom — was also briefly shipped at the owner's request
+  and then reverted by them in favor of the glide.)
+  **Extension — velocity bridging (2026-06-12):** the pure glide
+  visibly stalled at finger-lift: with the half-life adapted down to
+  ~10 ms by dense scrolling, the camera drained the target within a
+  frame or two of the last finger event and stopped dead until the
+  OS momentum tail's first events arrived. Fix in `input.rs`: the
+  `Zoom` state also tracks `velocity` (EMA of the rate events move
+  the target, log-distance/s) and `tick_zoom` keeps advancing the
+  target at that rate, decaying with `ZOOM_COAST_HALF_LIFE` (0.15 s)
+  and stopping below `ZOOM_STOP_RATE` (0.1/s). Each advance is
+  logged in `bridged` and *repaid* by the next wheel event (only the
+  remainder moves the target; surpluses carry forward), so while
+  events flow the total zoom still equals exactly what the device
+  sent — the velocity only fills delivery gaps. Reversing scroll
+  direction zeroes the coast; a first event after a pause starts
+  with zero velocity (no rate information), so single mouse notches
+  don't coast. Feel knobs: `ZOOM_COAST_HALF_LIFE` (coast length),
+  `ZOOM_STOP_RATE` (when it ends), `ZOOM_HALF_LIFE_MIN/MAX` (glide
+  response).
