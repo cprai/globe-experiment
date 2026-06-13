@@ -333,3 +333,19 @@ All five milestones implemented in one pass. Notes for future sessions:
   because intel_tex_2's prebuilt ISPC objects need the GCC C++
   personality (MSVC on Windows is unaffected); VRAM per texture
   dropped 128 MB → 32 MB and upload is 4× smaller.
+- **Hidden-until-ready window (2026-06-12):** the window is created
+  with `with_visible(false)` and revealed via `set_visible(true)`
+  right after the first `frame.present()`, so it appears with the
+  globe already rendered instead of sitting blank during startup
+  (the remaining startup cost after BC7 is GPU upload + LUT bake +
+  pipeline creation). Guard: if the first `get_current_texture`
+  reports `Occluded` (some backends treat a hidden window as
+  occluded), the window is shown and the frame retried rather than
+  deadlocking invisible.
+  **Bug found by the owner on Windows:** `request_redraw()` on a
+  hidden window never delivers `RedrawRequested` (Windows generates
+  paint messages only for visible windows), so the reveal code inside
+  `redraw()` was unreachable and the window never appeared. Fix:
+  `resumed()` calls `self.redraw()` directly for the first frame —
+  presenting to a hidden window works fine; only paint-event delivery
+  needs visibility. Don't "simplify" this back to `request_redraw()`.

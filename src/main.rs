@@ -43,6 +43,9 @@ struct Gfx {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
+    /// Whether the window has been made visible; flips on the first
+    /// presented frame.
+    shown: bool,
 }
 
 impl Gfx {
@@ -122,6 +125,7 @@ impl Gfx {
             egui_ctx,
             egui_state,
             egui_renderer,
+            shown: false,
         }
     }
 
@@ -138,16 +142,30 @@ impl ApplicationHandler for App {
             return;
         }
 
+        // The window stays hidden through device setup, texture upload,
+        // and pipeline creation; it's shown after the first frame is
+        // presented, so it appears with the globe already rendered
+        // instead of sitting blank while loading.
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Globe"))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("Globe")
+                        .with_visible(false),
+                )
                 .expect("create window"),
         );
 
         let gfx = Gfx::new(window);
         gfx.window.set_cursor(self.controller.cursor_icon());
-        gfx.window.request_redraw();
         self.gfx = Some(gfx);
+
+        // The first frame is rendered directly rather than via
+        // request_redraw(): a hidden window receives no RedrawRequested
+        // on Windows (paint events are only generated for visible
+        // windows), so waiting for one would deadlock with the window
+        // never shown. redraw() reveals the window after presenting.
+        self.redraw();
     }
 
     fn window_event(
@@ -231,8 +249,17 @@ impl App {
                 return;
             }
             // Hidden/minimized: skip the frame; the next expose event
-            // requests a redraw.
-            wgpu::CurrentSurfaceTexture::Occluded => return,
+            // requests a redraw. If the first frame lands here (some
+            // backends report the still-hidden window as occluded), show
+            // the window and retry rather than deadlocking invisible.
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                if !gfx.shown {
+                    gfx.shown = true;
+                    gfx.window.set_visible(true);
+                    gfx.window.request_redraw();
+                }
+                return;
+            }
             wgpu::CurrentSurfaceTexture::Validation => {
                 panic!("surface validation error on frame acquire")
             }
@@ -300,6 +327,12 @@ impl App {
             .submit(egui_commands.into_iter().chain([encoder.finish()]));
         gfx.window.pre_present_notify();
         frame.present();
+
+        // First frame is on the surface — reveal the window.
+        if !gfx.shown {
+            gfx.shown = true;
+            gfx.window.set_visible(true);
+        }
 
         for id in &full_output.textures_delta.free {
             gfx.egui_renderer.free_texture(id);
