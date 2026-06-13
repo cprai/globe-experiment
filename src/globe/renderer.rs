@@ -1,6 +1,5 @@
 use wgpu::util::DeviceExt;
 
-use super::atmosphere;
 use super::camera::Camera;
 use super::mesh::{self, Vertex};
 use super::sun::Sun;
@@ -99,30 +98,26 @@ impl GlobeRenderer {
             include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2")),
         );
 
-        let luts = atmosphere::bake();
-        let transmittance_view = upload_lut(
+        // The atmosphere LUTs are baked by the build script (see
+        // build.rs::bake_luts) into f16 KTX2 files — identical texels to
+        // the old runtime bake, uploaded like any other texture.
+        let transmittance_view = upload_ktx2(
             device,
             queue,
             "transmittance lut",
-            atmosphere::TRANSMITTANCE_WIDTH,
-            atmosphere::TRANSMITTANCE_HEIGHT,
-            &luts.transmittance,
+            include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2")),
         );
-        let inscatter_rayleigh_view = upload_lut(
+        let inscatter_rayleigh_view = upload_ktx2(
             device,
             queue,
             "inscatter rayleigh lut",
-            atmosphere::INSCATTER_WIDTH,
-            atmosphere::INSCATTER_HEIGHT,
-            &luts.inscatter_rayleigh,
+            include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2")),
         );
-        let inscatter_mie_view = upload_lut(
+        let inscatter_mie_view = upload_ktx2(
             device,
             queue,
             "inscatter mie lut",
-            atmosphere::INSCATTER_WIDTH,
-            atmosphere::INSCATTER_HEIGHT,
-            &luts.inscatter_mie,
+            include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2")),
         );
 
         let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -488,40 +483,9 @@ impl GlobeRenderer {
     }
 }
 
-fn upload_lut(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    label: &str,
-    width: u32,
-    height: u32,
-    texels: &[half::f16],
-) -> wgpu::TextureView {
-    let texture = device.create_texture_with_data(
-        queue,
-        &wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        wgpu::util::TextureDataOrder::LayerMajor,
-        bytemuck::cast_slice(texels),
-    );
-
-    texture.create_view(&wgpu::TextureViewDescriptor::default())
-}
-
-/// Uploads a build-script-produced KTX2 texture: the BC7 block data is
-/// copied to the GPU as-is. Requires `Features::TEXTURE_COMPRESSION_BC`
-/// on the device.
+/// Uploads a build-script-produced KTX2 texture: the texel data (BC7
+/// blocks or f16 LUT rows) is copied to the GPU as-is. BC7 requires
+/// `Features::TEXTURE_COMPRESSION_BC` on the device.
 fn upload_ktx2(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -535,6 +499,7 @@ fn upload_ktx2(
     let format = match header.format {
         Some(ktx2::Format::BC7_SRGB_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
         Some(ktx2::Format::BC7_UNORM_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnorm,
+        Some(ktx2::Format::R16G16B16A16_SFLOAT) => wgpu::TextureFormat::Rgba16Float,
         other => panic!("{label}: unexpected ktx2 format {other:?}"),
     };
 

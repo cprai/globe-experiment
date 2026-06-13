@@ -333,6 +333,24 @@ All five milestones implemented in one pass. Notes for future sessions:
   because intel_tex_2's prebuilt ISPC objects need the GCC C++
   personality (MSVC on Windows is unaffected); VRAM per texture
   dropped 128 MB → 32 MB and upload is 4× smaller.
+- **Build-time atmosphere LUT bake (2026-06-12, OPTIMIZE.md idea 2):**
+  `build.rs` includes `src/globe/atmosphere.rs` via a `#[path]` module
+  (the file is no longer part of the runtime crate — `mod atmosphere`
+  removed from `globe/mod.rs`, `half` moved to build-deps) and writes
+  the three tables as uncompressed `R16G16B16A16_SFLOAT` KTX2 files in
+  `OUT_DIR` (`transmittance.ktx2`, `inscatter_rayleigh.ktx2`,
+  `inscatter_mie.ktx2`). These are the *same f16 texels* the runtime
+  bake produced, so the output is bit-identical — pixel-for-pixel no
+  visual change. The renderer uploads them through the same
+  `upload_ktx2` path as the BC7 textures (new format arm →
+  `Rgba16Float`). Staleness is impossible by construction: unlike the
+  exists-skip BC7 cache, the bake reruns on every build-script
+  execution (sub-second), and cargo reruns the script exactly when
+  `atmosphere.rs`, `build.rs`, or an asset changes
+  (`rerun-if-changed`). Constants tweaks in atmosphere.rs now cost a
+  build-script rerun instead of an app restart — and the WGSL twin
+  constants still need manual sync as before. Startup now does zero
+  computation: upload + pipeline creation only.
 - **Hidden-until-ready window (2026-06-12):** the window is created
   with `with_visible(false)` and revealed via `set_visible(true)`
   right after the first `frame.present()`, so it appears with the

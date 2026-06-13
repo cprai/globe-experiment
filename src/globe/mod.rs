@@ -1,4 +1,3 @@
-mod atmosphere;
 pub mod camera;
 pub mod input;
 mod mesh;

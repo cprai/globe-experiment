@@ -9,7 +9,6 @@ egui = "0.34.3"
 egui-wgpu = "0.34.3"
 egui-winit = "0.34.3"
 glam = "0.33.1"
-half = { version = "2.7.1", features = ["bytemuck"] }
 ktx2 = "0.5"
 pollster = "0.4"
 wgpu = "29"
@@ -35,6 +34,8 @@ opt-level = 3
 opt-level = 3
 
 [build-dependencies]
+bytemuck = "1.25.0"
+half = { version = "2.7.1", features = ["bytemuck"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "tiff"] }
 intel_tex_2 = "0.5"
 ktx2 = "0.5"

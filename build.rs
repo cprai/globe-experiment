@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 
 use intel_tex_2::{RgbaSurface, bc7};
 
+/// The atmosphere LUT bake, shared with nothing at runtime anymore: the
+/// tables are baked here, written as KTX2, and the app only uploads them.
+#[path = "src/globe/atmosphere.rs"]
+mod atmosphere;
+
 /// Remote assets fetched into the gitignored assets directory, then
 /// transcoded to BC7 in a KTX2 container in `OUT_DIR` so the runtime can
 /// upload the bytes straight to the GPU with no decode step.
@@ -46,6 +51,55 @@ fn main() {
     for asset in ASSETS {
         let source = download_if_missing(asset.url);
         transcode_if_missing(&source, asset.srgb, &out_dir);
+    }
+
+    bake_luts(&out_dir);
+}
+
+/// Bakes the atmosphere LUTs and writes them as uncompressed
+/// `R16G16B16A16_SFLOAT` KTX2 files — the exact texels the runtime bake
+/// used to produce, so moving the bake here changes nothing visually.
+///
+/// Unlike the BC7 transcode this runs on *every* script execution: the
+/// bake is sub-second, and cargo reruns the script whenever
+/// `src/globe/atmosphere.rs` (or `build.rs` itself) changes, so the
+/// tables can never go stale after a constants tweak.
+fn bake_luts(out_dir: &Path) {
+    println!("cargo::rerun-if-changed=src/globe/atmosphere.rs");
+
+    let luts = atmosphere::bake();
+
+    let tables: [(&str, u32, u32, &[half::f16]); 3] = [
+        (
+            "transmittance",
+            atmosphere::TRANSMITTANCE_WIDTH,
+            atmosphere::TRANSMITTANCE_HEIGHT,
+            &luts.transmittance,
+        ),
+        (
+            "inscatter_rayleigh",
+            atmosphere::INSCATTER_WIDTH,
+            atmosphere::INSCATTER_HEIGHT,
+            &luts.inscatter_rayleigh,
+        ),
+        (
+            "inscatter_mie",
+            atmosphere::INSCATTER_WIDTH,
+            atmosphere::INSCATTER_HEIGHT,
+            &luts.inscatter_mie,
+        ),
+    ];
+
+    for (name, width, height, texels) in tables {
+        let ktx = write_ktx2(
+            ktx2::Format::R16G16B16A16_SFLOAT,
+            width,
+            height,
+            bytemuck::cast_slice(texels),
+        );
+        let dest = out_dir.join(format!("{name}.ktx2"));
+        fs::write(&dest, ktx)
+            .unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
     }
 }
 
@@ -139,7 +193,8 @@ fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> V
     let dfd_offset = ktx2::Header::LENGTH + ktx2::LevelIndex::LENGTH;
     // The DFD section is a 4-byte total-length field plus the block.
     let dfd_length = 4 + dfd_block.serialized_length();
-    // Level data must be aligned to the texel block size (16 for BC7).
+    // Level data must be aligned to the texel block size (16 for BC7,
+    // 8 for RGBA16F — 16 covers both).
     let data_offset = (dfd_offset + dfd_length).next_multiple_of(16);
 
     let header = ktx2::Header {

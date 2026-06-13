@@ -38,6 +38,10 @@ the runtime bake cost zero.
   A disk cache keyed on a hash of the constants is the middle ground:
   runtime bake on miss, instant load on hit.
 - Effort: medium.
+- **(Implemented in phase 2, 2026-06-12 — see the status section of
+  claude/phase2/PHASE2_PLAN.md. No hash cache needed: cargo's
+  rerun-if-changed on atmosphere.rs is the cache key, and the
+  sub-second bake just reruns whenever the script does.)**
 
 ## 3. Shrink or pre-process the textures
 
