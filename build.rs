@@ -229,15 +229,16 @@ fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> V
     out
 }
 
-/// Precomputed atmosphere lookup tables, after Hillaire 2020 ("A Scalable
-/// and Production Ready Sky and Atmosphere Rendering Technique") with
-/// Earth's standard medium: Rayleigh and Mie scattering plus an ozone
-/// absorption layer.
-///
-/// This code is build-time only — the app uploads the baked KTX2 tables
-/// and never touches this math at runtime — so it lives in the build
-/// script rather than the runtime crate.
 mod atmosphere {
+    //! Precomputed atmosphere lookup tables, after Hillaire 2020 ("A
+    //! Scalable and Production Ready Sky and Atmosphere Rendering
+    //! Technique") with Earth's standard medium: Rayleigh and Mie
+    //! scattering plus an ozone absorption layer.
+    //!
+    //! This code is build-time only — the app uploads the baked KTX2
+    //! tables and never touches this math at runtime — so it lives in the
+    //! build script rather than the runtime crate.
+    //!
     //! Two kinds of LUT are baked on the CPU:
     //!
     //! - Transmittance: fraction of sunlight surviving from a point to the
