@@ -590,6 +590,15 @@ which remains fully accurate.** A summary of the load-bearing points:
   phase 1; do not reintroduce without asking. (Less relevant now that
   decode moved to build time, but the upload loop is still sequential by
   intent.)
+  **Update (2026-06-13):** superseded on explicit request —
+  `GlobeRenderer::new` is now parallelized with **rayon** (added as a
+  dependency). The phase-1 revert was about decode + LUT bake, both of
+  which moved to build time; the remaining runtime work was re-parallelized:
+  `rayon::join` runs shader-module compilation alongside the 8 KTX2 GPU
+  uploads (`into_par_iter`), and a nested join compiles the 3 render
+  pipelines concurrently. Cheap device-object creation (buffers,
+  samplers, bind-group layout) is left sequential on purpose. This is
+  intentional now — do not treat it as the reverted change.
 - **The hidden-window first frame must render via a direct `redraw()`
   call**, not `request_redraw()` (Windows paint-event delivery). Don't
   simplify it.

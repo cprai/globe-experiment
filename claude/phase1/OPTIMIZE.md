@@ -25,6 +25,14 @@ they're a small fraction of the cost.
 
 - Effort: small.
 - Risk: low; the tasks share nothing.
+- **(Update 2026-06-13: implemented with rayon — but the landscape
+  changed first. The decode and LUT bake this idea targeted both moved to
+  build time (ideas 3b and 2), so they no longer run at startup. What
+  remained — shader-module compile, 8 KTX2 GPU uploads, 3 pipeline
+  compiles — was parallelized in `GlobeRenderer::new` via `rayon::join` +
+  `into_par_iter`. See the status log in claude/phase2/PHASE2_PLAN.md.
+  Note this reverses the phase-1 "keep it sequential" revert, on the
+  owner's explicit request.)**
 
 ## 2. Move the atmosphere bake to build time
 

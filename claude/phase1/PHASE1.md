@@ -80,6 +80,11 @@ claude/phase1/           planning/context docs (this file, PLAN, OPTIMIZE)
 - **Loading is intentionally sequential.** A parallel `thread::scope`
   version was implemented and then deliberately reverted by the project
   owner. Do not reintroduce it without asking.
+  *(Post-phase-1 update, 2026-06-13: this reverted version parallelized
+  texture decode + LUT bake, which both later moved to build time. On
+  explicit request, the remaining runtime setup in renderer.rs — module
+  compile, KTX2 uploads, pipeline compiles — was re-parallelized with
+  rayon. See claude/phase2/PHASE2.md and PHASE2_PLAN.md.)*
 - **iced creates the wgpu device with `Features::empty()`** (verified in
   iced_wgpu 0.14 compositor source) and provides no way to request
   features. Consequences: no BC/compressed texture formats, no

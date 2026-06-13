@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use wgpu::util::DeviceExt;
 
 use super::camera::Camera;
@@ -36,11 +37,6 @@ pub struct GlobeRenderer {
 
 impl GlobeRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("globe shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/globe.wgsl").into()),
-        });
-
         let mesh = mesh::uv_sphere(STACKS, SLICES);
 
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -64,61 +60,59 @@ impl GlobeRenderer {
 
         // The build script transcodes every texture to BC7 in a KTX2
         // container (sRGB for the color maps, linear for the normal and
-        // specular data maps), so uploads are straight memcpys — no
-        // image decoding happens at runtime.
-        let day_view = upload_ktx2(
-            device,
-            queue,
-            "earth day texture",
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2")),
-        );
-        let night_view = upload_ktx2(
-            device,
-            queue,
-            "earth night texture",
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2")),
-        );
-        let normal_view = upload_ktx2(
-            device,
-            queue,
-            "earth normal texture",
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2")),
-        );
-        let specular_view = upload_ktx2(
-            device,
-            queue,
-            "earth specular texture",
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2")),
+        // specular data maps) and bakes the atmosphere LUTs into f16 KTX2,
+        // so uploads are straight memcpys — no image decode or LUT bake
+        // happens at runtime.
+        //
+        // The eight uploads are mutually independent, and shader-module
+        // compilation (naga parse + validation) is independent of all of
+        // them, so the module is compiled on one rayon task while the
+        // textures upload in parallel across the rest of the pool. Device,
+        // Queue, and the produced views/module are all Send + Sync.
+        let texture_inputs: [(&str, &[u8]); 8] = [
+            ("earth day texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2"))),
+            ("earth night texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2"))),
+            ("earth normal texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2"))),
+            ("earth specular texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2"))),
+            // The atmosphere LUTs are baked by the build script (see
+            // build.rs::bake_luts) — uploaded like any other texture.
+            ("transmittance lut", include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2"))),
+            ("inscatter rayleigh lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2"))),
+            ("inscatter mie lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2"))),
+            ("stars texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2"))),
+        ];
+
+        let (module, views) = rayon::join(
+            || {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("globe shader"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("../../shaders/globe.wgsl").into(),
+                    ),
+                })
+            },
+            || {
+                texture_inputs
+                    .into_par_iter()
+                    .map(|(label, bytes)| upload_ktx2(device, queue, label, bytes))
+                    .collect::<Vec<_>>()
+            },
         );
 
-        let stars_view = upload_ktx2(
-            device,
-            queue,
-            "stars texture",
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2")),
-        );
-
-        // The atmosphere LUTs are baked by the build script (see
-        // build.rs::bake_luts) into f16 KTX2 files — identical texels to
-        // the old runtime bake, uploaded like any other texture.
-        let transmittance_view = upload_ktx2(
-            device,
-            queue,
-            "transmittance lut",
-            include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2")),
-        );
-        let inscatter_rayleigh_view = upload_ktx2(
-            device,
-            queue,
-            "inscatter rayleigh lut",
-            include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2")),
-        );
-        let inscatter_mie_view = upload_ktx2(
-            device,
-            queue,
-            "inscatter mie lut",
-            include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2")),
-        );
+        // par_iter preserves input order, so the views line up with
+        // `texture_inputs` above and the bindings below.
+        let [
+            day_view,
+            night_view,
+            normal_view,
+            specular_view,
+            transmittance_view,
+            inscatter_rayleigh_view,
+            inscatter_mie_view,
+            stars_view,
+        ]: [wgpu::TextureView; 8] = views
+            .try_into()
+            .expect("upload_ktx2 returns one view per input");
 
         let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("transmittance lut sampler"),
@@ -305,7 +299,11 @@ impl GlobeRenderer {
             immediate_size: 0,
         });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        // The three pipelines share the module and layout but each does
+        // independent backend pipeline-state compilation, so they build
+        // concurrently. (&Device/&ShaderModule/&PipelineLayout are Sync,
+        // so the shared borrows below are sound across rayon tasks.)
+        let make_render_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("globe pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -342,7 +340,7 @@ impl GlobeRenderer {
             cache: None,
         });
 
-        let atmosphere_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let make_atmosphere_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("atmosphere pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -393,7 +391,7 @@ impl GlobeRenderer {
             cache: None,
         });
 
-        let stars_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let make_stars_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("stars pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -430,6 +428,11 @@ impl GlobeRenderer {
             multiview_mask: None,
             cache: None,
         });
+
+        let (render_pipeline, (atmosphere_pipeline, stars_pipeline)) = rayon::join(
+            make_render_pipeline,
+            || rayon::join(make_atmosphere_pipeline, make_stars_pipeline),
+        );
 
         Self {
             render_pipeline,

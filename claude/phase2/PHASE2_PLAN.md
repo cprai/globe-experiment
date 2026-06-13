@@ -22,7 +22,9 @@ These files have zero iced coupling and are ported untouched (only
 - `build.rs` + `assets/` flow — texture download, `include_bytes!`
   embedding, sequential loading. **Loading stays sequential** — the
   parallel version was deliberately reverted by the owner; do not
-  reintroduce it.
+  reintroduce it. *(Superseded 2026-06-13 — re-parallelized with rayon
+  on explicit request; see the status-log entry at the end of this
+  file.)*
 - The three-pass, no-depth-buffer draw order (stars → surface →
   atmosphere) and every shader constant / look-tuning value.
 
@@ -385,3 +387,22 @@ All five milestones implemented in one pass. Notes for future sessions:
   `resumed()` calls `self.redraw()` directly for the first frame —
   presenting to a hidden window works fine; only paint-event delivery
   needs visibility. Don't "simplify" this back to `request_redraw()`.
+- **Parallelize renderer setup with rayon (2026-06-13, OPTIMIZE idea 1):**
+  done on explicit owner request, reversing the phase-1
+  "loading stays sequential" stance — but note the phase-1 revert was of a
+  `thread::scope` that parallelized texture **decode + LUT bake**, and both
+  of those moved to build time since (BC7 transcode + build-time bake), so
+  this parallelizes a *different*, smaller surface. `GlobeRenderer::new`
+  now: (a) one `rayon::join` runs `create_shader_module` (naga
+  parse/validate) on one task while the **8 KTX2 textures upload in
+  parallel** via `into_par_iter` + `upload_ktx2` on the rest of the pool
+  (par_iter preserves order, so the collected views still line up with the
+  bindings); (b) a nested `rayon::join` compiles the **3 render pipelines**
+  concurrently (they share the module + layout — both `Sync` — and each
+  does independent backend PSO compilation). Cheap device-object creation
+  (vertex/index/uniform buffers, 2 samplers, bind-group layout, bind group)
+  stays sequential: it serializes on the device's internal lock anyway, so
+  threading microsecond calls only adds noise. New dep: `rayon = "1.10"`.
+  Verified: `cargo clippy` clean, ~40 s `cargo run` smoke test with no
+  wgpu validation panic. Output unchanged (same uniforms/passes/bindings).
+  WSLg can't validate feel/colors; owner perf-tests on native Windows.
