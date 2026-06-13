@@ -42,6 +42,11 @@ the runtime bake cost zero.
   claude/phase2/PHASE2_PLAN.md. No hash cache needed: cargo's
   rerun-if-changed on atmosphere.rs is the cache key, and the
   sub-second bake just reruns whenever the script does.)**
+- **(Update 2026-06-13: the bake code was inlined directly into
+  `build.rs` as `mod atmosphere` and `src/globe/atmosphere.rs` deleted.
+  The cache key is now `build.rs` itself — cargo always reruns the
+  script when it changes — rather than a separate rerun-if-changed on
+  atmosphere.rs.)**
 
 ## 3. Shrink or pre-process the textures
 

@@ -71,6 +71,10 @@ Build-dependencies:
 - `half = { version = "2.7", features = ["bytemuck"] }`,
   `bytemuck = "1.25"` — the atmosphere LUT bake (`src/globe/atmosphere.rs`
   pulled into the build script via `#[path]`) and its f16 conversion.
+  **Update (2026-06-13):** the bake source was inlined directly into
+  `build.rs` (as an in-file `mod atmosphere`); `src/globe/atmosphere.rs`
+  no longer exists and the `#[path]` include is gone. The build-deps are
+  unchanged.
 
 Profile: `[profile.dev.package.X] opt-level = 3` for `image`,
 `zune-jpeg`, `zune-core`, `tiff`, `miniz_oxide`, `weezl` — these now
@@ -89,6 +93,8 @@ on Windows resolves its C++ runtime automatically and is unaffected.
 build.rs                 downloads 5 textures, BC7→KTX2 transcodes them,
                          AND bakes the atmosphere LUTs to KTX2, all into
                          OUT_DIR; pulls in atmosphere.rs via #[path]
+                         [2026-06-13: atmosphere.rs was inlined into
+                         build.rs as `mod atmosphere`; no #[path] anymore]
 .cargo/config.toml       Linux-only -lstdc++ for intel_tex_2
 src/main.rs              winit ApplicationHandler: App + Gfx, event loop,
                          wgpu surface/device, frame loop, egui integration
@@ -103,6 +109,8 @@ src/globe/sun.rs         sun position + star map orientation
 src/globe/mesh.rs        UV-sphere generator
 src/globe/atmosphere.rs  CPU bake of the atmosphere LUTs — compiled into
                          build.rs, NOT into the runtime crate
+                         [2026-06-13: REMOVED — bake now lives inline in
+                         build.rs as `mod atmosphere`; this file is gone]
 shaders/globe.wgsl       ALL shader code (3 passes in one module)
 assets/                  gitignored; downloaded textures (build input)
 OUT_DIR/*.ktx2           gitignored build artifacts, include_bytes!'d:
@@ -357,6 +365,17 @@ cache this reruns on **every** script execution (the bake is
 sub-second), so the tables can never go stale after a constants tweak —
 no hash-cache needed, cargo's rerun-if-changed is the cache key.
 
+> **Update (2026-06-13):** the bake source is now **inlined directly in
+> `build.rs`** as an in-file `mod atmosphere { … }`; `src/globe/
+> atmosphere.rs` was deleted and the `#[path]` include removed. The
+> paragraph above is otherwise accurate — `bake_luts` still calls
+> `atmosphere::bake()` (now resolving to the inline module), the three
+> KTX2 outputs and their f16 texels are unchanged (bit-identical). The
+> `cargo::rerun-if-changed=src/globe/atmosphere.rs` line was **removed**
+> (it pointed at a missing file); cargo already reruns the script on any
+> change to `build.rs` itself, so the "never goes stale" guarantee holds
+> with `build.rs` as the cache key.
+
 ### `write_ktx2` (shared by 2 and 3)
 
 Hand-serializes a single-level 2D KTX2 using the `ktx2` crate's own
@@ -500,7 +519,11 @@ byte-for-byte what phase 1 shipped. The **only** structural change is
 *where the bake runs*: phase 1 baked the LUTs on the calling thread
 inside `Pipeline::new` at first frame; phase 2 bakes them in `build.rs`
 and ships f16 KTX2 files, so the runtime just uploads them (see Build
-system above). The texels are bit-identical. For the full detailed
+system above). The texels are bit-identical.
+(**2026-06-13:** the bake source `src/globe/atmosphere.rs` was inlined
+into `build.rs` as `mod atmosphere`; the math is byte-for-byte the same.
+Wherever this section says `atmosphere.rs`, the code now lives in that
+inline module in `build.rs`.) For the full detailed
 reference — texture inventory, equirectangular mapping both directions,
 analytic tangent frame, Cook-Torrance GGX BRDF, wave noise, day/night
 terminator, the Hillaire-2020 single-scattering model, transmittance
@@ -555,6 +578,11 @@ which remains fully accurate.** A summary of the load-bearing points:
   `atmosphere.rs` (now build-only) and `globe.wgsl` and must stay in
   sync. Tweaking them now costs a build-script rerun (cargo reruns on
   `atmosphere.rs` change) rather than an app restart.
+  **Update (2026-06-13):** `atmosphere.rs` is now the inline
+  `mod atmosphere` in `build.rs`, so one set of these constants lives
+  there and the other in `globe.wgsl` — still duplicated, still must
+  stay in sync. The rerun is now keyed on `build.rs` changing (cargo
+  always reruns the script on that), not on a separate file.
 - **Zoom feel is exhaustively iterated** — tune the named constants,
   don't restructure the glide/coast. See PHASE2_PLAN status log.
 - **Texture loading stays sequential** — a parallel `thread::scope`

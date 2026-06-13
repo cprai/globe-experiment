@@ -494,6 +494,14 @@ to rgb because T_sun is colored).
 
 ### LUT precomputation pipeline (atmosphere.rs, function by function)
 
+> **Note (post-phase-1):** the bake no longer runs at runtime. Phase 2
+> moved it to build time (`build.rs`, see PHASE2.md), and on 2026-06-13
+> the `src/globe/atmosphere.rs` source was inlined into `build.rs` as an
+> in-file `mod atmosphere` and the file deleted. The function-by-function
+> description below is still accurate — the code is byte-for-byte the
+> same, it just lives in that inline module now and runs at build time
+> rather than inside `Pipeline::new`.
+
 Runs once on the calling thread inside `Pipeline::new`, before any
 upload. Entry point `bake() -> Luts`:
 

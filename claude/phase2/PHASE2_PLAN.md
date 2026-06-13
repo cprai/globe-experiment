@@ -351,6 +351,24 @@ All five milestones implemented in one pass. Notes for future sessions:
   build-script rerun instead of an app restart — and the WGSL twin
   constants still need manual sync as before. Startup now does zero
   computation: upload + pipeline creation only.
+  **Update (2026-06-13):** the `#[path]`-included `atmosphere.rs` was
+  later inlined directly into `build.rs` — see the
+  "Inline the LUT bake into build.rs" entry below. The behavior in this
+  entry is unchanged; only the *location* of the bake source moved.
+- **Inline the LUT bake into build.rs (2026-06-13):** `src/globe/
+  atmosphere.rs` was deleted and its contents moved verbatim into
+  `build.rs` as an in-file `mod atmosphere { … }`. Rationale: the file
+  was already build-only (pulled in via `#[path]`, not part of the
+  runtime crate), so the indirection bought nothing — one fewer file to
+  reason about, and the bake source now sits next to the `bake_luts`
+  caller. `bake_luts` is unchanged (still calls `atmosphere::bake()` /
+  `atmosphere::TRANSMITTANCE_WIDTH` etc., now resolving to the inline
+  module). The `cargo::rerun-if-changed=src/globe/atmosphere.rs` line was
+  **removed**: it pointed at a now-missing path (which would have forced
+  a rebuild every run), and cargo always reruns the script when `build.rs`
+  itself changes — so the "tables can never go stale" guarantee is
+  preserved, just keyed on `build.rs` now. Output is bit-identical; zero
+  visual change. Verified with `cargo check` (runs + compiles the script).
 - **Hidden-until-ready window (2026-06-12):** the window is created
   with `with_visible(false)` and revealed via `set_visible(true)`
   right after the first `frame.present()`, so it appears with the
