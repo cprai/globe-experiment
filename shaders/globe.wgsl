@@ -64,6 +64,22 @@ const PI: f32 = 3.14159265;
 const WAVE_SCALE: f32 = 2200.0;
 const WAVE_STRENGTH: f32 = 0.04;
 
+// --- Emissive city lights (procedural, from the night map's brightness) ---
+// A pixel is a "city" when its night-map luminance clears the threshold.
+const EMISSIVE_THRESHOLD: f32 = 0.05;
+const EMISSIVE_SOFTNESS: f32 = 0.1;
+// Bright yellow glow; STRENGTH > 1 drives the core toward clip (LDR).
+const EMISSIVE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.85, 0.3);
+const EMISSIVE_STRENGTH: f32 = 1.5;
+// Dither-dissolve: begins at this sun cosine (deeper night = more
+// negative) and completes at the terminator (cos_sun = 0).
+const EMISSIVE_FADE_START: f32 = -0.15;
+// Noise grain (cells across the unit sphere). Fixed — no terminator ramp,
+// for a temporally coherent dissolve under sun motion.
+const DITHER_SCALE: f32 = 400.0;
+// How dark the day map goes on the unlit hemisphere (0 = black night).
+const NIGHT_DARKNESS: f32 = 1.2;
+
 fn hash2(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
 }
@@ -86,6 +102,46 @@ fn wave_noise(uv: vec2<f32>) -> f32 {
     let n1 = value_noise(uv * WAVE_SCALE);
     let n2 = value_noise(uv * WAVE_SCALE * 2.3);
     return n1 * 0.65 + n2 * 0.35;
+}
+
+// Integer-lattice bit-mixing hash. Precision-safe at large coordinates,
+// unlike fract(sin(...)) — important here because n_geo * DITHER_SCALE
+// pushes the lattice indices into the hundreds, where f32 sin() loses
+// precision and the noise develops visible banding. p arrives as an
+// integer-valued vec3 (the floored cell corner).
+fn hash3(p: vec3<f32>) -> f32 {
+    var n = u32(i32(p.x)) * 1597334677u
+        ^ u32(i32(p.y)) * 3812015801u
+        ^ u32(i32(p.z)) * 2369874511u;
+    n = (n ^ (n >> 15u)) * 2246822519u;
+    n = (n ^ (n >> 13u)) * 3266489917u;
+    n = n ^ (n >> 16u);
+    return f32(n) / 4294967295.0;
+}
+
+// Trilinearly-interpolated 3D value noise. Sampled at the unit-sphere
+// surface position, so it has no seam and no pole pinch.
+fn value_noise_3d(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+
+    let c000 = hash3(i + vec3<f32>(0.0, 0.0, 0.0));
+    let c100 = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
+    let c010 = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
+    let c110 = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
+    let c001 = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
+    let c101 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
+    let c011 = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
+    let c111 = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
+
+    let x00 = mix(c000, c100, u.x);
+    let x10 = mix(c010, c110, u.x);
+    let x01 = mix(c001, c101, u.x);
+    let x11 = mix(c011, c111, u.x);
+    let y0 = mix(x00, x10, u.y);
+    let y1 = mix(x01, x11, u.y);
+    return mix(y0, y1, u.z);
 }
 
 // --- Atmosphere, after Hillaire 2020. ---
@@ -216,11 +272,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             + (1.0 - DAY_AMBIENT) * n_dot_l * sun_light)
         + specular * sun_light;
 
-    // Blend to the emissive night side (city lights) across a softened
-    // terminator. Uses the geometric normal so bump detail doesn't
-    // speckle the day/night edge.
+    // Night side: the day map darkened by sun geometry — no night
+    // texture as color. The geometric normal feeds the terminator so
+    // bump detail doesn't speckle the day/night edge.
     let daylight = smoothstep(-0.12, 0.18, cos_sun);
-    let surface = mix(night, day_lit, daylight);
+    let night_factor = mix(NIGHT_DARKNESS, 1.0, daylight);
+    var surface = day_lit * night_factor;
+
+    // City mask: a single uniform luminance threshold on the night map.
+    let night_brightness = dot(night, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lit = smoothstep(
+        EMISSIVE_THRESHOLD,
+        EMISSIVE_THRESHOLD + EMISSIVE_SOFTNESS,
+        night_brightness,
+    );
+
+    // Dither-dissolve toward the terminator. fade goes 0 deep on the
+    // night side (EMISSIVE_FADE_START) to 1 at the terminator
+    // (cos_sun = 0), so the lights are fully gone by the lit side.
+    let fade = smoothstep(EMISSIVE_FADE_START, 0.0, cos_sun);
+
+    // Fixed-grain noise anchored to the 3D surface position: no crawl on
+    // zoom/rotate, and a stable per-pixel dissolve order under sun
+    // motion. step() is a hard per-pixel dither — each pixel switches off
+    // when fade crosses its own noise value, so cities erode as a
+    // coherent wipe and survivors stay at full (uniform) brightness.
+    let dither = value_noise_3d(n_geo * DITHER_SCALE);
+    let keep = step(fade, dither);
+
+    surface += lit * keep * EMISSIVE_COLOR * EMISSIVE_STRENGTH;
 
     return vec4<f32>(surface, 1.0);
 }
