@@ -36,14 +36,3 @@ first build needs a network connection and takes a little longer.
   and the time-of-day sliders.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
   any zoom level, from full-globe spins down to country level.
-
-## Project layout
-
-- `src/main.rs` - the winit application: window, event loop, wgpu
-  surface, frame rendering, and the egui integration.
-- `src/ui.rs` - the egui sun control panel.
-- `src/globe/` - the globe itself: camera, mouse input handling, sun
-  model, and the wgpu rendering pipelines.
-- `shaders/globe.wgsl` - all shader code: surface, atmosphere, and
-  star/sun backdrop.
-- `build.rs` - downloads the textures on first build.
