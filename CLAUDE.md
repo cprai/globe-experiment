@@ -123,6 +123,20 @@ cargo run --release
 - **Tune and feel-test on a native Windows release build.** The WSLg dev
   environment here cannot validate exact colors or interaction feel.
 
+### Documentation
+- **Keep all documentation current with the code, in the same change** —
+  code comments, `CLAUDE.md`, `MEMORY.md`, and `README.md`. When you change
+  behavior, structure, an interface, or a documented constant, update the
+  matching comment and doc section as part of that change, not "later."
+  Stale docs are treated as bugs (this repo has had several — e.g. comments
+  that pointed at a deleted `atmosphere.rs`, or a "sequential loading" note
+  that survived the switch to rayon).
+- **One allowed exception**: the dated live-constant snapshot in `MEMORY.md`
+  §13 (and specific look-tuning numbers) may lag owner tuning — for live
+  values the **source is authoritative** (see Tuning discipline above).
+  Everything else — architecture, behavior, the rules/conventions here, the
+  file map — must stay accurate.
+
 ---
 
 ## Deliberately reverted / rejected — do not re-add without asking
@@ -173,6 +187,10 @@ the owner. Re-introducing them silently is a regression.
   guide.
 - Each subsystem is one module under `src/globe/`; `globe/mod.rs` is
   declarations only (no logic).
+- **Run `cargo fmt` after every code change** (`.rs` edits). rustfmt with
+  the default config is the sole formatting authority — don't hand-format,
+  and keep diffs limited to real changes. (`cargo fmt` does not touch
+  `shaders/globe.wgsl`; format WGSL by hand to match the surrounding code.)
 
 ### Where things live
 - **Shader look knobs**: top of `shaders/globe.wgsl` (`const` block).
@@ -211,6 +229,11 @@ the owner. Re-introducing them silently is a regression.
 
 - There is **no test suite and no CI**. Verification is the smoke test
   above plus manual interaction on native Windows.
+- **Check correctness with `cargo clippy`, not just `cargo build`** — run
+  it heavily and aim for warning-free. clippy catches misuse, redundancy,
+  and footguns the bare compiler misses. Caveat: neither command validates
+  `shaders/globe.wgsl` — naga compiles WGSL only at runtime, so a clean
+  build/clippy says nothing about the shader; you must run the app.
 - Manual pass to run after risky changes: pan, flick (inertia), zoom to
   min/max, tilt to clamp, both sun sliders, window resize,
   minimize/restore. Confirm idle renders **zero** frames.
