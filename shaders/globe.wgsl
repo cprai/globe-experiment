@@ -149,9 +149,10 @@ fn value_noise_3d(p: vec3<f32>) -> f32 {
 }
 
 // --- Atmosphere, after Hillaire 2020. ---
-// The medium definition and all scattering integrals live in
-// src/globe/atmosphere.rs, which bakes them into LUTs at startup. The
-// geometric constants here must stay in sync with the Rust twins.
+// The medium definition and all scattering integrals live in the
+// `mod atmosphere` in build.rs, which bakes them into LUTs at build
+// time. The geometric constants here must stay in sync with the Rust
+// twins.
 // Lengths are kilometers.
 const PLANET_RADIUS_KM: f32 = 6360.0;
 const ATMOSPHERE_TOP_KM: f32 = 6460.0;
@@ -353,7 +354,7 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
 
     // Reference point and the LUT's split row mapping: lower half is
     // ground-hitting rays, upper half limb rays. Must match the bake in
-    // src/globe/atmosphere.rs.
+    // build.rs (mod atmosphere).
     let ground = ray_sphere(origin, dir, PLANET_RADIUS_KM);
     var reference: vec3<f32>;
     var v: f32;

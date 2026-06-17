@@ -94,9 +94,10 @@ impl Gfx {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
 
-        // All texture decoding, LUT baking, and pipeline creation happens
-        // here, before the first frame. Loading is intentionally
-        // sequential (a parallel version was deliberately reverted).
+        // Shader-module compilation, texture upload, and pipeline
+        // creation happen here, before the first frame; decoding and the
+        // LUT bake already ran at build time (build.rs). This work is
+        // parallelized internally with rayon (see GlobeRenderer::new).
         let globe = GlobeRenderer::new(&device, &queue, config.format);
 
         let egui_ctx = egui::Context::default();
