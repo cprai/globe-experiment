@@ -555,17 +555,17 @@ Why it works:
   corners with a `f²(3−2f)` fade. Single octave (a second octave is an easy
   quality bump; keep it fixed-scale to preserve the coherent wipe).
 
-> **Design note (`NIGHT_DARKNESS = 1.2` is intentional)**: since
-> `night_factor = mix(NIGHT_DARKNESS, 1.0, daylight)`, a value > 1 makes the
-> unlit hemisphere ~20 % **brighter** than full daylight. This is a
-> deliberate departure from the original PHASE3 plan's near-black-night
-> intent (`~0.02`) — the owner set it this way on purpose; the globe reads
-> bright all the way around with the city glow layered on top. **This is the
-> shipped look — do not "revert" it toward the plan's value.**
-> (`EMISSIVE_THRESHOLD = 0.05` likewise diverges from the plan's starting
-> `0.25`, making the city mask more permissive.) Mechanically, `DAY_AMBIENT`
-> sets the floor of `day_lit` and `night_factor` scales it, so `< 1` would
-> darken the night side (`0` = black night).
+> **Design note — both values below are intentional (owner-confirmed)**:
+> two live constants deliberately depart from the original PHASE3 plan's
+> starting values, and both are the shipped look — **do not "revert" them
+> toward the plan's numbers.** (1) **`NIGHT_DARKNESS = 1.2`** (plan `~0.02`):
+> since `night_factor = mix(NIGHT_DARKNESS, 1.0, daylight)`, a value > 1
+> makes the unlit hemisphere ~20 % **brighter** than full daylight, so the
+> globe reads bright all the way around with the city glow on top. (2)
+> **`EMISSIVE_THRESHOLD = 0.05`** (plan `0.25`): a deliberately more
+> permissive city mask, so more of the night map clears it. Mechanically,
+> `DAY_AMBIENT` sets the floor of `day_lit` and `night_factor` scales it, so
+> a `NIGHT_DARKNESS < 1` would darken the night side (`0` = black night).
 
 A naming gotcha hit during implementation: the noise var cannot be `n`
 (that's the perturbed normal) — it is `dither`.
