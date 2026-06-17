@@ -70,16 +70,40 @@ impl GlobeRenderer {
         // textures upload in parallel across the rest of the pool. Device,
         // Queue, and the produced views/module are all Send + Sync.
         let texture_inputs: [(&str, &[u8]); 8] = [
-            ("earth day texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2"))),
-            ("earth night texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2"))),
-            ("earth normal texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2"))),
-            ("earth specular texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2"))),
+            (
+                "earth day texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2")),
+            ),
+            (
+                "earth night texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2")),
+            ),
+            (
+                "earth normal texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2")),
+            ),
+            (
+                "earth specular texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2")),
+            ),
             // The atmosphere LUTs are baked by the build script (see
             // build.rs::bake_luts) - uploaded like any other texture.
-            ("transmittance lut", include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2"))),
-            ("inscatter rayleigh lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2"))),
-            ("inscatter mie lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2"))),
-            ("stars texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2"))),
+            (
+                "transmittance lut",
+                include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2")),
+            ),
+            (
+                "inscatter rayleigh lut",
+                include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2")),
+            ),
+            (
+                "inscatter mie lut",
+                include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2")),
+            ),
+            (
+                "stars texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2")),
+            ),
         ];
 
         let (module, views) = rayon::join(
@@ -303,136 +327,142 @@ impl GlobeRenderer {
         // independent backend pipeline-state compilation, so they build
         // concurrently. (&Device/&ShaderModule/&PipelineLayout are Sync,
         // so the shared borrows below are sound across rayon tasks.)
-        let make_render_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("globe pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x2,
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make_render_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("globe pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let make_atmosphere_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("atmosphere pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_atmosphere"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x2,
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_atmosphere"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    // Additive: scattering brightens what's behind it.
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // Render the far side of the shell so it spans the
-                // whole silhouette, beyond the planet's limb.
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make_atmosphere_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("atmosphere pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_atmosphere"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_atmosphere"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // Additive: scattering brightens what's behind it.
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // Render the far side of the shell so it spans the
+                    // whole silhouette, beyond the planet's limb.
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let make_stars_pipeline = || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("stars pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_stars"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x2,
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_stars"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // The sky sphere is seen from inside.
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make_stars_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("stars pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_stars"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_stars"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // The sky sphere is seen from inside.
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let (render_pipeline, (atmosphere_pipeline, stars_pipeline)) = rayon::join(
-            make_render_pipeline,
-            || rayon::join(make_atmosphere_pipeline, make_stars_pipeline),
-        );
+        let (render_pipeline, (atmosphere_pipeline, stars_pipeline)) =
+            rayon::join(make_render_pipeline, || {
+                rayon::join(make_atmosphere_pipeline, make_stars_pipeline)
+            });
 
         Self {
             render_pipeline,

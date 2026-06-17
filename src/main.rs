@@ -50,8 +50,7 @@ struct Gfx {
 
 impl Gfx {
     fn new(window: Arc<Window>) -> Self {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(window.clone())
             .expect("create surface");
@@ -269,7 +268,8 @@ impl App {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let aspect = gfx.config.width as f32 / gfx.config.height.max(1) as f32;
-        gfx.globe.prepare(&gfx.queue, &self.camera, &self.sun, aspect);
+        gfx.globe
+            .prepare(&gfx.queue, &self.camera, &self.sun, aspect);
 
         let primitives = gfx
             .egui_ctx

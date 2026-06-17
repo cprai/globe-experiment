@@ -91,8 +91,7 @@ fn bake_luts(out_dir: &Path) {
             bytemuck::cast_slice(texels),
         );
         let dest = out_dir.join(format!("{name}.ktx2"));
-        fs::write(&dest, ktx)
-            .unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
+        fs::write(&dest, ktx).unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
     }
 }
 

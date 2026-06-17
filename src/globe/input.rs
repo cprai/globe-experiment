@@ -111,7 +111,10 @@ impl Controller {
                 button,
                 ..
             } => {
-                let releases_drag = self.drag.as_ref().is_some_and(|drag| drag.button == *button);
+                let releases_drag = self
+                    .drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.button == *button);
 
                 if !releases_drag {
                     return false;
@@ -198,9 +201,7 @@ impl Controller {
                 // few events when a scroll speeds up or trails off.
                 self.wheel_gap += (gap - self.wheel_gap) * 0.5;
 
-                let half_life = self
-                    .wheel_gap
-                    .clamp(ZOOM_HALF_LIFE_MIN, ZOOM_HALF_LIFE_MAX);
+                let half_life = self.wheel_gap.clamp(ZOOM_HALF_LIFE_MIN, ZOOM_HALF_LIFE_MAX);
 
                 // Events only move the target; `tick` glides the camera
                 // toward it each frame, paced to the event cadence. An
