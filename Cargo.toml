@@ -1,6 +1,5 @@
 [package]
-name = "iced-test-app"
-version = "0.1.0"
+name = "globe-experiment"
 edition = "2024"
 
 [dependencies]

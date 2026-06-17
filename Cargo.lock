@@ -823,6 +823,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "898f5a568a84989b6c0f8caa50a93074b97dbdc58fc6d9543157bb4562758933"
 
 [[package]]
+name = "globe-experiment"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "glam",
+ "half",
+ "image",
+ "intel_tex_2",
+ "ktx2",
+ "pollster",
+ "rayon",
+ "ureq",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -943,26 +963,6 @@ name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
-
-[[package]]
-name = "iced-test-app"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "glam",
- "half",
- "image",
- "intel_tex_2",
- "ktx2",
- "pollster",
- "rayon",
- "ureq",
- "wgpu",
- "winit",
-]
 
 [[package]]
 name = "icu_collections"

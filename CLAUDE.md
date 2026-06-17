@@ -20,8 +20,8 @@ rendering, **egui 0.34** for the sun-slider overlay. It renders a
 physically lit Earth (day/night, procedural city lights, normal-mapped
 relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
 a star/sun backdrop, with an orbital pan/tilt/zoom camera. The crate is
-still named `iced-test-app` for historical reasons — **iced is no longer
-a dependency**; do not reintroduce it.
+named `globe-experiment`; **iced is no longer a dependency** (removed in
+phase 2) — do not reintroduce it.
 
 ## Build & run
 

@@ -15,8 +15,8 @@ snapshot (2026-06-17). Always read the source for live values; the §
 ## 1. What it is, the stack, the file map
 
 A Google-Earth-style 3D globe viewer. Rust edition 2024. The crate is
-named `iced-test-app` for historical reasons (iced was removed in
-phase 2). Feature set: day/night Earth with procedural city lights,
+named `globe-experiment` (formerly `iced-test-app`, until iced was
+removed in phase 2). Feature set: day/night Earth with procedural city lights,
 normal-mapped terrain relief, GGX ocean sun-glint, Hillaire-2020
 precomputed-LUT atmospheric scattering, star + sun backdrop, orbital
 camera with pan/tilt/zoom + flick inertia + smoothed zoom, two egui
@@ -79,9 +79,7 @@ CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
 Note: `src/globe/atmosphere.rs` **no longer exists** — the bake source was
-inlined into `build.rs` as `mod atmosphere` (2026-06-13). Older docs and
-the package name still reference both atmosphere.rs and iced; both are
-historical.
+inlined into `build.rs` as `mod atmosphere` (2026-06-13).
 
 ---
 
