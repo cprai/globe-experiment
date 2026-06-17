@@ -81,7 +81,9 @@ const EMISSIVE_FADE_END: f32 = 0.15;
 // Noise grain (cells across the unit sphere). Fixed - no terminator ramp,
 // for a temporally coherent dissolve under sun motion.
 const DITHER_SCALE: f32 = 400.0;
-// How dark the day map goes on the unlit hemisphere (0 = black night).
+// Day-map multiplier for the unlit hemisphere: < 1 darkens (0 = black
+// night), > 1 brightens. Intentionally 1.2 - the night side reads a
+// touch brighter than full daylight.
 const NIGHT_DARKNESS: f32 = 1.2;
 
 fn hash2(p: vec2<f32>) -> f32 {

@@ -555,15 +555,17 @@ Why it works:
   corners with a `f²(3−2f)` fade. Single octave (a second octave is an easy
   quality bump; keep it fixed-scale to preserve the coherent wipe).
 
-> **Tuning caveat**: as of the snapshot, `NIGHT_DARKNESS = 1.2`. Since
+> **Design note (`NIGHT_DARKNESS = 1.2` is intentional)**: since
 > `night_factor = mix(NIGHT_DARKNESS, 1.0, daylight)`, a value > 1 makes the
-> unlit hemisphere ~20 % **brighter** than full daylight — the opposite of
-> the plan's near-black-night intent (`~0.02`). Likewise
-> `EMISSIVE_THRESHOLD = 0.05` is far more permissive than the plan's `0.25`.
-> Both look like mid-tuning, not a settled look — **confirm intent before
-> "fixing" them.** The mechanism is correct regardless of the value.
-> (`DAY_AMBIENT` sets the floor of `day_lit`, which `night_factor` then
-> scales; to darken the night side, lower `DAY_AMBIENT` first.)
+> unlit hemisphere ~20 % **brighter** than full daylight. This is a
+> deliberate departure from the original PHASE3 plan's near-black-night
+> intent (`~0.02`) — the owner set it this way on purpose; the globe reads
+> bright all the way around with the city glow layered on top. **This is the
+> shipped look — do not "revert" it toward the plan's value.**
+> (`EMISSIVE_THRESHOLD = 0.05` likewise diverges from the plan's starting
+> `0.25`, making the city mask more permissive.) Mechanically, `DAY_AMBIENT`
+> sets the floor of `day_lit` and `night_factor` scales it, so `< 1` would
+> darken the night side (`0` = black night).
 
 A naming gotcha hit during implementation: the noise var cannot be `n`
 (that's the perturbed normal) — it is `dither`.
@@ -780,7 +782,7 @@ WAVE_SCALE 2200.0   WAVE_STRENGTH 0.04
 EMISSIVE_THRESHOLD 0.05   EMISSIVE_SOFTNESS 0.1
 EMISSIVE_COLOR (1.0, 0.85, 0.3)   EMISSIVE_STRENGTH 1.5
 EMISSIVE_FADE_START -0.15   EMISSIVE_FADE_END 0.15
-DITHER_SCALE 400.0   NIGHT_DARKNESS 1.2      // <- see tuning caveat (§10)
+DITHER_SCALE 400.0   NIGHT_DARKNESS 1.2      // >1 brightens night side, intentional (§10)
 PLANET_RADIUS_KM 6360.0   ATMOSPHERE_TOP_KM 6460.0   MIE_G 0.8   SUN_INTENSITY 12.0
 STARS_RADIUS 35.0   STARS_BRIGHTNESS 0.8
 SUN_ANGULAR_RADIUS 0.012   SUN_GLOW_RADIUS 0.12   SUN_GLOW_STRENGTH 0.5
@@ -824,8 +826,6 @@ Other standing items:
 - **No mipmaps** → far-zoom shimmer; the city-light dither can twinkle/alias
   sub-pixel at low zoom (no MSAA). Mitigations: lower `DITHER_SCALE`, or swap
   `step(fade, dither)` for a narrow `smoothstep`.
-- **NIGHT_DARKNESS / EMISSIVE_THRESHOLD are mid-tuning** (§10) — settle on a
-  native build.
 - **Expose emissive params (threshold/strength/color/fade) as uniforms +
   egui controls** for interactive tuning.
 - **Second noise octave** in `value_noise_3d` if the grain reads too regular
