@@ -72,8 +72,12 @@ const EMISSIVE_SOFTNESS: f32 = 0.1;
 const EMISSIVE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.85, 0.3);
 const EMISSIVE_STRENGTH: f32 = 1.5;
 // Dither-dissolve: begins at this sun cosine (deeper night = more
-// negative) and completes at the terminator (cos_sun = 0).
+// negative) and completes at EMISSIVE_FADE_END.
 const EMISSIVE_FADE_START: f32 = -0.15;
+// Sun cosine at which the dissolve completes. Positive values let the
+// lights bleed past the terminator (cos_sun = 0) onto the daylit side, so
+// some daylit areas stay lit; 0 fully extinguishes them at the terminator.
+const EMISSIVE_FADE_END: f32 = 0.15;
 // Noise grain (cells across the unit sphere). Fixed - no terminator ramp,
 // for a temporally coherent dissolve under sun motion.
 const DITHER_SCALE: f32 = 400.0;
@@ -287,10 +291,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         night_brightness,
     );
 
-    // Dither-dissolve toward the terminator. fade goes 0 deep on the
-    // night side (EMISSIVE_FADE_START) to 1 at the terminator
-    // (cos_sun = 0), so the lights are fully gone by the lit side.
-    let fade = smoothstep(EMISSIVE_FADE_START, 0.0, cos_sun);
+    // Dither-dissolve across the terminator. fade goes 0 deep on the
+    // night side (EMISSIVE_FADE_START) to 1 at EMISSIVE_FADE_END; when
+    // that end is positive the dissolve finishes on the daylit side, so
+    // lights linger a little past the terminator before fully clearing.
+    let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sun);
 
     // Fixed-grain noise anchored to the 3D surface position: no crawl on
     // zoom/rotate, and a stable per-pixel dissolve order under sun
