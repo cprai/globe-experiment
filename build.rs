@@ -45,7 +45,7 @@ fn main() {
 
     for asset in ASSETS {
         let source = download_if_missing(asset.url);
-        transcode_if_missing(&source, asset.srgb, &out_dir);
+        transcode(&source, asset.srgb, &out_dir);
     }
 
     bake_luts(&out_dir);
@@ -131,20 +131,18 @@ fn download_if_missing(url: &str) -> PathBuf {
 }
 
 /// Decodes `source`, BC7-compresses it, and writes `<stem>.ktx2` into
-/// `out_dir`, skipping the (slow) encode when the output already exists.
-/// The source images never change, so existence is enough; delete the
-/// `.ktx2` files from `OUT_DIR` (or the whole target dir) to force a
-/// re-encode after changing encoder settings here.
-fn transcode_if_missing(source: &Path, srgb: bool, out_dir: &Path) {
+/// `out_dir`. This runs unconditionally on every build-script execution;
+/// cargo decides when that happens via the `cargo::rerun-if-changed` line
+/// per asset in `download_if_missing` (plus build.rs itself). So a
+/// no-change rebuild skips the script entirely and does no encoding, while
+/// editing a texture on disk — or the encoder settings in this script —
+/// reruns the script and refreshes the output.
+fn transcode(source: &Path, srgb: bool, out_dir: &Path) {
     let stem = source
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_else(|| panic!("no file stem in {source:?}"));
     let dest = out_dir.join(format!("{stem}.ktx2"));
-
-    if dest.exists() {
-        return;
-    }
 
     let image = image::open(source)
         .unwrap_or_else(|error| panic!("decode {source:?}: {error}"))
