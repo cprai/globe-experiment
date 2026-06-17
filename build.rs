@@ -52,7 +52,7 @@ fn main() {
 }
 
 /// Bakes the atmosphere LUTs and writes them as uncompressed
-/// `R16G16B16A16_SFLOAT` KTX2 files — the exact texels the old runtime
+/// `R16G16B16A16_SFLOAT` KTX2 files - the exact texels the old runtime
 /// bake produced, so baking here changes nothing visually.
 ///
 /// Unlike the BC7 transcode this runs on *every* script execution: the
@@ -135,7 +135,7 @@ fn download_if_missing(url: &str) -> PathBuf {
 /// cargo decides when that happens via the `cargo::rerun-if-changed` line
 /// per asset in `download_if_missing` (plus build.rs itself). So a
 /// no-change rebuild skips the script entirely and does no encoding, while
-/// editing a texture on disk — or the encoder settings in this script —
+/// editing a texture on disk - or the encoder settings in this script -
 /// reruns the script and refreshes the output.
 fn transcode(source: &Path, srgb: bool, out_dir: &Path) {
     let stem = source
@@ -185,7 +185,7 @@ fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> V
     // The DFD section is a 4-byte total-length field plus the block.
     let dfd_length = 4 + dfd_block.serialized_length();
     // Level data must be aligned to the texel block size (16 for BC7,
-    // 8 for RGBA16F — 16 covers both).
+    // 8 for RGBA16F - 16 covers both).
     let data_offset = (dfd_offset + dfd_length).next_multiple_of(16);
 
     let header = ktx2::Header {
@@ -233,8 +233,8 @@ mod atmosphere {
     //! Technique") with Earth's standard medium: Rayleigh and Mie
     //! scattering plus an ozone absorption layer.
     //!
-    //! This code is build-time only — the app uploads the baked KTX2
-    //! tables and never touches this math at runtime — so it lives in the
+    //! This code is build-time only - the app uploads the baked KTX2
+    //! tables and never touches this math at runtime - so it lives in the
     //! build script rather than the runtime crate.
     //!
     //! Two kinds of LUT are baked on the CPU:

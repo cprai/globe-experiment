@@ -59,7 +59,7 @@ const PI: f32 = 3.14159265;
 
 // Wave texture on the ocean specular: scale is in noise cells across the
 // equirectangular map, strength is the +/- fraction of the glint
-// modulated. Keep the strength low — it should read as surface texture,
+// modulated. Keep the strength low - it should read as surface texture,
 // not sparkle.
 const WAVE_SCALE: f32 = 2200.0;
 const WAVE_STRENGTH: f32 = 0.04;
@@ -74,7 +74,7 @@ const EMISSIVE_STRENGTH: f32 = 1.5;
 // Dither-dissolve: begins at this sun cosine (deeper night = more
 // negative) and completes at the terminator (cos_sun = 0).
 const EMISSIVE_FADE_START: f32 = -0.15;
-// Noise grain (cells across the unit sphere). Fixed — no terminator ramp,
+// Noise grain (cells across the unit sphere). Fixed - no terminator ramp,
 // for a temporally coherent dissolve under sun motion.
 const DITHER_SCALE: f32 = 400.0;
 // How dark the day map goes on the unlit hemisphere (0 = black night).
@@ -105,7 +105,7 @@ fn wave_noise(uv: vec2<f32>) -> f32 {
 }
 
 // Integer-lattice bit-mixing hash. Precision-safe at large coordinates,
-// unlike fract(sin(...)) — important here because n_geo * DITHER_SCALE
+// unlike fract(sin(...)) - important here because n_geo * DITHER_SCALE
 // pushes the lattice indices into the hundreds, where f32 sin() loses
 // precision and the noise develops visible banding. p arrives as an
 // integer-valued vec3 (the floored cell corner).
@@ -272,7 +272,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             + (1.0 - DAY_AMBIENT) * n_dot_l * sun_light)
         + specular * sun_light;
 
-    // Night side: the day map darkened by sun geometry — no night
+    // Night side: the day map darkened by sun geometry - no night
     // texture as color. The geometric normal feeds the terminator so
     // bump detail doesn't speckle the day/night edge.
     let daylight = smoothstep(-0.12, 0.18, cos_sun);
@@ -294,7 +294,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Fixed-grain noise anchored to the 3D surface position: no crawl on
     // zoom/rotate, and a stable per-pixel dissolve order under sun
-    // motion. step() is a hard per-pixel dither — each pixel switches off
+    // motion. step() is a hard per-pixel dither - each pixel switches off
     // when fade crosses its own noise value, so cities erode as a
     // coherent wipe and survivors stay at full (uniform) brightness.
     let dither = value_noise_3d(n_geo * DITHER_SCALE);
@@ -401,7 +401,7 @@ const STARS_RADIUS: f32 = 35.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
 // The sun disc, drawn into the backdrop along the sun direction. The
-// real sun subtends ~0.0046 rad (0.53°); this one is drawn a little
+// real sun subtends ~0.0046 rad (0.53 deg); this one is drawn a little
 // larger because it reads better. The glow is the standard LDR cheat
 // for brightness: a clipped-white core inside a wide soft falloff.
 const SUN_ANGULAR_RADIUS: f32 = 0.012;
@@ -413,7 +413,7 @@ struct StarsOutput {
     @builtin(position) position: vec4<f32>,
     // Camera-relative view direction, rotated into the star map's base
     // frame. The backdrop is at infinity, so everything on it is a
-    // function of view direction from the eye — anchoring it to the sky
+    // function of view direction from the eye - anchoring it to the sky
     // sphere's surface instead would parallax against the sun.
     @location(0) dir: vec3<f32>,
     // The same view direction in the world frame, for the sun.

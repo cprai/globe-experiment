@@ -14,10 +14,10 @@ pub struct Mesh {
 
 /// Generates a unit UV sphere.
 ///
-/// `u` maps longitude (-180° at u=0 to +180° at u=1) and `v` maps latitude
+/// `u` maps longitude (-180 deg at u=0 to +180 deg at u=1) and `v` maps latitude
 /// from the north pole (v=0) to the south pole (v=1), matching an
 /// equirectangular texture. The seam column at u=0/u=1 is duplicated so the
-/// texture can wrap. Longitude 0°, latitude 0° faces +Z; +Y is north.
+/// texture can wrap. Longitude 0 deg, latitude 0 deg faces +Z; +Y is north.
 pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
     let mut vertices = Vec::with_capacity(((stacks + 1) * (slices + 1)) as usize);
 

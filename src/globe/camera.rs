@@ -7,7 +7,7 @@ use glam::{Mat4, Quat, Vec3};
 pub struct Camera {
     /// Longitude of the look-at point, in degrees.
     pub longitude: f32,
-    /// Latitude of the look-at point, in degrees. Clamped to ±89°.
+    /// Latitude of the look-at point, in degrees. Clamped to +/-89 deg.
     pub latitude: f32,
     /// Distance from the camera to the look-at point, in globe radii.
     pub distance: f32,

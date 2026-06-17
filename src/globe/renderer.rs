@@ -61,7 +61,7 @@ impl GlobeRenderer {
         // The build script transcodes every texture to BC7 in a KTX2
         // container (sRGB for the color maps, linear for the normal and
         // specular data maps) and bakes the atmosphere LUTs into f16 KTX2,
-        // so uploads are straight memcpys — no image decode or LUT bake
+        // so uploads are straight memcpys - no image decode or LUT bake
         // happens at runtime.
         //
         // The eight uploads are mutually independent, and shader-module
@@ -75,7 +75,7 @@ impl GlobeRenderer {
             ("earth normal texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2"))),
             ("earth specular texture", include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2"))),
             // The atmosphere LUTs are baked by the build script (see
-            // build.rs::bake_luts) — uploaded like any other texture.
+            // build.rs::bake_luts) - uploaded like any other texture.
             ("transmittance lut", include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2"))),
             ("inscatter rayleigh lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2"))),
             ("inscatter mie lut", include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2"))),

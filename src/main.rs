@@ -89,7 +89,7 @@ impl Gfx {
             config.format = format;
         }
         // The default config takes the first advertised present mode, which
-        // is Mailbox on DX12 — unpaced rendering that makes scroll zoom and
+        // is Mailbox on DX12 - unpaced rendering that makes scroll zoom and
         // inertia judder. Vsync paces the animation loop to the refresh
         // rate, matching iced's AutoVsync.
         config.present_mode = wgpu::PresentMode::AutoVsync;
@@ -328,7 +328,7 @@ impl App {
         gfx.window.pre_present_notify();
         frame.present();
 
-        // First frame is on the surface — reveal the window.
+        // First frame is on the surface - reveal the window.
         if !gfx.shown {
             gfx.shown = true;
             gfx.window.set_visible(true);

@@ -29,7 +29,7 @@ const WHEEL_GAP_CAP: f32 = 0.25;
 /// events stop feeding it.
 const ZOOM_COAST_HALF_LIFE: f32 = 0.15;
 /// Coasting stops below this zoom rate, in natural-log distance per
-/// second (0.1 ≈ 10% of the camera distance per second).
+/// second (0.1 ~ 10% of the camera distance per second).
 const ZOOM_STOP_RATE: f32 = 0.1;
 
 /// Translates window mouse events into camera motion: left-drag pan with
@@ -314,7 +314,7 @@ impl Controller {
         // Coast: keep the target moving at the rate the wheel events
         // established, decaying once they stop. This is what carries the
         // motion across the silence between a finger lift and the first
-        // momentum-tail event — without it the glide drains its target
+        // momentum-tail event - without it the glide drains its target
         // and visibly stalls there. The advance is logged in `bridged`
         // and repaid by the next event, so nothing is counted twice.
         zoom.velocity *= 0.5f32.powf(dt / ZOOM_COAST_HALF_LIFE);
@@ -326,7 +326,7 @@ impl Controller {
             zoom.velocity = 0.0;
         }
 
-        // Exponential approach in log space — zoom is multiplicative, so
+        // Exponential approach in log space - zoom is multiplicative, so
         // this keeps the glide's perceived speed uniform at any altitude.
         let blend = 1.0 - 0.5f32.powf(dt / zoom.half_life);
         let ratio = zoom.target / camera.distance;

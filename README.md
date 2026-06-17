@@ -11,7 +11,7 @@ the control overlay.
 cargo run --release
 ```
 
-That's it — the required textures (NASA-derived earth maps and a star
+That's it - the required textures (NASA-derived earth maps and a star
 field from [Solar System Scope](https://www.solarsystemscope.com/textures/))
 are downloaded automatically into `assets/` on the first build, so the
 first build needs a network connection and takes a little longer.
@@ -29,7 +29,7 @@ first build needs a network connection and takes a little longer.
 
 - A fully lit Earth: day and night sides with city lights, terrain
   relief, and a sun glint on the oceans.
-- A physically based atmosphere with realistic sky colors — watch the
+- A physically based atmosphere with realistic sky colors - watch the
   terminator band glow orange at sunset, and the blue halo hug the
   planet's edge.
 - The sun and a star backdrop that stay in sync as you move the camera
@@ -39,11 +39,11 @@ first build needs a network connection and takes a little longer.
 
 ## Project layout
 
-- `src/main.rs` — the winit application: window, event loop, wgpu
+- `src/main.rs` - the winit application: window, event loop, wgpu
   surface, frame rendering, and the egui integration.
-- `src/ui.rs` — the egui sun control panel.
-- `src/globe/` — the globe itself: camera, mouse input handling, sun
+- `src/ui.rs` - the egui sun control panel.
+- `src/globe/` - the globe itself: camera, mouse input handling, sun
   model, and the wgpu rendering pipelines.
-- `shaders/globe.wgsl` — all shader code: surface, atmosphere, and
+- `shaders/globe.wgsl` - all shader code: surface, atmosphere, and
   star/sun backdrop.
-- `build.rs` — downloads the textures on first build.
+- `build.rs` - downloads the textures on first build.
