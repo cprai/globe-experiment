@@ -21,7 +21,10 @@ physically lit Earth (day/night, procedural city lights, normal-mapped
 relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
 a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
-in kilometers** (so it can host real-scale orbital simulation). The crate is
+in kilometers** (so it can host real-scale orbital simulation). It also tracks
+a satellite: an embedded TLE is propagated with the **satkit** crate's SGP4 to
+a fixed datetime and drawn as a marker circle, with that datetime shown in the
+UI. The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
 phase 2) — do not reintroduce it.
 
@@ -80,9 +83,14 @@ cargo run --release
 
 ### Rendering invariants
 - **No depth buffer anywhere.** Draw order does all occlusion: stars →
-  surface → atmosphere, in that order, into one render pass. This only
-  works because the scene is convex spheres. Do not add geometry that
-  breaks that assumption without also adding a depth attachment.
+  surface → atmosphere → satellite marker, in that order, into one render
+  pass. This only works because the scene is convex spheres. Do not add
+  geometry that breaks that assumption without also adding a depth
+  attachment. The **marker is a screen-space overlay** drawn last (a
+  constant-pixel circle generated from the vertex index, alpha-blended); it
+  has no depth, so its occlusion behind the globe is decided **on the CPU**
+  (`marker_occluded` in `renderer.rs`, a ray vs. mean-radius sphere) and
+  passed to the shader as a visible flag.
 - **Idle = zero GPU work.** `main()` sets `ControlFlow::Wait`; frames are
   driven *only* by targeted `window.request_redraw()` (input changed the
   camera, inertia/zoom glide coasting, egui repaint, resize, surface
@@ -220,6 +228,10 @@ the owner. Re-introducing them silently is a regression.
   `src/globe/earth.rs`.
 - **Camera limits**: `Camera` associated consts in `src/globe/camera.rs` (in
   km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
+- **Satellite tracking**: `src/globe/satellite.rs` (TLE parse + SGP4 + frame
+  conversion to a world-space km point). The TLE is `assets/TLE.txt`, embedded
+  via `include_str!` (assets/ is gitignored, like the textures). The fixed
+  evaluation datetime + marker colors live there and in the marker shader.
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
 
 ---

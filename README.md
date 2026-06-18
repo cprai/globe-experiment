@@ -39,3 +39,6 @@ first build needs a network connection and takes a little longer.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.
+- Satellite tracking: a TLE (the ISS) is propagated with SGP4 (via the
+  [satkit](https://crates.io/crates/satkit) crate) and shown as a marker on
+  the globe, with the prediction's datetime and ground position in the panel.

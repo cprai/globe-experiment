@@ -11,6 +11,10 @@ glam = "0.33.1"
 ktx2 = "0.5"
 pollster = "0.4"
 rayon = "1.10"
+# SGP4 propagation of the space-station TLE. default-features off drops the
+# `download` feature (runtime data fetch via ureq); SGP4 + the TEME->ITRF
+# rotation we use need no downloaded EOP/data files.
+satkit = { version = "0.18", default-features = false }
 wgpu = "29"
 winit = "0.30"
 

@@ -12,6 +12,7 @@ use winit::window::{Window, WindowId};
 use globe::camera::Camera;
 use globe::input::Controller;
 use globe::renderer::GlobeRenderer;
+use globe::satellite::Satellite;
 use globe::sun::Sun;
 
 fn main() {
@@ -28,6 +29,8 @@ fn main() {
 struct App {
     camera: Camera,
     sun: Sun,
+    /// The tracked space station (parsed/propagated once from the TLE).
+    satellite: Satellite,
     controller: Controller,
     gfx: Option<Gfx>,
 }
@@ -224,9 +227,9 @@ impl App {
             .tick(&mut self.camera, gfx.config.height as f32);
 
         let raw_input = gfx.egui_state.take_egui_input(&gfx.window);
-        let full_output = gfx
-            .egui_ctx
-            .run_ui(raw_input, |ui| ui::sun_panel(ui.ctx(), &mut self.sun));
+        let full_output = gfx.egui_ctx.run_ui(raw_input, |ui| {
+            ui::sun_panel(ui.ctx(), &mut self.sun, &self.satellite)
+        });
         gfx.egui_state
             .handle_platform_output(&gfx.window, full_output.platform_output);
 
@@ -268,9 +271,14 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let aspect = gfx.config.width as f32 / gfx.config.height.max(1) as f32;
-        gfx.globe
-            .prepare(&gfx.queue, &self.camera, &self.sun, aspect);
+        let viewport = (gfx.config.width as f32, gfx.config.height as f32);
+        gfx.globe.prepare(
+            &gfx.queue,
+            &self.camera,
+            &self.sun,
+            &self.satellite,
+            viewport,
+        );
 
         let primitives = gfx
             .egui_ctx

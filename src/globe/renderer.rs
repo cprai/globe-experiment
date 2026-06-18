@@ -1,12 +1,18 @@
+use glam::Vec3;
 use rayon::prelude::*;
 use wgpu::util::DeviceExt;
 
 use super::camera::Camera;
+use super::earth;
 use super::mesh::{self, Vertex};
+use super::satellite::Satellite;
 use super::sun::Sun;
 
 const STACKS: u32 = 64;
 const SLICES: u32 = 128;
+
+/// Radius of the on-screen station marker, in pixels.
+const MARKER_RADIUS_PX: f32 = 6.0;
 
 /// Per-frame shader uniforms. Layout must match `Uniforms` in globe.wgsl:
 /// vec3 fields are padded to 16-byte alignment.
@@ -20,6 +26,11 @@ struct Uniforms {
     _pad1: f32,
     /// Inverse star map rotation; mat3x3 columns padded to vec4 stride.
     star_rot_inv: [[f32; 4]; 3],
+    /// Space-station marker world position (km); vec3 padded to vec4.
+    sat_pos: [f32; 3],
+    _pad2: f32,
+    /// Marker params: x,y = viewport size px, z = radius px, w = visible.
+    marker: [f32; 4],
 }
 
 /// Owns every long-lived wgpu object for the globe: textures, LUTs,
@@ -28,6 +39,7 @@ pub struct GlobeRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
+    marker_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -462,15 +474,55 @@ impl GlobeRenderer {
             })
         };
 
-        let (render_pipeline, (atmosphere_pipeline, stars_pipeline)) =
+        // The space-station marker: a constant-pixel-size circle generated
+        // from the vertex index (no vertex buffer), alpha-blended over the
+        // finished scene, drawn last.
+        let make_marker_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("marker pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_marker"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_marker"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // Standard alpha blend for the antialiased edge.
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // A screen-facing quad; no culling.
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        let (render_pipeline, (atmosphere_pipeline, (stars_pipeline, marker_pipeline))) =
             rayon::join(make_render_pipeline, || {
-                rayon::join(make_atmosphere_pipeline, make_stars_pipeline)
+                rayon::join(make_atmosphere_pipeline, || {
+                    rayon::join(make_stars_pipeline, make_marker_pipeline)
+                })
             });
 
         Self {
             render_pipeline,
             atmosphere_pipeline,
             stars_pipeline,
+            marker_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
@@ -480,22 +532,44 @@ impl GlobeRenderer {
     }
 
     /// Writes the per-frame uniforms. Call before submitting the frame's
-    /// command buffer; `queue.write_buffer` is ordered before it.
-    pub fn prepare(&self, queue: &wgpu::Queue, camera: &Camera, sun: &Sun, aspect: f32) {
+    /// command buffer; `queue.write_buffer` is ordered before it. `viewport`
+    /// is the surface size in pixels (width, height).
+    pub fn prepare(
+        &self,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        sun: &Sun,
+        satellite: &Satellite,
+        viewport: (f32, f32),
+    ) {
+        let (width, height) = viewport;
+        let aspect = width / height.max(1.0);
+
         // The shader maps view directions back onto the star texture, so
         // it needs the inverse rotation (= transpose, it's orthonormal).
         let star_rot_inv = sun.star_rotation().transpose();
         let star_cols = star_rot_inv.to_cols_array_2d();
 
+        // Hide the marker when the solid Earth is between eye and station.
+        let eye = camera.eye();
+        let visible = if marker_occluded(eye, satellite.position_km) {
+            0.0
+        } else {
+            1.0
+        };
+
         let uniforms = Uniforms {
             view_proj: camera.view_proj(aspect).to_cols_array(),
-            camera_pos: camera.eye().to_array(),
+            camera_pos: eye.to_array(),
             _pad0: 0.0,
             sun_dir: sun.direction().to_array(),
             _pad1: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
+            sat_pos: satellite.position_km.to_array(),
+            _pad2: 0.0,
+            marker: [width, height, MARKER_RADIUS_PX, visible],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -516,7 +590,35 @@ impl GlobeRenderer {
 
         render_pass.set_pipeline(&self.atmosphere_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+
+        // The station marker last, as a screen overlay (its own quad is
+        // generated in the vertex shader, so no vertex buffer is needed).
+        render_pass.set_pipeline(&self.marker_pipeline);
+        render_pass.draw(0..6, 0..1);
     }
+}
+
+/// Whether the solid Earth blocks the line of sight from `eye` to `target`
+/// (both world-space km). Approximates the planet as a sphere of mean Earth
+/// radius - slightly conservative against the WGS84 ellipsoid, which is fine
+/// for deciding whether to hide the marker.
+fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
+    let to_target = target - eye;
+    let distance = to_target.length();
+    if distance <= 1e-3 {
+        return false;
+    }
+    let dir = to_target / distance;
+
+    // Ray-sphere intersection of the line of sight with the Earth sphere.
+    let b = dir.dot(eye);
+    let c = eye.length_squared() - earth::MEAN_RADIUS_KM * earth::MEAN_RADIUS_KM;
+    let disc = b * b - c;
+    if disc < 0.0 {
+        return false; // line of sight misses the Earth entirely
+    }
+    let t = -b - disc.sqrt(); // nearest intersection along the ray
+    t > 0.0 && t < distance // Earth sits between the eye and the station
 }
 
 /// Uploads a build-script-produced KTX2 texture: the texel data (BC7

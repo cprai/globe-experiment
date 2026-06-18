@@ -6,6 +6,11 @@ struct Uniforms {
     // the sun: longitude spins it about the polar axis, latitude tilts
     // it about the horizontal equinox axis).
     star_rot_inv: mat3x3<f32>,
+    // Space-station marker: world-space position (km).
+    sat_pos: vec3<f32>,
+    // x,y = viewport size in pixels; z = marker radius in pixels;
+    // w = visible flag (0 = hidden, e.g. occluded by the globe).
+    marker: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -483,4 +488,68 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
 
     let color = stars * STARS_BRIGHTNESS + SUN_COLOR * (disc + glow);
     return vec4<f32>(color, 1.0);
+}
+
+// Space-station marker: a flat, constant-pixel-size circle drawn at the
+// station's projected screen position, after everything else (so it reads
+// as an overlay) with alpha blending. No vertex/index buffer - the quad is
+// generated from the vertex index. Visibility (occlusion behind the globe)
+// is decided on the CPU and passed in `marker.w`; when hidden the quad is
+// pushed off-screen so it produces no fragments.
+
+const MARKER_FILL: vec3<f32> = vec3<f32>(1.0, 0.25, 0.2);
+const MARKER_RING: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+
+struct MarkerOutput {
+    @builtin(position) position: vec4<f32>,
+    // Unit-square corner in [-1, 1]; its length is the disc radius.
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_marker(@builtin(vertex_index) vertex_index: u32) -> MarkerOutput {
+    // Two triangles covering [-1, 1]^2.
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+    );
+    let corner = corners[vertex_index];
+
+    var out: MarkerOutput;
+    out.uv = corner;
+
+    // Hidden (occluded by the globe): emit an off-screen, clipped vertex.
+    let clip = uniforms.view_proj * vec4<f32>(uniforms.sat_pos, 1.0);
+    if uniforms.marker.w < 0.5 || clip.w <= 0.0 {
+        out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+
+    // Offset the projected center by a constant pixel radius. One pixel is
+    // 2/viewport NDC units; multiplying by clip.w pre-compensates for the
+    // perspective divide, keeping the circle round and size-stable at any
+    // depth.
+    let radius_px = uniforms.marker.z;
+    let ndc = corner * radius_px * 2.0 / uniforms.marker.xy;
+    out.position = vec4<f32>(clip.xy + ndc * clip.w, clip.z, clip.w);
+    return out;
+}
+
+@fragment
+fn fs_marker(in: MarkerOutput) -> @location(0) vec4<f32> {
+    let r = length(in.uv);
+    // Antialias the outer edge over roughly one pixel of the unit circle.
+    let aa = fwidth(r);
+    let alpha = 1.0 - smoothstep(1.0 - aa, 1.0, r);
+    if alpha <= 0.0 {
+        discard;
+    }
+    // White ring around a colored fill, so the dot reads on any background.
+    let ring = smoothstep(0.6 - aa, 0.6 + aa, r);
+    let color = mix(MARKER_FILL, MARKER_RING, ring);
+    return vec4<f32>(color, alpha);
 }

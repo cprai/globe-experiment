@@ -35,6 +35,12 @@ Runtime:
 - `bytemuck = "1.25" (derive)` — Pod casts for vertex/uniform data.
 - `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
 - `rayon = "1.10"` — parallelizes `GlobeRenderer::new`.
+- `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
+  station TLE + the TEME→ITRF rotation. Defaults are off to drop its
+  `download` feature (runtime data fetch via ureq) and `omm-xml`; the calls we
+  use (`sgp4`, `qteme2itrf`, `ITRFCoord`) need **no downloaded data files**.
+  Pulls `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
+  transitively.
 
 Build-dependencies:
 - `ureq = "3.3"` — asset download.
@@ -74,9 +80,11 @@ src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
 src/globe/camera.rs      orbital camera (km world space)
 src/globe/sun.rs         subsolar point + star-map orientation
+src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos
 src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
-shaders/globe.wgsl       ALL shader code (3 passes in one module)
+shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; downloaded source textures (build input)
+                         + TLE.txt (station TLE, embedded via include_str!)
 OUT_DIR/*.ktx2           gitignored build artifacts, include_bytes!'d:
                          5 BC7 textures + 3 f16 LUTs
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
@@ -119,6 +127,13 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   atmosphere scattering model stayed spherical (LUTs unchanged, no rebake).
   The look-tuning constants are untouched and the rendition is intended to
   be visually identical.
+- **Phase 5** (2026-06-18): **satellite tracking.** Added the `satkit` crate
+  and a `satellite` module that parses an embedded TLE (`assets/TLE.txt`, the
+  ISS), propagates it with satkit's SGP4 to a fixed datetime (the TLE epoch),
+  converts TEME→ITRF→geodetic, and reconstructs a world-space km point via the
+  WGS84 helpers. A 4th render pass draws a constant-pixel marker circle at the
+  station's projected position (hidden on the CPU when the globe occludes it),
+  and the egui panel shows the datetime + sub-satellite lat/lon/altitude.
 
 ---
 
@@ -127,10 +142,11 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
 A winit `ApplicationHandler`. `main()` builds an `EventLoop`, sets
 `ControlFlow::Wait`, runs `App::default()`.
 
-- `App { camera: Camera, sun: Sun, controller: Controller, gfx:
-  Option<Gfx> }`. Camera/sun state lives here. **No message enum / no
-  indirection** — input mutates the camera directly (the phase-1 iced
-  `Interaction { Pan, Zoom, Tilt }` enum is gone).
+- `App { camera: Camera, sun: Sun, satellite: Satellite, controller:
+  Controller, gfx: Option<Gfx> }`. Camera/sun/satellite state lives here
+  (`Satellite` is built once via `Default`, which runs the SGP4 propagation).
+  **No message enum / no indirection** — input mutates the camera directly
+  (the phase-1 iced `Interaction { Pan, Zoom, Tilt }` enum is gone).
 - `Gfx` holds everything tied to the window/GPU, created once in
   `resumed()`: `window: Arc<Window>`, `surface`, `device`, `queue`,
   `config`, `globe: GlobeRenderer`, `egui_ctx`, `egui_state`,
@@ -177,9 +193,9 @@ calls `redraw()`. Everything else → `handle_input`:
 
 1. `controller.tick(&mut camera, config.height)` advances flick inertia
    **and** the zoom glide; returns `animating`.
-2. egui: `take_egui_input` → `run_ui(|ui| ui::sun_panel(ui.ctx(), &mut
-   sun))` → `handle_platform_output`. (0.34 deprecated `Context::run` for
-   `run_ui`, whose closure gets a transparent fullscreen `&mut Ui`; the
+2. egui: `take_egui_input` → `run_ui(|ui| ui::sun_panel(ui.ctx(), &mut sun,
+   &satellite))` → `handle_platform_output`. (0.34 deprecated `Context::run`
+   for `run_ui`, whose closure gets a transparent fullscreen `&mut Ui`; the
    Area panel hangs off `ui.ctx()`.)
 3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
    resets the cursor every frame; method renamed from `is_pointer_over_area`
@@ -189,8 +205,10 @@ calls `redraw()`. Everything else → `handle_input`:
    `Outdated` → reconfigure + redraw + return; `Timeout` → redraw + return;
    `Occluded` → hidden-window first-frame guard (reveal + retry); else skip
    the frame; `Validation` → panic.
-5. `globe.prepare(queue, camera, sun, aspect)` writes uniforms (aspect =
-   surface width/height).
+5. `globe.prepare(queue, camera, sun, satellite, viewport)` writes uniforms
+   (`viewport` = surface (width, height) px; aspect is derived inside, and the
+   pixel size feeds the constant-size marker). Also runs the CPU marker
+   occlusion test.
 6. egui tessellate → `update_texture` for each `textures_delta.set`
    **before** the pass → `update_buffers` (returns prep command buffers) →
    one render pass (clear BLACK → `globe.render` → `egui_renderer.render`)
@@ -356,15 +374,46 @@ The renderer uploads `star_rot_inv` = `star_rotation().transpose()`
 
 ---
 
-## 7. UI (`src/ui.rs`) — egui sun panel
+## 6.5. Satellite (`src/globe/satellite.rs`)
 
-`sun_panel(ctx, &mut Sun)` draws an `egui::Area` anchored top-left
+Tracks one object (the ISS) from an embedded TLE, propagated with the
+**satkit** crate's SGP4. Computed **once** (`Satellite::load`, also the
+`Default` impl) since the evaluation datetime is fixed.
+
+- **TLE**: `assets/TLE.txt` (3-line: name + two element lines), `include_str!`-
+  embedded. Parsed with `TLE::load_3line(line0, line1, line2)`.
+- **Time**: `Instant::from_datetime(2024, 1, 1, 12, 0, 0.0)` — the TLE's epoch
+  (`24001.50000000`). TLEs are only accurate ~days around epoch, so the eval
+  time is pinned here; the UI shows it as a read-only label (`EVAL_LABEL`).
+- **Propagate**: `sgp4(&mut tle, &[time]) -> SGP4State`. `state.pos` is a
+  `DMatrix<f64>` shaped **3×N** (one column per time), in **meters**, **TEME**
+  frame. We take column 0 into a `Vector3` (`numeris`, ctor takes `[[f64;1];3]`).
+- **TEME→ITRF**: `qteme2itrf(&time) * teme` — a GMST-only rotation about the
+  polar axis (the returned quaternion has x=y=0), so it needs **no EOP / data
+  files**. Then `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` → (lat, lon,
+  height-above-ellipsoid).
+- **To world space**: rather than permute ECEF axes, reconstruct the point
+  with our own helpers: `earth::surface_position(lat, lon) +
+  earth::geodetic_normal(lat, lon) * altitude_km`. This guarantees the marker
+  lands on the exact WGS84 ellipsoid the mesh uses. Units: meters→km.
+- **Stored**: `name`, `time_label`, `position_km` (world frame), and
+  `latitude_deg`/`longitude_deg`/`altitude_km` for the UI.
+- **Verified** (2026-06-18, headless probe): ISS at epoch → lat 50.68°, lon
+  176.9°, alt 421 km (consistent with the 51.6° inclination, ~420 km orbit).
+- Malformed embedded data panics (`expect`), like the other baked-in assets.
+
+## 7. UI (`src/ui.rs`) — egui panel
+
+`sun_panel(ctx, &mut Sun, &Satellite)` draws an `egui::Area` anchored top-left
 (`[10,10]`, width 260): a white "Sun latitude" label + slider
 `−23.44..=23.44` step `0.1` (= season / solar declination), and a "Sun
 longitude" label + slider `−180..=180` step `0.5` (= time of day). Sliders
 mutate `&mut Sun` directly; `show_value(false)` (the value is in the label,
 formatted as `deg` since the ASCII conversion). egui claims its own events
-first (see event routing), so dragging a slider never pans the globe.
+first (see event routing), so dragging a slider never pans the globe. Below a
+separator it shows the **read-only** station readout: name, the SGP4
+evaluation datetime (UTC), and sub-satellite lat/lon + altitude (all from
+`Satellite`, computed once — the datetime is fixed).
 
 ---
 
@@ -388,8 +437,12 @@ Float32x2` in all three pipelines).
 ## 9. Renderer (`src/globe/renderer.rs`) — `GlobeRenderer`
 
 A plain struct with `new` / `prepare` / `render` (no iced traits). Owns the
-three render pipelines, the shared vertex/index buffers, the uniform
-buffer, and the bind group. `STACKS = 64`, `SLICES = 128`.
+**four** render pipelines (surface, atmosphere, stars, marker), the shared
+vertex/index buffers, the uniform buffer, and the bind group. `STACKS = 64`,
+`SLICES = 128`. The marker pipeline shares the bind-group layout but has **no
+vertex buffers** (its quad is generated from the vertex index) and uses
+alpha blending; it is built in the `rayon::join` tree alongside the other
+three.
 
 ### `new(device, queue, format)` and its rayon parallelization
 
@@ -424,6 +477,8 @@ view_proj:    mat4x4<f32>
 camera_pos:   vec3<f32> + 1 f32 pad   (_pad0)   // km
 sun_dir:      vec3<f32> + 1 f32 pad   (_pad1)
 star_rot_inv: mat3x3<f32>   // Rust: 3 columns each padded to [f32;4]
+sat_pos:      vec3<f32> + 1 f32 pad   (_pad2)   // marker world pos, km
+marker:       vec4<f32>     // x,y = viewport px; z = radius px; w = visible
 ```
 
 WGSL `mat3x3` columns have vec4 stride, so the Rust struct pads each
@@ -457,13 +512,23 @@ build.rs is the quality dial).
 ### `render(render_pass)`
 
 Sets bind group + vertex/index buffers, then three `draw_indexed` calls in
-order: **stars → surface → atmosphere**. Draw order does the occlusion (no
-depth buffer). The atmosphere is additive over the whole disc (aerial
-perspective) and beyond the limb.
+order: **stars → surface → atmosphere**, followed by a `draw(0..6)` for the
+**marker** (its quad comes from the vertex index, so the bound vertex/index
+buffers are simply unused). Draw order does the occlusion (no depth buffer).
+The atmosphere is additive over the whole disc (aerial perspective) and beyond
+the limb; the marker is an alpha-blended screen overlay on top.
+
+### `prepare(queue, camera, sun, satellite, viewport)`
+
+Writes the uniforms. `viewport` is the surface (width, height) px; aspect is
+derived from it and the px size drives the constant-pixel marker. Computes the
+marker's `visible` flag with `marker_occluded(eye, sat_pos)` — a ray-vs-sphere
+test (line of sight vs. a mean-Earth-radius sphere); the marker is hidden when
+the planet sits between the eye and the station. `MARKER_RADIUS_PX = 6`.
 
 ---
 
-## 10. Shader (`shaders/globe.wgsl`) — three passes, one module
+## 10. Shader (`shaders/globe.wgsl`) — four passes, one module
 
 ### Texture inventory (how each is used)
 
@@ -647,6 +712,23 @@ no parallax, no zoom dependence); the globe drawn afterward occludes it.
 The 35-radius geometry is purely a screen-coverage device — nothing of it
 shows.
 
+### Satellite marker (`vs_marker` / `fs_marker`)
+
+A flat, constant-pixel-size circle at the station's projected screen position,
+drawn last (over the finished scene) with alpha blending. **No vertex/index
+buffer** — `vs_marker` builds a two-triangle `[-1,1]^2` quad from
+`@builtin(vertex_index)` (6 verts).
+
+- `vs_marker`: project `uniforms.sat_pos` to clip. If `marker.w < 0.5`
+  (CPU-decided occlusion) or `clip.w <= 0` (behind camera), emit an off-screen
+  clipped vertex (`(0,0,2,1)`) so nothing rasterizes. Otherwise offset the
+  center by `corner * radius_px * 2 / viewport` NDC, **× clip.w** to
+  pre-compensate the perspective divide (keeps the circle round and
+  size-stable at any depth). Passes the corner as `uv`.
+- `fs_marker`: `r = length(uv)`; `fwidth(r)` antialiases the outer edge;
+  `discard` outside. A white ring (`smoothstep` at r≈0.6) around a red-orange
+  fill (`MARKER_FILL`/`MARKER_RING`) so the dot reads on any background.
+
 ---
 
 ## 11. Atmosphere model (Hillaire 2020) — the math and the bake
@@ -811,6 +893,7 @@ PLANET_RADIUS_KM 6360.0   ATMOSPHERE_TOP_KM 6460.0   MIE_G 0.8   SUN_INTENSITY 1
 STARS_RADIUS_KM 222985.0   STARS_BRIGHTNESS 0.8
 SUN_ANGULAR_RADIUS 0.012   SUN_GLOW_RADIUS 0.12   SUN_GLOW_STRENGTH 0.5
 SUN_COLOR (1.0, 0.96, 0.9)
+MARKER_FILL (1.0, 0.25, 0.2)   MARKER_RING (1.0, 1.0, 1.0)
 day/night terminator smoothstep: smoothstep(-0.12, 0.18, cos_sun)
 ```
 **`build.rs` mod atmosphere**:
@@ -835,7 +918,9 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
 **`src/globe/sun.rs`**: default (−40, 15). **`renderer.rs`**: STACKS 64,
-SLICES 128.
+SLICES 128, MARKER_RADIUS_PX 6.
+**`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), eval datetime
+2024-01-01 12:00:00 UTC (the TLE epoch), via `satkit` 0.18 SGP4.
 
 ---
 
