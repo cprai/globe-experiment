@@ -60,7 +60,7 @@ struct Inertia {
 }
 
 struct Zoom {
-    /// Camera distance the glide is heading toward, in globe radii.
+    /// Camera distance the glide is heading toward, in kilometers.
     target: f32,
     /// The glide's current half-life, in seconds; follows the wheel
     /// cadence at the time of the last event.

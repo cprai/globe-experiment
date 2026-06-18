@@ -7,7 +7,7 @@ conventions, and constraints (what you must / must not do). This file is
 the "how and why."
 
 **Constants drift between sessions** — the values quoted here are a
-snapshot (2026-06-17). Always read the source for live values; the §
+snapshot (2026-06-18). Always read the source for live values; the §
 "Live constant snapshot" at the end lists where each lives.
 
 ---
@@ -63,14 +63,18 @@ build.rs                 download 5 textures -> BC7/KTX2 transcode +
 src/main.rs              winit ApplicationHandler: App + Gfx, event loop,
                          wgpu surface/device, frame loop, egui integration
 src/ui.rs                egui sun panel (two sliders + labels)
-src/globe/mod.rs         module declarations only (camera/input/mesh/
+src/globe/mod.rs         module declarations only (camera/earth/input/mesh/
                          renderer/sun) - no logic
+src/globe/earth.rs       WGS84 + Earth physical constants (axes, eccentricity,
+                         mean radius, GM, rotation) + surface_position /
+                         geodetic_normal helpers. Single source of truth for
+                         the planet geometry; mesh + camera both call it.
 src/globe/renderer.rs    GlobeRenderer: all wgpu objects, prepare, render
 src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
-src/globe/camera.rs      orbital camera
+src/globe/camera.rs      orbital camera (km world space)
 src/globe/sun.rs         subsolar point + star-map orientation
-src/globe/mesh.rs        UV-sphere generator
+src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
 shaders/globe.wgsl       ALL shader code (3 passes in one module)
 assets/                  gitignored; downloaded source textures (build input)
 OUT_DIR/*.ktx2           gitignored build artifacts, include_bytes!'d:
@@ -105,6 +109,16 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   additive yellow glow). 06-17 added `EMISSIVE_FADE_END` (lights bleed
   slightly onto the daylit side), converted all source to **ASCII-only**,
   and removed the per-file BC7 transcode cache guard.
+- **Phase 4** (2026-06-18): **physical units.** World space moved from a
+  unit sphere in "globe radii" to the **WGS84 reference ellipsoid in
+  kilometers**, to host real-scale orbital simulation. New `earth` module
+  holds the WGS84 + dynamics constants and the `surface_position` /
+  `geodetic_normal` helpers. The mesh vertex gained an explicit geodetic
+  **normal** (position is no longer `normalize(position)` on an ellipsoid);
+  the camera, projection, and star/atmosphere shells all moved to km. The
+  atmosphere scattering model stayed spherical (LUTs unchanged, no rebake).
+  The look-tuning constants are untouched and the rendition is intended to
+  be visually identical.
 
 ---
 
@@ -221,25 +235,30 @@ sun animation just becomes another "animating" flag.
 Orbital model anchored to a look-at point on the surface.
 
 - Fields: `longitude`, `latitude` (look-at point, degrees), `distance`
-  (eye→target, globe radii), `tilt` (degrees off nadir; 0 = straight down).
-  Defaults: `0°N 0°E`, distance `2.0`, tilt `0`.
-- Associated consts: `FOV_Y = 45`, `MIN_DISTANCE = 0.01`,
-  `MAX_DISTANCE = 10.0`, `MAX_TILT = 80`. Latitude clamps to `±89°`;
-  longitude wraps via `rem_euclid`.
-- `frame()` builds `(eye, target, up)`: `radial = (cos lat·sin lon, sin
-  lat, cos lat·cos lon)` is both the look-at point on the unit sphere and
-  the local up. Local tangent frame `east = normalize(Y × radial)`,
-  `north = radial × east`. Tilt is a quaternion about `east`:
-  `eye = target + tilt·radial·distance`, `up = tilt·north` — increasing
-  tilt swings the eye off straight-down and reveals the horizon to the
-  north.
-- `view_proj(aspect) = perspective_rh(45°, aspect, 0.01, 50.0) ×
+  (eye→target, **kilometers**), `tilt` (degrees off nadir; 0 = straight
+  down). Defaults: `0°N 0°E`, distance `2.0 · MEAN_RADIUS_KM` (≈ 12742 km),
+  tilt `0`.
+- Associated consts (km, written as `<radii> · earth::MEAN_RADIUS_KM` so the
+  old tuned feel is preserved exactly): `FOV_Y = 45`,
+  `MIN_DISTANCE = 0.01·R` (≈ 63.7 km), `MAX_DISTANCE = 10·R` (≈ 63710 km),
+  `NEAR_PLANE = 0.01·R`, `FAR_PLANE = 50·R` (≈ 318550 km), `MAX_TILT = 80`.
+  Latitude clamps to `±89°`; longitude wraps via `rem_euclid`.
+- `frame()` builds `(eye, target, up)` in km: `target =
+  earth::surface_position(lat, lon)` (WGS84 ellipsoid point) and `radial =
+  earth::geodetic_normal(lat, lon)` (local up). Local tangent frame `east =
+  normalize(Y × radial)`, `north = radial × east`. Tilt is a quaternion
+  about `east`: `eye = target + tilt·radial·distance`, `up = tilt·north` —
+  increasing tilt swings the eye off straight-down and reveals the horizon
+  to the north.
+- `view_proj(aspect) = perspective_rh(45°, aspect, NEAR_PLANE, FAR_PLANE) ×
   look_at_rh(eye, target, up)`. The `_rh` variants give wgpu's 0..1 depth
-  (no depth buffer is used regardless).
+  (no depth buffer is used regardless; near/far only bound clipping, and the
+  star shell must fit inside `FAR_PLANE`).
 - `pan_degrees_per_pixel(viewport_height)` — cursor-stable panning:
-  `world_per_pixel = 2·distance·tan(fov/2)/height`, then `to_degrees()`
-  (on the unit sphere, 1 world unit of ground arc = 1 radian). Used by both
-  live drags and inertia, so panning tracks the cursor at any altitude.
+  `km_per_pixel = 2·distance·tan(fov/2)/height`, then
+  `(km_per_pixel / MEAN_RADIUS_KM).to_degrees()` (one radian of surface arc ≈
+  one mean Earth radius of ground distance). Used by both live drags and
+  inertia, so panning tracks the cursor at any altitude.
 - `clamp_distance(d) -> f32` clamps to `MIN..MAX_DISTANCE`. (Phase 2
   replaced the old `zoom(factor)` with this — the smoothed-zoom controller
   owns the distance arithmetic and only needs the clamp.)
@@ -351,14 +370,18 @@ first (see event routing), so dragging a slider never pans the globe.
 
 ## 8. Mesh (`src/globe/mesh.rs`)
 
-`uv_sphere(stacks, slices)` — renderer calls `uv_sphere(64, 128)` (~8.4k
-verts, u32 indices). `Vertex { position: [f32;3], uv: [f32;2] }`.
-- For stack/slice fractions `(u, v)`: `lat = 90° − 180°·v`,
-  `lon = 360°·u − 180°`, `position = (cos lat·sin lon, sin lat, cos lat·cos
-  lon)`, `uv = (u, v)`.
+`wgs84_ellipsoid(stacks, slices)` — renderer calls it with `(64, 128)` (~8.4k
+verts, u32 indices). `Vertex { position: [f32;3], normal: [f32;3], uv:
+[f32;2] }` (32 bytes; attributes `0 => Float32x3, 1 => Float32x3, 2 =>
+Float32x2` in all three pipelines).
+- For stack/slice fractions `(u, v)`: `lat = 90° − 180°·v` (geodetic),
+  `lon = 360°·u − 180°`. `position = earth::surface_position(lat, lon)` is the
+  WGS84 ellipsoid point in km; `normal = earth::geodetic_normal(lat, lon)` is
+  the outward geodetic unit normal `(cos lat·sin lon, sin lat, cos lat·cos
+  lon)` (same direction a sphere would give); `uv = (u, v)`.
 - The seam column at `u=0`/`u=1` is **duplicated** so the texture wraps.
 - Indices: two triangles per quad, **CCW when viewed from outside** the
-  sphere (so back-face culling keeps the near side for the surface pass).
+  ellipsoid (so back-face culling keeps the near side for the surface pass).
 
 ---
 
@@ -398,7 +421,7 @@ GPU, no decode. All textures `mip_level_count 1`.
 
 ```
 view_proj:    mat4x4<f32>
-camera_pos:   vec3<f32> + 1 f32 pad   (_pad0)
+camera_pos:   vec3<f32> + 1 f32 pad   (_pad0)   // km
 sun_dir:      vec3<f32> + 1 f32 pad   (_pad1)
 star_rot_inv: mat3x3<f32>   // Rust: 3 columns each padded to [f32;4]
 ```
@@ -465,8 +488,9 @@ perspective) and beyond the limb.
 
 ### Surface pass (`vs_main` / `fs_main`)
 
-`vs_main`: `position = view_proj · vec4(pos, 1)`; passes `uv` and `normal =
-pos` (unit sphere ⇒ position = normal).
+`vs_main`: `position = view_proj · vec4(pos, 1)`; passes `uv`, the per-vertex
+geodetic `normal`, and `world_pos = pos` (the WGS84 surface point in km, used
+for the view vector — `pos` is no longer the normal on an ellipsoid).
 
 `fs_main`, step by step:
 
@@ -570,14 +594,15 @@ A naming gotcha hit during implementation: the noise var cannot be `n`
 
 ### Atmosphere pass (`vs_atmosphere` / `fs_atmosphere`)
 
-The sphere mesh inflated to `ATMOSPHERE_SHELL = ATMOSPHERE_TOP_KM /
-PLANET_RADIUS_KM` (= 6460/6360), rendered **front-face-culled** (far side of
-the shell, so it spans the whole silhouette beyond the limb) with
-**additive blending** (One/One). Works in **km**, planet center at origin.
+A **sphere** built from the per-vertex unit normal × `ATMOSPHERE_TOP_KM`
+(= 6460 km; **not** the ellipsoid position — the scattering model is
+spherical), rendered **front-face-culled** (far side of the shell, so it
+spans the whole silhouette beyond the limb) with **additive blending**
+(One/One). World space is already **km**, planet center at origin.
 
 Per fragment:
-1. `origin = camera_pos · PLANET_RADIUS_KM`, `dir = normalize(world_pos·Rp −
-   origin)`. `ray_sphere(origin, dir, Ra)`; discard if it misses the shell.
+1. `origin = camera_pos`, `dir = normalize(world_pos − origin)` (both km, no
+   scaling). `ray_sphere(origin, dir, Ra)`; discard if it misses the shell.
 2. **Impact parameter** `b = length(origin − dot(origin,dir)·dir)` (closest
    approach to the planet center).
 3. **Split row mapping** (must match the bake): `ray_sphere(origin, dir,
@@ -597,9 +622,10 @@ Per fragment:
 
 ### Star + sun backdrop (`vs_stars` / `fs_stars`)
 
-Sphere inflated to `STARS_RADIUS = 35` (must enclose the camera at max
-distance ~11 but stay inside the 50-radii far plane), rendered front-face
-(seen from inside), no blending, **before everything**.
+A **sphere** built from the per-vertex unit normal × `STARS_RADIUS_KM`
+(= 222985 km ≈ 35 mean Earth radii; must enclose the camera — max ~70000 km
+from center — but stay inside the ~318550 km `FAR_PLANE`), rendered
+front-face (seen from inside), no blending, **before everything**.
 
 `vs_stars` computes the **camera-relative** view direction
 `relative = world − camera_pos` (linear in the vertex ⇒ exact under
@@ -770,7 +796,7 @@ smaller.
 
 ---
 
-## 13. Live constant snapshot (2026-06-17 — verify against source)
+## 13. Live constant snapshot (2026-06-18 — verify against source)
 
 **`shaders/globe.wgsl`** (top look-tuning block + atmosphere/star consts):
 ```
@@ -782,7 +808,7 @@ EMISSIVE_COLOR (1.0, 0.85, 0.3)   EMISSIVE_STRENGTH 1.5
 EMISSIVE_FADE_START -0.15   EMISSIVE_FADE_END 0.15
 DITHER_SCALE 400.0   NIGHT_DARKNESS 1.2      // >1 brightens night side, intentional (§10)
 PLANET_RADIUS_KM 6360.0   ATMOSPHERE_TOP_KM 6460.0   MIE_G 0.8   SUN_INTENSITY 12.0
-STARS_RADIUS 35.0   STARS_BRIGHTNESS 0.8
+STARS_RADIUS_KM 222985.0   STARS_BRIGHTNESS 0.8
 SUN_ANGULAR_RADIUS 0.012   SUN_GLOW_RADIUS 0.12   SUN_GLOW_STRENGTH 0.5
 SUN_COLOR (1.0, 0.96, 0.9)
 day/night terminator smoothstep: smoothstep(-0.12, 0.18, cos_sun)
@@ -800,8 +826,14 @@ FLICK_SPEED 50   STOP_SPEED 15   HALF_LIFE 0.3   FLICK_TIMEOUT 0.1
 ZOOM_HALF_LIFE_MIN 0.01   ZOOM_HALF_LIFE_MAX 0.1   WHEEL_GAP_CAP 0.25
 ZOOM_COAST_HALF_LIFE 0.15   ZOOM_STOP_RATE 0.1
 ```
-**`src/globe/camera.rs`**: FOV_Y 45, MIN_DISTANCE 0.01, MAX_DISTANCE 10.0,
-MAX_TILT 80; defaults lon 0, lat 0, distance 2.0, tilt 0; lat clamp ±89.
+**`src/globe/earth.rs`** (WGS84 + dynamics): SEMI_MAJOR_AXIS_KM 6378.137,
+INVERSE_FLATTENING 298.257223563, SEMI_MINOR_AXIS_KM ~6356.752314,
+ECCENTRICITY_SQ ~0.00669438, MEAN_RADIUS_KM ~6371.0088,
+GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
+**`src/globe/camera.rs`** (km; constants = `<radii>·MEAN_RADIUS_KM`): FOV_Y
+45, MIN_DISTANCE ~63.7, MAX_DISTANCE ~63710, NEAR_PLANE ~63.7, FAR_PLANE
+~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
+clamp ±89.
 **`src/globe/sun.rs`**: default (−40, 15). **`renderer.rs`**: STACKS 64,
 SLICES 128.
 

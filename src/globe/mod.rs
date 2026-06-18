@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod earth;
 pub mod input;
 mod mesh;
 pub mod renderer;

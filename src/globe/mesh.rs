@@ -1,9 +1,18 @@
 use bytemuck::{Pod, Zeroable};
 
+use super::earth;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
+    /// WGS84 ellipsoid surface position, in kilometers (planet center at the
+    /// origin).
     pub position: [f32; 3],
+    /// Outward geodetic unit normal at this vertex. Stored explicitly
+    /// because on an ellipsoid the normal is no longer `normalize(position)`.
+    /// It also doubles as a unit direction the atmosphere/star passes scale
+    /// up into their spherical shells.
+    pub normal: [f32; 3],
     pub uv: [f32; 2],
 }
 
@@ -12,13 +21,16 @@ pub struct Mesh {
     pub indices: Vec<u32>,
 }
 
-/// Generates a unit UV sphere.
+/// Generates a WGS84 reference-ellipsoid globe, in kilometers.
 ///
-/// `u` maps longitude (-180 deg at u=0 to +180 deg at u=1) and `v` maps latitude
-/// from the north pole (v=0) to the south pole (v=1), matching an
-/// equirectangular texture. The seam column at u=0/u=1 is duplicated so the
-/// texture can wrap. Longitude 0 deg, latitude 0 deg faces +Z; +Y is north.
-pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
+/// `u` maps longitude (-180 deg at u=0 to +180 deg at u=1) and `v` maps
+/// geodetic latitude from the north pole (v=0) to the south pole (v=1),
+/// matching an equirectangular texture. The seam column at u=0/u=1 is
+/// duplicated so the texture can wrap. Longitude 0 deg, latitude 0 deg faces
+/// +Z; +Y is north. Vertex positions are on the oblate WGS84 ellipsoid; the
+/// stored normal is the geodetic (surface) normal, which has the same lat/lon
+/// direction as a sphere would.
+pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
     let mut vertices = Vec::with_capacity(((stacks + 1) * (slices + 1)) as usize);
 
     for i in 0..=stacks {
@@ -30,7 +42,8 @@ pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
             let lon = (360.0 * u - 180.0).to_radians();
 
             vertices.push(Vertex {
-                position: [lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos()],
+                position: earth::surface_position(lat, lon).to_array(),
+                normal: earth::geodetic_normal(lat, lon).to_array(),
                 uv: [u, v],
             });
         }
@@ -46,7 +59,7 @@ pub fn uv_sphere(stacks: u32, slices: u32) -> Mesh {
             let c = i * cols + j + 1;
             let d = (i + 1) * cols + j + 1;
 
-            // Counter-clockwise when viewed from outside the sphere.
+            // Counter-clockwise when viewed from outside the ellipsoid.
             indices.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }

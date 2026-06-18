@@ -36,3 +36,6 @@ first build needs a network connection and takes a little longer.
   and the time-of-day sliders.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
   any zoom level, from full-globe spins down to country level.
+- Real-world geometry: the globe is the WGS84 reference ellipsoid and the
+  scene is modeled in kilometers, so it can host real-scale orbital
+  simulation.

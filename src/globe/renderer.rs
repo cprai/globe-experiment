@@ -37,7 +37,7 @@ pub struct GlobeRenderer {
 
 impl GlobeRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let mesh = mesh::uv_sphere(STACKS, SLICES);
+        let mesh = mesh::wgs84_ellipsoid(STACKS, SLICES);
 
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("globe vertices"),
@@ -340,7 +340,8 @@ impl GlobeRenderer {
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x3,
-                            1 => Float32x2,
+                            1 => Float32x3,
+                            2 => Float32x2,
                         ],
                     }],
                 },
@@ -379,7 +380,8 @@ impl GlobeRenderer {
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x3,
-                            1 => Float32x2,
+                            1 => Float32x3,
+                            2 => Float32x2,
                         ],
                     }],
                 },
@@ -432,7 +434,8 @@ impl GlobeRenderer {
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x3,
-                            1 => Float32x2,
+                            1 => Float32x3,
+                            2 => Float32x2,
                         ],
                     }],
                 },

@@ -20,15 +20,21 @@ struct Uniforms {
 @group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
 @group(0) @binding(10) var stars_texture: texture_2d<f32>;
 
+// World space is kilometers, planet center at the origin. `position` is the
+// WGS84 ellipsoid surface point; `normal` is the outward geodetic unit
+// normal (which the atmosphere/star passes also reuse as a sphere direction).
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
+    // World-space surface position (km), for the view vector.
+    @location(2) world_pos: vec3<f32>,
 };
 
 @vertex
@@ -36,8 +42,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
     out.uv = in.uv;
-    // The mesh is a unit sphere at the origin, so position doubles as normal.
-    out.normal = in.position;
+    // The ellipsoid normal is supplied per vertex (it is no longer just the
+    // normalized position).
+    out.normal = in.normal;
+    out.world_pos = in.position;
     return out;
 }
 
@@ -78,8 +86,8 @@ const EMISSIVE_FADE_START: f32 = -0.15;
 // lights bleed past the terminator (cos_sun = 0) onto the daylit side, so
 // some daylit areas stay lit; 0 fully extinguishes them at the terminator.
 const EMISSIVE_FADE_END: f32 = 0.15;
-// Noise grain (cells across the unit sphere). Fixed - no terminator ramp,
-// for a temporally coherent dissolve under sun motion.
+// Noise grain (cells across the unit normal sphere). Fixed - no terminator
+// ramp, for a temporally coherent dissolve under sun motion.
 const DITHER_SCALE: f32 = 400.0;
 // Day-map multiplier for the unlit hemisphere: < 1 darkens (0 = black
 // night), > 1 brightens. Intentionally 1.2 - the night side reads a
@@ -125,8 +133,8 @@ fn hash3(p: vec3<f32>) -> f32 {
     return f32(n) / 4294967295.0;
 }
 
-// Trilinearly-interpolated 3D value noise. Sampled at the unit-sphere
-// surface position, so it has no seam and no pole pinch.
+// Trilinearly-interpolated 3D value noise. Sampled at the unit geodetic
+// normal, so it has no seam and no pole pinch.
 fn value_noise_3d(p: vec3<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);
@@ -161,10 +169,6 @@ const ATMOSPHERE_TOP_KM: f32 = 6460.0;
 const MIE_G: f32 = 0.8;
 
 const SUN_INTENSITY: f32 = 12.0;
-
-// World space is in planet radii; the atmosphere shell sits at the
-// top-of-atmosphere radius.
-const ATMOSPHERE_SHELL: f32 = ATMOSPHERE_TOP_KM / PLANET_RADIUS_KM;
 
 // Transmittance from a point at radius `r` km toward the sun at zenith
 // cosine `mu`, via the precomputed LUT (Bruneton parameterization).
@@ -219,8 +223,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         textureSample(normal_texture, earth_sampler, in.uv).xyz * 2.0 - 1.0;
     let specular_mask = textureSample(specular_texture, earth_sampler, in.uv).r;
 
-    // Geometric normal; the mesh is a unit sphere, so this is also the
-    // world position.
+    // Geometric (geodetic) surface normal. Unit length and with the same
+    // lat/lon direction a sphere would have, so the analytic tangent frame
+    // and the surface-anchored city-light noise below are unaffected by the
+    // ellipsoid shape.
     let n_geo = normalize(in.normal);
 
     // Analytic tangent frame of the equirectangular mapping: east along
@@ -234,7 +240,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     );
 
     let sun = normalize(uniforms.sun_dir);
-    let v = normalize(uniforms.camera_pos - in.normal);
+    let v = normalize(uniforms.camera_pos - in.world_pos);
     let h = normalize(v + sun);
 
     let n_dot_l = max(dot(n, sun), 0.0);
@@ -333,7 +339,10 @@ struct AtmosphereOutput {
 @vertex
 fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
     var out: AtmosphereOutput;
-    let world = in.position * ATMOSPHERE_SHELL;
+    // The scattering model is spherical: build the shell from the unit
+    // normal (not the ellipsoid position) so it is a true sphere at the
+    // top-of-atmosphere radius, in km.
+    let world = in.normal * ATMOSPHERE_TOP_KM;
     out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
     out.world_pos = world;
     return out;
@@ -341,9 +350,9 @@ fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
 
 @fragment
 fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
-    // Work in km, planet center at the origin.
-    let origin = uniforms.camera_pos * PLANET_RADIUS_KM;
-    let dir = normalize(in.world_pos * PLANET_RADIUS_KM - origin);
+    // World space is already km, planet center at the origin.
+    let origin = uniforms.camera_pos;
+    let dir = normalize(in.world_pos - origin);
     let sun = normalize(uniforms.sun_dir);
 
     let shell = ray_sphere(origin, dir, ATMOSPHERE_TOP_KM);
@@ -403,9 +412,10 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
 // mesh UVs, so the equirectangular star map shares the earth texture's
 // orientation (celestial poles over the geographic poles).
 
-// Must enclose the camera (max distance ~11 radii) but stay inside the
-// projection's far plane (50 radii) from any camera position.
-const STARS_RADIUS: f32 = 35.0;
+// Must enclose the camera (max ~70000 km from center) but stay inside the
+// projection's far plane (~318550 km) from any camera position. ~35 mean
+// Earth radii, in km.
+const STARS_RADIUS_KM: f32 = 222985.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
 // The sun disc, drawn into the backdrop along the sun direction. The
@@ -431,7 +441,8 @@ struct StarsOutput {
 @vertex
 fn vs_stars(in: VertexInput) -> StarsOutput {
     var out: StarsOutput;
-    let world = in.position * STARS_RADIUS;
+    // Inflate the unit normal into a km-scale sphere enclosing the camera.
+    let world = in.normal * STARS_RADIUS_KM;
     out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
 
     // Linear in the vertex position, so interpolation is exact; both

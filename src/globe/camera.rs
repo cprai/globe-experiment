@@ -1,15 +1,20 @@
 use glam::{Mat4, Quat, Vec3};
 
+use super::earth;
+
 /// Orbital camera anchored to a look-at point on the globe surface.
 ///
-/// The globe is a unit sphere at the origin; distances are in globe radii.
+/// World space is in kilometers with the planet center at the origin; the
+/// surface is the WGS84 ellipsoid (see `earth`). The distance/near/far
+/// constants below are the previously-tuned "globe radii" values scaled by
+/// `earth::MEAN_RADIUS_KM`, so the interaction feel is unchanged.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
     /// Longitude of the look-at point, in degrees.
     pub longitude: f32,
     /// Latitude of the look-at point, in degrees. Clamped to +/-89 deg.
     pub latitude: f32,
-    /// Distance from the camera to the look-at point, in globe radii.
+    /// Distance from the camera to the look-at point, in kilometers.
     pub distance: f32,
     /// Angle off straight-down (nadir), in degrees. 0 looks straight down.
     pub tilt: f32,
@@ -20,7 +25,8 @@ impl Default for Camera {
         Self {
             longitude: 0.0,
             latitude: 0.0,
-            distance: 2.0,
+            // ~2 Earth radii from the surface: a full-globe view.
+            distance: 2.0 * earth::MEAN_RADIUS_KM,
             tilt: 0.0,
         }
     }
@@ -28,8 +34,13 @@ impl Default for Camera {
 
 impl Camera {
     const FOV_Y: f32 = 45.0;
-    const MIN_DISTANCE: f32 = 0.01;
-    const MAX_DISTANCE: f32 = 10.0;
+    // ~0.01 Earth radii above the surface up to ~10 radii out, in km.
+    const MIN_DISTANCE: f32 = 0.01 * earth::MEAN_RADIUS_KM;
+    const MAX_DISTANCE: f32 = 10.0 * earth::MEAN_RADIUS_KM;
+    // Near/far planes, in km (~0.01 and ~50 Earth radii). No depth buffer is
+    // used, so these only bound clipping; the star shell must fit inside far.
+    const NEAR_PLANE: f32 = 0.01 * earth::MEAN_RADIUS_KM;
+    const FAR_PLANE: f32 = 50.0 * earth::MEAN_RADIUS_KM;
     const MAX_TILT: f32 = 80.0;
 
     /// Moves the look-at point by the given degrees, wrapping longitude
@@ -53,19 +64,25 @@ impl Camera {
     /// Degrees of arc panned per pixel of cursor movement, scaled so the
     /// ground under the cursor approximately follows it at any altitude.
     pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
-        let world_per_pixel =
+        // Ground arc length spanned by one pixel at the target plane, in km.
+        let km_per_pixel =
             2.0 * self.distance * (Self::FOV_Y / 2.0).to_radians().tan() / viewport_height.max(1.0);
 
-        // The globe is a unit sphere, so a world-unit of ground distance is
-        // one radian of arc.
-        world_per_pixel.to_degrees()
+        // Convert that arc length to an angle on the globe: one radian of
+        // arc subtends ~one mean Earth radius of surface distance.
+        (km_per_pixel / earth::MEAN_RADIUS_KM).to_degrees()
     }
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let (eye, target, up) = self.frame();
 
         let view = Mat4::look_at_rh(eye, target, up);
-        let proj = Mat4::perspective_rh(Self::FOV_Y.to_radians(), aspect.max(0.01), 0.01, 50.0);
+        let proj = Mat4::perspective_rh(
+            Self::FOV_Y.to_radians(),
+            aspect.max(0.01),
+            Self::NEAR_PLANE,
+            Self::FAR_PLANE,
+        );
 
         proj * view
     }
@@ -75,15 +92,15 @@ impl Camera {
         self.frame().0
     }
 
-    /// Computes the camera's (eye, target, up) in world space.
+    /// Computes the camera's (eye, target, up) in world space (km).
     fn frame(&self) -> (Vec3, Vec3, Vec3) {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();
         let lon = self.longitude.to_radians();
 
-        // Look-at point on the unit sphere surface; also the radial (up
-        // from surface) direction.
-        let radial = Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos());
-        let target = radial;
+        // Look-at point on the WGS84 surface (km) and the local "up" - the
+        // geodetic normal there, which the eye offsets along.
+        let target = earth::surface_position(lat, lon);
+        let radial = earth::geodetic_normal(lat, lon);
 
         // Local tangent frame at the look-at point.
         let east = Vec3::Y.cross(radial).normalize();

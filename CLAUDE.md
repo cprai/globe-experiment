@@ -19,7 +19,9 @@ An interactive Google-Earth-style 3D globe viewer. Rust (edition 2024),
 rendering, **egui 0.34** for the sun-slider overlay. It renders a
 physically lit Earth (day/night, procedural city lights, normal-mapped
 relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
-a star/sun backdrop, with an orbital pan/tilt/zoom camera. The crate is
+a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
+**physical**: the globe is the WGS84 reference ellipsoid and **world space is
+in kilometers** (so it can host real-scale orbital simulation). The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
 phase 2) — do not reintroduce it.
 
@@ -169,16 +171,32 @@ the owner. Re-introducing them silently is a regression.
 ## Conventions
 
 ### Coordinate & mapping (used consistently everywhere — see `MEMORY.md` for formulas)
-- Globe is a **unit sphere at the origin**; distances in **globe radii**.
-  **+Y is north.** Longitude 0°, latitude 0° faces **+Z**.
-- **Load-bearing identity**: because the mesh is a unit sphere at the
-  origin, for any surface fragment **vertex position = surface normal =
-  world position**. The shaders rely on this throughout.
+- Globe is the **WGS84 reference ellipsoid at the origin**; **world space is
+  kilometers** (camera distance, mesh vertices, `camera_pos` uniform — all
+  km). **+Y is north.** Longitude 0°, latitude 0° faces **+Z**; +X is east at
+  the prime meridian. The physical constants and the `surface_position` /
+  `geodetic_normal` helpers live in `src/globe/earth.rs` (the single source
+  of truth; mesh **and** camera build their geometry from it).
+- **Load-bearing identity (post-WGS84)**: on an ellipsoid the surface normal
+  is **no longer** `normalize(position)`, so the mesh now carries an explicit
+  per-vertex **geodetic normal**. That normal happens to equal the old
+  unit-sphere direction (same lat/lon structure), which is what keeps the
+  shader's analytic east/north tangent frame and the surface-anchored
+  city-light noise (`n_geo * DITHER_SCALE`) valid unchanged. The atmosphere
+  and star passes **reuse that unit normal** (×`ATMOSPHERE_TOP_KM` /
+  ×`STARS_RADIUS_KM`) to build their spheres — they must stay spherical, so
+  they must **not** use the ellipsoid `position`.
 - Equirectangular UVs: `u = (lon+180)/360` (wraps; sampler repeats on U),
   `v = 0` at north pole → `1` at south (sampler clamps on V). The mesh
   duplicates the seam column so U wraps cleanly.
-- Atmosphere math works in **kilometers** (positions scaled by
-  `PLANET_RADIUS_KM`); surface/star passes work in **globe radii**.
+- **All passes now work in kilometers.** The atmosphere fragment shader no
+  longer multiplies by `PLANET_RADIUS_KM` (world is already km). The
+  scattering model itself stays **spherical** (`PLANET_RADIUS_KM` 6360 /
+  `ATMOSPHERE_TOP_KM` 6460, baked into the LUTs); the visible surface is the
+  WGS84 ellipsoid (6357–6378 km), so it can poke a few km past the 6360 km
+  atmosphere "ground" near the equator — a small, intentional approximation
+  (the atmosphere was always spherical). Do not try to make the LUT model
+  ellipsoidal; it relies on spherical symmetry.
 
 ### Code style
 - Match the surrounding code: dense, explanatory comments that capture
@@ -197,7 +215,11 @@ the owner. Re-introducing them silently is a regression.
 - **Atmosphere medium constants**: `build.rs` `mod atmosphere` (bake side)
   *and* `shaders/globe.wgsl` (geometric twins).
 - **Input feel constants**: top of `src/globe/input.rs`.
-- **Camera limits**: `Camera` associated consts in `src/globe/camera.rs`.
+- **Earth physical constants** (WGS84 axes, eccentricity, mean radius, GM,
+  rotation rate) + the `surface_position`/`geodetic_normal` helpers:
+  `src/globe/earth.rs`.
+- **Camera limits**: `Camera` associated consts in `src/globe/camera.rs` (in
+  km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
 
 ---
