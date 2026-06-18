@@ -40,8 +40,20 @@ struct Asset {
 /// Generous cap per download; the largest texture is ~10 MB.
 const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
 
+/// JPL Development Ephemeris (DE440) binary, downloaded into the gitignored
+/// `data/` dir at build time and read at runtime by satkit's `jplephem` (the
+/// app points `SATKIT_DATA` there). At ~98 MiB it is far too large to embed
+/// in the binary like the textures, so it stays a side file the app loads.
+const EPHEMERIS_URL: &str =
+    "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440";
+
+/// The ephemeris is ~98 MiB; allow generous headroom for future DE versions.
+const EPHEMERIS_LIMIT: u64 = 256 * 1024 * 1024;
+
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
+
+    download_ephemeris();
 
     for asset in ASSETS {
         let source = download_if_missing(asset.url);
@@ -49,6 +61,39 @@ fn main() {
     }
 
     bake_luts(&out_dir);
+}
+
+/// Downloads the JPL ephemeris into `data/` unless it is already there, and
+/// registers it with cargo so deleting it re-downloads on the next build. The
+/// file is read at runtime (not embedded), so it lands in the project's
+/// `data/` dir rather than `OUT_DIR`.
+fn download_ephemeris() {
+    let name = EPHEMERIS_URL
+        .rsplit('/')
+        .next()
+        .expect("ephemeris url has a file name");
+    let path = PathBuf::from(format!("data/{name}"));
+
+    println!("cargo::rerun-if-changed={}", path.display());
+
+    if path.exists() {
+        return;
+    }
+
+    fs::create_dir_all("data")
+        .unwrap_or_else(|error| panic!("failed to create data directory: {error}"));
+
+    let mut response = ureq::get(EPHEMERIS_URL)
+        .call()
+        .unwrap_or_else(|error| panic!("failed to download {EPHEMERIS_URL}: {error}"));
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(EPHEMERIS_LIMIT)
+        .read_to_vec()
+        .unwrap_or_else(|error| panic!("failed to read response of {EPHEMERIS_URL}: {error}"));
+
+    fs::write(&path, bytes).unwrap_or_else(|error| panic!("failed to write {path:?}: {error}"));
 }
 
 /// Bakes the atmosphere LUTs and writes them as uncompressed

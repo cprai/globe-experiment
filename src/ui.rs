@@ -1,38 +1,28 @@
 use crate::globe::clock::Clock;
 use crate::globe::satellite::Satellite;
-use crate::globe::sun::Sun;
+use crate::globe::sky::Sky;
 
 /// The control/readout panel, pinned to the top-left corner over the globe:
-/// the sun sliders, the simulation clock (play/pause + speed), and the
-/// tracked station's datetime and position.
+/// the simulation clock (play/pause + speed), the ephemeris-driven subsolar
+/// point, and the tracked station's datetime and position.
 ///
-/// Solar declination spans +/-23.44 deg over the year; the subsolar longitude
-/// sweeps the full globe over a day.
-pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite, clock: &mut Clock) {
-    egui::Area::new(egui::Id::new("sun_control"))
+/// The Sun's position is no longer user-controlled - it comes from the JPL
+/// ephemeris for the clock's time (see `sky`), so the old latitude/longitude
+/// sliders are gone.
+pub fn control_panel(ctx: &egui::Context, sky: &Sky, satellite: &Satellite, clock: &mut Clock) {
+    egui::Area::new(egui::Id::new("control_panel"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
             ui.set_width(260.0);
             ui.spacing_mut().slider_width = 260.0;
 
+            // Sun: the ephemeris-derived subsolar point (read-only).
             ui.label(
-                egui::RichText::new(format!("Sun latitude: {:.1} deg", sun.latitude))
-                    .color(egui::Color32::WHITE),
-            );
-            ui.add(
-                egui::Slider::new(&mut sun.latitude, -23.44..=23.44)
-                    .step_by(0.1)
-                    .show_value(false),
-            );
-
-            ui.label(
-                egui::RichText::new(format!("Sun longitude: {:.1} deg", sun.longitude))
-                    .color(egui::Color32::WHITE),
-            );
-            ui.add(
-                egui::Slider::new(&mut sun.longitude, -180.0..=180.0)
-                    .step_by(0.5)
-                    .show_value(false),
+                egui::RichText::new(format!(
+                    "Sun (subsolar): lat {:.2} deg   lon {:.2} deg",
+                    sky.subsolar_lat_deg, sky.subsolar_lon_deg
+                ))
+                .color(egui::Color32::WHITE),
             );
 
             ui.add_space(8.0);

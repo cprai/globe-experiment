@@ -6,7 +6,7 @@ use super::camera::Camera;
 use super::earth;
 use super::mesh::{self, Vertex};
 use super::satellite::Satellite;
-use super::sun::Sun;
+use super::sky::Sky;
 
 const STACKS: u32 = 64;
 const SLICES: u32 = 128;
@@ -538,17 +538,16 @@ impl GlobeRenderer {
         &self,
         queue: &wgpu::Queue,
         camera: &Camera,
-        sun: &Sun,
+        sky: &Sky,
         satellite: &Satellite,
         viewport: (f32, f32),
     ) {
         let (width, height) = viewport;
         let aspect = width / height.max(1.0);
 
-        // The shader maps view directions back onto the star texture, so
-        // it needs the inverse rotation (= transpose, it's orthonormal).
-        let star_rot_inv = sun.star_rotation().transpose();
-        let star_cols = star_rot_inv.to_cols_array_2d();
+        // The sky's rotation already maps world (ECEF) view directions into
+        // the star map's celestial frame (see sky.rs), so it is uploaded as-is.
+        let star_cols = sky.star_rot_inv.to_cols_array_2d();
 
         // Hide the marker when the solid Earth is between eye and station.
         let eye = camera.eye();
@@ -562,7 +561,7 @@ impl GlobeRenderer {
             view_proj: camera.view_proj(aspect).to_cols_array(),
             camera_pos: eye.to_array(),
             _pad0: 0.0,
-            sun_dir: sun.direction().to_array(),
+            sun_dir: sky.sun_dir.to_array(),
             _pad1: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]

@@ -36,10 +36,13 @@ Runtime:
 - `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
 - `rayon = "1.10"` — parallelizes `GlobeRenderer::new`.
 - `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
-  station TLE + the TEME→ITRF rotation. Defaults are off to drop its
-  `download` feature (runtime data fetch via ureq) and `omm-xml`; the calls we
-  use (`sgp4`, `qteme2itrf`, `ITRFCoord`) need **no downloaded data files**.
-  Pulls `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
+  station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`, data-free) **and** the
+  JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
+  orientation (`qgcrf2itrf_approx`/`qitrf2gcrf_approx`, the EOP-free ~1 arcsec
+  transforms). Defaults are off to drop its `download` feature (we download the
+  ephemeris ourselves in build.rs) and `omm-xml`. **The ephemeris needs a data
+  file** (`data/linux_p1550p2650.440`); everything else is data-free. Pulls
+  `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
   transitively.
 
 Build-dependencies:
@@ -64,13 +67,14 @@ affect runtime.
 ```
 build.rs                 download 5 textures -> BC7/KTX2 transcode +
                          bake 3 atmosphere LUTs to f16 KTX2, all into
-                         OUT_DIR. Contains inline `mod atmosphere`.
+                         OUT_DIR; also download the JPL DE440 ephemeris into
+                         data/. Contains inline `mod atmosphere`.
 .cargo/config.toml       Linux-only -lstdc++ for intel_tex_2's ISPC objs
 src/main.rs              winit ApplicationHandler: App + Gfx, event loop,
                          wgpu surface/device, frame loop, egui integration
-src/ui.rs                egui sun panel (two sliders + labels)
-src/globe/mod.rs         module declarations only (camera/earth/input/mesh/
-                         renderer/sun) - no logic
+src/ui.rs                egui control panel (clock + readouts, no sliders)
+src/globe/mod.rs         module declarations only (camera/clock/earth/input/
+                         mesh/renderer/satellite/sky) - no logic
 src/globe/earth.rs       WGS84 + Earth physical constants (axes, eccentricity,
                          mean radius, GM, rotation) + surface_position /
                          geodetic_normal helpers. Single source of truth for
@@ -79,13 +83,16 @@ src/globe/renderer.rs    GlobeRenderer: all wgpu objects, prepare, render
 src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
 src/globe/camera.rs      orbital camera (km world space)
-src/globe/sun.rs         subsolar point + star-map orientation
+src/globe/sky.rs         ephemeris-driven Sun dir + star-map orientation
+                         (JPL DE440 + GCRF<->ITRF); sets satkit's data dir
 src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos;
                          update_to(time) re-propagates as the clock advances
 src/globe/clock.rs       simulation Clock: wall-dt x speed, play/pause
 src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; downloaded source textures (build input)
+data/                    gitignored; build-downloaded JPL DE440 ephemeris,
+                         read at runtime via SATKIT_DATA
                          + TLE.txt (station TLE, embedded via include_str!)
 OUT_DIR/*.ktx2           gitignored build artifacts, include_bytes!'d:
                          5 BC7 textures + 3 f16 LUTs
@@ -144,21 +151,32 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   the displayed datetime now comes from the clock. A running clock is another
   "animating" redraw source; per the owner it **starts playing**, so the app
   renders continuously from launch and only idles when paused.
+- **Phase 7** (2026-06-18): **ephemeris-driven Sun & sky.** Replaced the
+  slider-driven `Sun` with `sky.rs` (`Sky`): the Sun direction comes from the
+  JPL DE440 ephemeris (`jplephem::geocentric_pos`) and the star map is oriented
+  by Earth's real GCRF↔ITRF attitude (`q*_approx`, EOP-free), both for the
+  clock's time and updated every running frame alongside the satellite. This
+  **reverses** the earlier deliberately-non-physical "sky attached to the sun"
+  rule (owner-requested). build.rs now downloads the DE440 file into `data/`;
+  the app points satkit there via `set_datadir`. The Sun lat/lon sliders are
+  gone; the panel shows the computed subsolar point read-only. The shader and
+  its uniforms are unchanged - only the values of `sun_dir`/`star_rot_inv`.
 
 ---
 
 ## 3. Application shell (`src/main.rs`)
 
-A winit `ApplicationHandler`. `main()` builds an `EventLoop`, sets
-`ControlFlow::Wait`, runs `App::default()`.
+A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_data_dir()`
+(points satkit at `data/` before any ephemeris use), then builds an
+`EventLoop`, sets `ControlFlow::Wait`, runs `App::default()`.
 
-- `App { camera: Camera, sun: Sun, satellite: Satellite, clock: Clock,
-  controller: Controller, gfx: Option<Gfx> }`. Camera/sun/satellite/clock
+- `App { camera: Camera, sky: Sky, satellite: Satellite, clock: Clock,
+  controller: Controller, gfx: Option<Gfx> }`. Camera/sky/satellite/clock
   state lives here. `App` has a **manual `Default`** (not derived): it builds
-  the `Satellite` (parses the TLE, runs SGP4) and then `Clock::new(satellite
-  .epoch())`, so the clock starts at the TLE epoch. **No message enum / no
-  indirection** — input mutates the camera directly (the phase-1 iced
-  `Interaction { Pan, Zoom, Tilt }` enum is gone).
+  the `Satellite` (parses the TLE, runs SGP4), `Clock::new(satellite.epoch())`
+  (clock starts at the TLE epoch), and `Sky::at(clock.now())`. **No message
+  enum / no indirection** — input mutates the camera directly (the phase-1
+  iced `Interaction { Pan, Zoom, Tilt }` enum is gone).
 - `Gfx` holds everything tied to the window/GPU, created once in
   `resumed()`: `window: Arc<Window>`, `surface`, `device`, `queue`,
   `config`, `globe: GlobeRenderer`, `egui_ctx`, `egui_state`,
@@ -205,15 +223,16 @@ calls `redraw()`. Everything else → `handle_input`:
 
 1. `controller.tick(&mut camera, config.height)` advances flick inertia
    **and** the zoom glide; returns `animating`.
-2. egui: `take_egui_input` → `run_ui(|ui| ui::sun_panel(ui.ctx(), &mut sun,
+2. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(), &sky,
    &satellite, &mut clock))` → `handle_platform_output`. (0.34 deprecated
    `Context::run` for `run_ui`, whose closure gets a transparent fullscreen
-   `&mut Ui`; the Area panel hangs off `ui.ctx()`.) The closure mutates `sun`
-   and `clock` (disjoint field borrows).
+   `&mut Ui`; the Area panel hangs off `ui.ctx()`.) The closure mutates only
+   `clock` (`sky`/`satellite` are read-only).
 2b. `clock.tick()` (after the UI, so this frame's play/pause + speed apply)
-   advances sim time by the wall-clock delta x multiplier; if it ran,
-   `satellite.update_to(clock.now())` re-propagates SGP4. `animating |=`
-   clock-running, so a playing clock keeps requesting frames.
+   advances sim time by the wall-clock delta x multiplier; if it ran, both
+   `satellite.update_to(now)` (SGP4) and `sky = Sky::at(now)` (ephemeris) are
+   recomputed for `now = clock.now()`. `animating |=` clock-running, so a
+   playing clock keeps requesting frames.
 3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
    resets the cursor every frame; method renamed from `is_pointer_over_area`
    in 0.34).
@@ -222,10 +241,10 @@ calls `redraw()`. Everything else → `handle_input`:
    `Outdated` → reconfigure + redraw + return; `Timeout` → redraw + return;
    `Occluded` → hidden-window first-frame guard (reveal + retry); else skip
    the frame; `Validation` → panic.
-5. `globe.prepare(queue, camera, sun, satellite, viewport)` writes uniforms
+5. `globe.prepare(queue, camera, sky, satellite, viewport)` writes uniforms
    (`viewport` = surface (width, height) px; aspect is derived inside, and the
-   pixel size feeds the constant-size marker). Also runs the CPU marker
-   occlusion test.
+   pixel size feeds the constant-size marker; `sky` supplies `sun_dir` +
+   `star_rot_inv`). Also runs the CPU marker occlusion test.
 6. egui tessellate → `update_texture` for each `textures_delta.set`
    **before** the pass → `update_buffers` (returns prep command buffers) →
    one render pass (clear BLACK → `globe.render` → `egui_renderer.render`)
@@ -371,26 +390,36 @@ whether either still needs frames.
 
 ---
 
-## 6. Sun (`src/globe/sun.rs`)
+## 6. Sky (`src/globe/sky.rs`) — ephemeris-driven Sun + star orientation
 
-`Sun { longitude, latitude }` = the **subsolar point** (the spot where the
-sun is directly overhead), in degrees. Default `(−40, 15)` — morning over
-the Atlantic, lighting the default camera pose from the upper left.
+Replaces the old slider-driven `Sun`. `Sky::at(time)` computes, for a satkit
+`Instant`, the Sun direction and the star-map orientation in the renderer's
+world frame; recomputed every running frame (cheap: ephemeris interp + a few
+rotations). Geocentric model — Earth stays the globe at the origin.
 
-- `direction()` = unit vector to the sun, same formula as any lat/lon point:
-  `(cos lat·sin lon, sin lat, cos lat·cos lon)`.
-- `star_rotation() -> Mat3` = `R_y(lon) · R_x(−lat)`: the star map is
-  **rigidly attached to the sun** (sun pinned at the map's center). This is
-  deliberately **non-physical** — the owner rejected the astronomically
-  correct model (see `CLAUDE.md`). Longitude spins the sky about the polar
-  axis; latitude tilts it about the horizontal equinox axis.
-- Designed for future time-of-day animation: longitude sweeps westward
-  360°/day (solar noon at UTC hour `h` ≈ `(12−h)·15°`); latitude moves
-  ±23.44° (solar declination) over the year.
-
-The renderer uploads `star_rot_inv` = `star_rotation().transpose()`
-(orthonormal, so transpose = inverse) — the shader maps view directions
-*back* onto the star texture.
+- `init_data_dir()` calls `satkit::utils::set_datadir(CARGO_MANIFEST_DIR/data)`
+  once at the top of `main` (before the first ephemeris use). `set_datadir`
+  sets a global `OnceCell` (settable once). NB: `data_found()` returns false
+  here (it checks for the full EOP/space-weather bundle), but the ephemeris
+  resolves fine via autodetect, so we don't gate on it.
+- **Sun**: `geocentric_pos(SolarSystem::Sun, time)` → GCRF position (meters);
+  `qgcrf2itrf_approx(time) * sun_gcrf` → standard ITRF; then permute to the
+  world frame and normalize → `sun_dir`.
+- **Star map**: `star_rot_inv = P · R_itrf→gcrf · Pᵀ`, where `R_itrf→gcrf` is
+  `qitrf2gcrf_approx(time)` as a `Mat3` (built by rotating the basis vectors)
+  and `P` is the standard-ECEF→world permutation `(x,y,z)->(y,z,x)`. This maps
+  a world view direction into the celestial (GCRF) frame for the equirect star
+  lookup; as time advances it rotates the sky at the sidereal rate, consistent
+  with the Sun. Uploaded to the shader **as-is** (no transpose).
+- **Frame note**: satkit is standard ECEF/GCRF (Z = pole); the project world
+  is Y = north. `P` bridges them — the same permutation `earth::
+  surface_position`/`geodetic_normal` bake in. Verified: P·sun matches
+  `ITRFCoord::to_geodetic` (Jan-1-2024 subsolar lat −23.02°, lon 0.84°), and
+  `star_rot_inv` is a proper rotation (det 1, orthonormal to ~6e-8).
+- **Accuracy**: the `*_approx` (IAU-76/FK5) transforms are ~1 arcsec and need
+  **no EOP data** — only the ephemeris file. 1 arcsec is well sub-pixel here.
+- `subsolar_lat_deg`/`subsolar_lon_deg` (from `sun_dir`) are shown read-only
+  in the panel (the old sliders are gone).
 
 ---
 
@@ -449,14 +478,13 @@ for this (and `sgp4` needs `&mut TLE`).
 
 ## 7. UI (`src/ui.rs`) — egui panel
 
-`sun_panel(ctx, &mut Sun, &Satellite, &mut Clock)` draws an `egui::Area`
-anchored top-left (`[10,10]`, width 260): a white "Sun latitude" label +
-slider `−23.44..=23.44` step `0.1` (= season / solar declination), and a "Sun
-longitude" label + slider `−180..=180` step `0.5` (= time of day). Sliders
-mutate `&mut Sun` directly; `show_value(false)` (the value is in the label,
-formatted as `deg` since the ASCII conversion). egui claims its own events
-first (see event routing), so dragging a slider never pans the globe. Below a
-separator it shows the station readout: name, the **clock's** datetime (UTC,
+`control_panel(ctx, &Sky, &Satellite, &mut Clock)` draws an `egui::Area`
+anchored top-left (`[10,10]`, width 260). The **Sun sliders are gone** (the
+Sun is ephemeris-driven now); instead a read-only line shows the computed
+**subsolar point** (`sky.subsolar_lat_deg`/`lon_deg`). egui claims its own
+events first (see event routing), so interacting with the panel never pans the
+globe. Below a separator it shows the station readout: name, the **clock's**
+datetime (UTC,
 `clock.datetime_label()`), and sub-satellite lat/lon + altitude (from
 `Satellite`). Then the **clock controls**: a `Play`/`Pause` button (toggles
 `clock.paused`; ASCII labels per the source rule) with a live `Speed: N.Nx`
@@ -534,8 +562,9 @@ marker:       vec4<f32>     // x,y = viewport px; z = radius px; w = visible
 ```
 
 WGSL `mat3x3` columns have vec4 stride, so the Rust struct pads each
-column. `star_rot_inv` = transpose of `sun.star_rotation()`. Written every
-frame in `prepare` (`queue.write_buffer`, ordered before the frame's
+column. `star_rot_inv` = `sky.star_rot_inv` (world ECEF → celestial GCRF,
+uploaded as-is) and `sun_dir` = `sky.sun_dir`, both ephemeris-derived. Written
+every frame in `prepare` (`queue.write_buffer`, ordered before the frame's
 submit).
 
 ### Bind group 0 layout
@@ -570,10 +599,11 @@ buffers are simply unused). Draw order does the occlusion (no depth buffer).
 The atmosphere is additive over the whole disc (aerial perspective) and beyond
 the limb; the marker is an alpha-blended screen overlay on top.
 
-### `prepare(queue, camera, sun, satellite, viewport)`
+### `prepare(queue, camera, sky, satellite, viewport)`
 
-Writes the uniforms. `viewport` is the surface (width, height) px; aspect is
-derived from it and the px size drives the constant-pixel marker. Computes the
+Writes the uniforms. `sun_dir`/`star_rot_inv` come straight from `sky`.
+`viewport` is the surface (width, height) px; aspect is derived from it and the
+px size drives the constant-pixel marker. Computes the
 marker's `visible` flag with `marker_occluded(eye, sat_pos)` — a ray-vs-sphere
 test (line of sight vs. a mean-Earth-radius sphere); the marker is hidden when
 the planet sits between the eye and the station. `MARKER_RADIUS_PX = 6`.
@@ -748,7 +778,11 @@ front-face (seen from inside), no blending, **before everything**.
 `relative = world − camera_pos` (linear in the vertex ⇒ exact under
 interpolation), output twice: `dir = star_rot_inv · relative` (for the star
 lookup) and `view = relative` (world frame, for the sun). Both normalized
-per fragment.
+per fragment. `star_rot_inv` is now the **ephemeris** world(ECEF)→celestial
+(GCRF) rotation (`sky.star_rot_inv`), so the sky tracks Earth's real attitude
+and rotates at the sidereal rate as the clock advances; `sun_dir` is likewise
+the ephemeris Sun direction. (The shader code is unchanged — only the uniform
+values; the old sun-attached `star_rotation` is gone.)
 
 `fs_stars`:
 - Star color: equirectangular lookup from `normalize(dir)` (inverse mapping,
@@ -879,8 +913,17 @@ tables. The whole bake is sub-second.
 
 ## 12. Build pipeline (`build.rs`)
 
-Three jobs, all writing into `OUT_DIR` (which the runtime `include_bytes!`-es);
-`assets/` holds only the downloaded source images (gitignored build input).
+Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es), plus the
+ephemeris into `data/` (read at runtime, not embedded). `assets/` holds only
+the downloaded source images (gitignored build input).
+
+### 0. Ephemeris download
+`download_ephemeris()` fetches the JPL DE440 binary `linux_p1550p2650.440`
+(~98 MiB) from `ssd.jpl.nasa.gov` into `data/` via ureq (256 MiB cap), unless
+already present; emits `cargo::rerun-if-changed=data/<name>` so deleting it
+re-downloads. It is **not** transcoded or embedded — the app reads it at
+runtime (satkit `jplephem`) via `SATKIT_DATA`. Adds ~98 MB to the
+network-dependent first build.
 
 ### 1. Download
 `ASSETS`: five solarsystemscope.com textures, each tagged `srgb: bool` —
@@ -969,8 +1012,10 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 45, MIN_DISTANCE ~63.7, MAX_DISTANCE ~63710, NEAR_PLANE ~63.7, FAR_PLANE
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
-**`src/globe/sun.rs`**: default (−40, 15). **`renderer.rs`**: STACKS 64,
-SLICES 128, MARKER_RADIUS_PX 6.
+**`renderer.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
+**`src/globe/sky.rs`**: ephemeris `data/linux_p1550p2650.440` (DE440); Sun via
+`jplephem::geocentric_pos(SolarSystem::Sun)`, Earth orientation via
+`q*2*_approx` (EOP-free ~1 arcsec); re-evaluated each running frame.
 **`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
 SGP4; re-propagated each running frame.
 **`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
@@ -1096,9 +1141,40 @@ version bump — this crate's API is still moving.
 - `qteme2itrf<T: TimeLike>(tm: &T) -> Quaternion` **(verified)**: TEME →
   ITRF (Earth-fixed/ECEF). **GMST-only** — the returned quaternion is a pure
   rotation about the polar axis (`x = y = 0`), i.e. it ignores polar motion, so
-  it needs no EOP. `gmst(...)` is also data-free. Full GCRF reductions
-  (`to_gcrf`/`from_gcrf`/`state_to_gcrf`) use IERS/EOP data.
-- Apply a quaternion to a vector with `q * v` (numeris `Quaternion: Mul<Vector3>`).
+  it needs no EOP. `gmst(...)`/`earth_rotation_angle(...)` are also data-free.
+- **GCRF ↔ ITRF**: full `qgcrf2itrf`/`qitrf2gcrf` (IERS 2010, **needs EOP
+  data**) and **`qgcrf2itrf_approx`/`qitrf2gcrf_approx`** (IAU-76/FK5, ~1
+  arcsec, **EOP-free** — what we use) **(verified data-free)**. Each
+  `<T: TimeLike>(tm: &T) -> Quaternion`. `*_approx` is the conjugate pair.
+  State (pos+vel) variants: `gcrf_to_itrf_state[_approx]` etc.
+- Apply a quaternion to a vector with `q * v` (numeris `Quaternion: Mul<Vector3>`);
+  `Quaternion` is `Copy`, so one `q` can rotate several vectors **(verified)** —
+  build a `Mat3` by rotating the three basis vectors.
+
+### Ephemerides — `satkit::jplephem` (JPL DE)
+- `geocentric_pos<T: TimeLike>(body: SolarSystem, tm: &T) -> Result<Vector3>`
+  **(verified)**: body position **relative to Earth**, **meters**, GCRF
+  (inertial). Also `barycentric_pos(...)`.
+- `SolarSystem` (re-export it as **`satkit::SolarSystem`**, not
+  `satkit::jplephem::SolarSystem` which is private) variants: Mercury, Venus,
+  EMB, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Moon, **Sun** (no Earth
+  variant — it's the geocentric origin) **(verified)**.
+- **Needs a JPL DE data file.** Resolution order: env `SATKIT_JPLEPHEM_FILE`,
+  else autodetect `linux_p*.4XX`/`lnxp*.4XX` in the data dir, else fallback
+  `linux_p1550p2650.440` (DE440, ~98 MiB; JPL hosts it at
+  `ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440`). We
+  download it in build.rs into `data/` and point satkit there.
+
+### Data directory — `satkit::utils`
+- `set_datadir(d: &Path) -> Result<()>` **(verified)**: sets a global
+  `OnceCell` (settable **once**; later calls error), validates the dir exists.
+- `datadir() -> Result<PathBuf>`: resolves the `SATKIT_DATA` env var (or the
+  `set_datadir` singleton). `data_found() -> bool` checks the **full** bundle
+  (EOP/space-weather), so it returns **false** even when the ephemeris alone is
+  present **(verified)** — don't gate ephemeris use on it.
+- `download_file`/`download_if_not_exist`/`update_datafiles` (the last gated on
+  the `download` feature) fetch satkit's data bundle; we don't use them — the
+  ephemeris is downloaded directly in build.rs.
 
 ### Earth-fixed coordinates — `satkit::itrfcoord::ITRFCoord`
 - Build from an ECEF cartesian in **meters**: `ITRFCoord::from_vector(&Vector3)`

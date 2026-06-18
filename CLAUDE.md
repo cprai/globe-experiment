@@ -16,17 +16,19 @@ been deleted and folded into here and `MEMORY.md`.
 
 An interactive Google-Earth-style 3D globe viewer. Rust (edition 2024),
 **winit 0.30** window/event loop, **wgpu 29** (direct dependency) for
-rendering, **egui 0.34** for the sun-slider overlay. It renders a
+rendering, **egui 0.34** for the control overlay. It renders a
 physically lit Earth (day/night, procedural city lights, normal-mapped
 relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
 a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
-in kilometers** (so it can host real-scale orbital simulation). It also tracks
-a satellite: an embedded TLE is propagated with the **satkit** crate's SGP4,
-driven by a **simulation clock** (play/pause, exponential 1x-100x real-time
-speed), and
-drawn as a marker circle that moves as time advances, with the clock's
-datetime shown in the UI. The crate is
+in kilometers** (so it can host real-scale orbital simulation). The Sun
+direction, Earth's orientation, and the star-map orientation are computed from
+the **satkit** crate's **JPL DE440 ephemeris** + Earth-orientation transforms
+for the current time (no more sun sliders). It also tracks a satellite: an
+embedded TLE is propagated with satkit's SGP4. All of this is driven by a
+**simulation clock** (play/pause, exponential 1x-100x real-time speed); the
+satellite is drawn as a marker circle and everything animates as time
+advances, with the clock's datetime shown in the UI. The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
 phase 2) — do not reintroduce it.
 
@@ -104,11 +106,14 @@ cargo run --release
 - **The terminator / night-side darkening must use the GEOMETRIC normal**
   (`cos_sun = dot(n_geo, sun)`, the `daylight` smoothstep), never the
   bump-mapped normal `n`. Bump detail on the day/night edge speckles it.
-- **Star map is rigidly attached to the sun** (`star_rotation` =
-  `R_y(lon)·R_x(−lat)`). This is deliberately **non-physical** — the owner
-  rejected the astronomically-correct model (sky rotating only about the
-  polar axis) because both sliders then spun the sky around one axis. Do
-  not "fix" it to be astronomically correct.
+- **Star map and Sun are ephemeris-driven** (`src/globe/sky.rs`). The Sun's
+  direction comes from the JPL DE440 ephemeris and the star map is oriented by
+  Earth's real GCRF↔ITRF attitude, both for the current clock time. (This
+  reverses the earlier deliberately-non-physical "sky rigidly attached to the
+  sun" model — the owner asked for the astronomically-correct version on
+  2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
+  uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
+  → world-frame permutation); do not replace it with a sun-attached rotation.
 - **Backdrop anchoring**: both the star lookup and the sun disc are
   functions of the **camera-relative view direction** (`world − camera_pos`),
   not of position on the sky sphere. Anchoring either to the sky-sphere
@@ -164,7 +169,10 @@ the owner. Re-introducing them silently is a regression.
   (temporal stability + idle-is-free). The wave noise is fixed.
 - **Day-side albedo saturation boost** and an **`OCEAN_TINT`
   water-darkening tint** — both reverted; albedo is used as sampled.
-- **The astronomically-correct star model** — rejected (see above).
+- **The astronomically-correct star model** — was rejected during the
+  slider era, but **adopted on 2026-06-18** via the JPL ephemerides (see the
+  "Star map and Sun are ephemeris-driven" rule above). The old non-physical
+  sun-attached sky is the thing not to reintroduce now.
 - **Noise *frequency* ramp toward the terminator** for the city-light
   dissolve — rejected because it boils/fizzes under sun motion. The dither
   uses a **fixed** `DITHER_SCALE` for a coherent wipe.
@@ -241,7 +249,14 @@ the owner. Re-introducing them silently is a regression.
 - **Simulation clock**: `src/globe/clock.rs` (`Clock`: advances by wall-clock
   dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`). Starts at
   the TLE epoch.
+- **Sun / Earth orientation / star map**: `src/globe/sky.rs` (`Sky::at(time)`
+  → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
+  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_data_dir()` (called once
+  at the top of `main`) points satkit at the data dir.
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
+  **Exception:** the JPL ephemeris (`data/linux_p1550p2650.440`, ~98 MB) is
+  **not** embedded — `build.rs` downloads it into the gitignored `data/` dir
+  and the app reads it at runtime via `SATKIT_DATA` (`set_datadir`).
 
 ---
 
@@ -256,6 +271,14 @@ the owner. Re-introducing them silently is a regression.
 - **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs are embedded via
   `include_bytes!`, so the binary is large and links slowly. Runtime file
   loading is a known, unimplemented follow-up.
+- **JPL ephemeris data file required at runtime.** `build.rs` downloads
+  `data/linux_p1550p2650.440` (DE440, ~98 MB) from JPL on the first build
+  (adds to the already-network-dependent first build), and the app reads it at
+  runtime from the project's `data/` dir (resolved via `set_datadir` to
+  `CARGO_MANIFEST_DIR/data`). So the **project dir must stay put between build
+  and run**, and a fresh checkout needs network for the first build. Earth
+  orientation uses the EOP-free `*_approx` transforms (~1 arcsec, sub-pixel),
+  so **no EOP/space-weather data is needed** — only the ephemeris.
 - **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
   **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
   personality. MSVC on Windows is unaffected; do not make it
@@ -278,8 +301,9 @@ the owner. Re-introducing them silently is a regression.
   `shaders/globe.wgsl` — naga compiles WGSL only at runtime, so a clean
   build/clippy says nothing about the shader; you must run the app.
 - Manual pass to run after risky changes: pan, flick (inertia), zoom to
-  min/max, tilt to clamp, both sun sliders, window resize,
-  minimize/restore. Confirm idle renders **zero** frames.
+  min/max, tilt to clamp, play/pause + speed slider (watch the Sun, stars,
+  and satellite advance together), window resize, minimize/restore. Confirm
+  idle (paused) renders **zero** frames.
 - After atmosphere-constant or mapping changes, verify **both** the bake
   (`build.rs`) and shader (`globe.wgsl`) sides and re-run — bit-identical
   output is the goal when the change is meant to be neutral.

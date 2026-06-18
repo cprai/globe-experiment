@@ -14,9 +14,13 @@ use globe::clock::Clock;
 use globe::input::Controller;
 use globe::renderer::GlobeRenderer;
 use globe::satellite::Satellite;
-use globe::sun::Sun;
+use globe::sky::Sky;
 
 fn main() {
+    // Point satkit at the build-downloaded ephemeris data before anything
+    // (App::default below builds the Sky, which reads the ephemeris).
+    globe::sky::init_data_dir();
+
     let event_loop = EventLoop::new().expect("create event loop");
     // Frames are driven by explicit redraw requests (input, inertia,
     // egui repaints); idle means zero GPU work.
@@ -28,10 +32,12 @@ fn main() {
 
 struct App {
     camera: Camera,
-    sun: Sun,
+    /// Ephemeris-driven Sun direction + star-map orientation for the current
+    /// clock time.
+    sky: Sky,
     /// The tracked space station, re-propagated as the clock advances.
     satellite: Satellite,
-    /// Simulation clock that drives the satellite's motion.
+    /// Simulation clock that drives the satellite and sky.
     clock: Clock,
     controller: Controller,
     gfx: Option<Gfx>,
@@ -39,12 +45,14 @@ struct App {
 
 impl Default for App {
     fn default() -> Self {
-        // Build the satellite first; the clock starts at its TLE epoch.
+        // Build the satellite first; the clock starts at its TLE epoch, and
+        // the sky is evaluated at that same time.
         let satellite = Satellite::load();
         let clock = Clock::new(satellite.epoch());
+        let sky = Sky::at(&clock.now());
         Self {
             camera: Camera::default(),
-            sun: Sun::default(),
+            sky,
             satellite,
             clock,
             controller: Controller::default(),
@@ -246,18 +254,21 @@ impl App {
 
         let raw_input = gfx.egui_state.take_egui_input(&gfx.window);
         let full_output = gfx.egui_ctx.run_ui(raw_input, |ui| {
-            ui::sun_panel(ui.ctx(), &mut self.sun, &self.satellite, &mut self.clock)
+            ui::control_panel(ui.ctx(), &self.sky, &self.satellite, &mut self.clock)
         });
         gfx.egui_state
             .handle_platform_output(&gfx.window, full_output.platform_output);
 
         // Advance the simulation clock (after the UI, so this frame's
-        // play/pause and speed changes apply) and re-propagate the satellite.
-        // A running clock is another "animating" source: it keeps requesting
-        // frames; when paused it advances nothing and the app can go idle.
+        // play/pause and speed changes apply) and re-evaluate the satellite
+        // and the ephemeris-driven sky at the new time. A running clock is
+        // another "animating" source: it keeps requesting frames; when paused
+        // it advances nothing and the app can go idle.
         let clock_running = self.clock.tick();
         if clock_running {
-            self.satellite.update_to(&self.clock.now());
+            let now = self.clock.now();
+            self.satellite.update_to(&now);
+            self.sky = Sky::at(&now);
         }
         animating |= clock_running;
 
@@ -303,7 +314,7 @@ impl App {
         gfx.globe.prepare(
             &gfx.queue,
             &self.camera,
-            &self.sun,
+            &self.sky,
             &self.satellite,
             viewport,
         );

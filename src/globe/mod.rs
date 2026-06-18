@@ -5,4 +5,4 @@ pub mod input;
 mod mesh;
 pub mod renderer;
 pub mod satellite;
-pub mod sun;
+pub mod sky;
