@@ -1,7 +1,8 @@
 //! Simulation clock driving the satellite's motion.
 //!
 //! Time starts at the TLE epoch and advances by the wall-clock delta between
-//! redraws, scaled by an adjustable multiplier (1x real time .. 10x). It can
+//! redraws, scaled by an adjustable multiplier (1x real time .. 100x, set on
+//! an exponential base-e slider in the UI). It can
 //! be paused. While running it acts like the camera's inertia/zoom - an
 //! "animating" source that keeps requesting frames; while paused it advances
 //! nothing, so the app returns to the idle = zero-GPU state.
@@ -15,7 +16,9 @@ pub struct Clock {
     epoch: Instant,
     /// Simulation seconds advanced past the epoch.
     elapsed_seconds: f64,
-    /// Time scale: 1.0 = real time, 10.0 = 10x real time.
+    /// Time scale: 1.0 = real time, up to 100.0 = 100x real time. The UI
+    /// drives this on an exponential (base e) slider, but it is stored as the
+    /// plain linear factor.
     pub multiplier: f32,
     /// When true, time is frozen.
     pub paused: bool,
@@ -25,9 +28,9 @@ pub struct Clock {
 }
 
 impl Clock {
-    /// Real time to 10x real time.
+    /// Real time to 100x real time.
     pub const MIN_MULTIPLIER: f32 = 1.0;
-    pub const MAX_MULTIPLIER: f32 = 10.0;
+    pub const MAX_MULTIPLIER: f32 = 100.0;
 
     pub fn new(epoch: Instant) -> Self {
         Self {

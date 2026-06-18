@@ -61,7 +61,7 @@ pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite, cloc
                     .color(egui::Color32::WHITE),
             );
 
-            // Clock controls: play/pause and a real-time..10x speed slider.
+            // Clock controls: play/pause and a real-time..100x speed slider.
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let label = if clock.paused { "Play" } else { "Pause" };
@@ -73,13 +73,19 @@ pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite, cloc
                         .color(egui::Color32::WHITE),
                 );
             });
-            ui.add(
-                egui::Slider::new(
-                    &mut clock.multiplier,
-                    Clock::MIN_MULTIPLIER..=Clock::MAX_MULTIPLIER,
-                )
-                .step_by(0.1)
-                .show_value(false),
-            );
+            // Exponential (base e) speed: the slider edits the exponent, so
+            // multiplier = e^exp. Linear travel on the slider therefore scales
+            // time geometrically - real time (e^0 = 1x) at the left up to 100x
+            // (e^ln100) at the right, with 10x at the midpoint. Write back only
+            // on change, so the multiplier->exp->multiplier round trip never
+            // drifts when the slider is idle.
+            let mut speed_exp = clock.multiplier.ln();
+            let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+            if ui
+                .add(egui::Slider::new(&mut speed_exp, exp_range).show_value(false))
+                .changed()
+            {
+                clock.multiplier = speed_exp.exp();
+            }
         });
 }

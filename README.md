@@ -24,7 +24,7 @@ first build needs a network connection and takes a little longer.
 | Scroll wheel | Zoom in and out |
 | Right mouse drag | Tilt toward the horizon |
 | Sun sliders (top left) | Move the sun: latitude = season, longitude = time of day |
-| Play/Pause + speed slider | Freeze time, or set how fast it passes (real time to 10x) |
+| Play/Pause + speed slider | Freeze time, or set how fast it passes (real time to 100x, exponential) |
 
 ## What it does
 
@@ -43,5 +43,5 @@ first build needs a network connection and takes a little longer.
 - Satellite tracking: a TLE (the ISS) is propagated with SGP4 (via the
   [satkit](https://crates.io/crates/satkit) crate) and shown as a marker on
   the globe. A simulation clock advances time (play/pause and a real-time to
-  10x speed slider), so the marker orbits live; the panel shows the current
+  exponential real-time to 100x speed slider), so the marker orbits live; the panel shows the current
   datetime and the station's ground position.

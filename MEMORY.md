@@ -138,7 +138,7 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   and the egui panel shows the datetime + sub-satellite lat/lon/altitude.
 - **Phase 6** (2026-06-18): **simulation clock.** Added `clock.rs` (`Clock`):
   time starts at the TLE epoch and advances by the wall-clock delta between
-  redraws x a multiplier (1x real time .. 10x), with play/pause. Each running
+  redraws x a multiplier (1x real time .. 100x, exponential), with play/pause. Each running
   frame re-propagates the satellite (`Satellite::update_to`), so the marker
   moves. UI gained a play/pause button + speed slider (+ live multiplier);
   the displayed datetime now comes from the clock. A running clock is another
@@ -432,9 +432,11 @@ for this (and `sgp4` needs `&mut TLE`).
 `Clock` is the simulation time source that drives the satellite.
 
 - Fields: `epoch: Instant` (sim time zero = TLE epoch), `elapsed_seconds: f64`
-  (sim seconds past epoch), `multiplier: f32` (pub; `MIN_MULTIPLIER 1.0` ..
-  `MAX_MULTIPLIER 10.0`), `paused: bool` (pub), `last: Option<std::time::
-  Instant>` (wall-clock reference of the previous advance).
+  (sim seconds past epoch), `multiplier: f32` (pub, stored as the **linear**
+  factor; `MIN_MULTIPLIER 1.0` .. `MAX_MULTIPLIER 100.0`), `paused: bool`
+  (pub), `last: Option<std::time::Instant>` (wall-clock ref of the previous
+  advance). The UI drives `multiplier` on an exponential (base e) slider; the
+  clock itself just multiplies by the plain factor.
 - `now()` = `epoch + Duration::from_seconds(elapsed_seconds)` (single source of
   truth; no per-frame Instant accumulation drift).
 - `tick() -> bool`: if paused, drops `last` (so resuming doesn't jump by the
@@ -458,8 +460,12 @@ separator it shows the station readout: name, the **clock's** datetime (UTC,
 `clock.datetime_label()`), and sub-satellite lat/lon + altitude (from
 `Satellite`). Then the **clock controls**: a `Play`/`Pause` button (toggles
 `clock.paused`; ASCII labels per the source rule) with a live `Speed: N.Nx`
-label, and a speed slider `MIN_MULTIPLIER..=MAX_MULTIPLIER` (1x..10x) step
-`0.1`, `show_value(false)`, mutating `&mut clock.multiplier`.
+label, and an **exponential (base e) speed slider**: it edits a local
+`speed_exp` over `MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln()` (= `0..=ln100`),
+writing `clock.multiplier = speed_exp.exp()` **only on `.changed()`** (so the
+idle `multiplier->ln->exp` round trip never drifts). Linear slider travel thus
+scales time geometrically: 1x at the left, 10x at the midpoint, 100x at the
+right. `show_value(false)` (value is in the label).
 
 ---
 
@@ -967,8 +973,9 @@ clamp ±89.
 SLICES 128, MARKER_RADIUS_PX 6.
 **`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
 SGP4; re-propagated each running frame.
-**`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 10.0; starts at
-the TLE epoch, `paused = false` (runs at launch).
+**`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
+is exponential base e); starts at the TLE epoch, `paused = false` (runs at
+launch).
 
 ---
 

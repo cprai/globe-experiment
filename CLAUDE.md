@@ -23,7 +23,8 @@ a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
 in kilometers** (so it can host real-scale orbital simulation). It also tracks
 a satellite: an embedded TLE is propagated with the **satkit** crate's SGP4,
-driven by a **simulation clock** (play/pause, 1x-10x real-time speed), and
+driven by a **simulation clock** (play/pause, exponential 1x-100x real-time
+speed), and
 drawn as a marker circle that moves as time advances, with the clock's
 datetime shown in the UI. The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
