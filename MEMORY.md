@@ -964,3 +964,84 @@ render-pass descriptors; color attachments gained `depth_slice: None`;
 is `MipmapFilterMode`. egui 0.34: `Context::run` → `run_ui`,
 `is_pointer_over_area` → `is_pointer_over_egui`, `Renderer::new` takes
 `RendererOptions`.
+
+---
+
+## 15. satkit crate reference (API notes, verified 2026-06-18)
+
+Reference for the `satkit` ("satellite toolkit") crate, used for SGP4 (see §6.5
+`satellite.rs`). Items marked **(verified)** were confirmed empirically with a
+headless probe against **v0.18.1**; the rest is from the docs. Re-verify on a
+version bump — this crate's API is still moving.
+
+### Crate shape, features, dependencies
+- **Linear algebra is `numeris`, NOT nalgebra.** satkit re-exports its types at
+  the crate root: `satkit::Vector3`, `satkit::Quaternion`, `satkit::Instant`,
+  and `DMatrix<f64>` (a numeris type alias). Watch the version of `numeris` if
+  you ever depend on it directly, to avoid two incompatible copies.
+- **Cargo features**: `download` (**default**, pulls `ureq` 3.1 for runtime data
+  fetch), `omm-xml` (**default**, `quick-xml` for OMM XML), `chrono` (optional,
+  adds a `TimeLike` impl for `chrono::DateTime<Utc>`). We use
+  `default-features = false` — drops `ureq`+`quick-xml`; SGP4 + the TEME→ITRF
+  rotation still work.
+- **Data files**: many high-precision functions (full GCRF/IAU reductions,
+  gravity fields, JPL ephemerides, space weather, Earth-orientation params)
+  require downloaded data — fetched by `satkit::utils::update_datafiles(None,
+  false)` (needs the `download` feature) into `satkit::utils::datadir()`, and
+  they will fail/panic if it's missing. **(verified)** `sgp4`, `qteme2itrf`,
+  `gmst`, and `ITRFCoord` need **no** data files. If you adopt a function that
+  needs EOP, prefer the `*_approx` variants (GMST-only) to stay data-free.
+
+### Time — `satkit::Instant`
+- Microseconds since the Unix epoch. Construct a UTC datetime with
+  `Instant::from_datetime(year: i32, month, day, hour, minute, second: f64)
+  -> Result<Instant>` **(verified)** (seconds is fractional `f64`). Debug prints
+  `Instant { year, month, day, hour, minute, second }`.
+- The `TimeLike` trait abstracts time across `Instant` and (with the `chrono`
+  feature) `chrono::DateTime<Utc>`; the propagation/transform fns are generic
+  over `T: TimeLike`.
+
+### TLE — `satkit::tle::TLE`
+- Constructors (all but `new` return `Result`): `load_3line(line0, line1,
+  line2)` **(verified)** (name + two element lines), `load_2line(line1,
+  line2)`, `from_lines(&[String]) -> Result<Vec<TLE>>` (auto 2-/3-line),
+  `from_url(url)` (download feature), `new()` (empty/invalid).
+- Field `tle.name: String` **(verified)**, plus the parsed orbital elements.
+- `sgp4` takes **`&mut TLE`** — it lazily builds and caches the SGP4 propagator
+  inside the TLE on first use, so the binding must be mutable.
+
+### SGP4 — `satkit::sgp4::sgp4`
+- `sgp4(source: &mut impl SGP4Source, tm: &[T: TimeLike]) -> Result<SGP4State>`
+  **(verified)**. `TLE` implements `SGP4Source`.
+- `SGP4State { pos: DMatrix<f64>, vel: DMatrix<f64>, errcode: Vec<SGP4Error> }`
+  **(verified)**. `pos`/`vel` are **3 × N** (3 rows = x,y,z; one **column** per
+  input time), in **meters** / **m/s**, **TEME** frame. Index `state.pos[(row,
+  col)]` or `state.pos.column(i)`. `errcode[i]` is `SGP4Success` on success.
+- ISS TLE at its epoch → |pos| ≈ 6787 km (≈ 420 km altitude). **(verified)**
+
+### Frame transforms — `satkit::frametransform`
+- `qteme2itrf<T: TimeLike>(tm: &T) -> Quaternion` **(verified)**: TEME →
+  ITRF (Earth-fixed/ECEF). **GMST-only** — the returned quaternion is a pure
+  rotation about the polar axis (`x = y = 0`), i.e. it ignores polar motion, so
+  it needs no EOP. `gmst(...)` is also data-free. Full GCRF reductions
+  (`to_gcrf`/`from_gcrf`/`state_to_gcrf`) use IERS/EOP data.
+- Apply a quaternion to a vector with `q * v` (numeris `Quaternion: Mul<Vector3>`).
+
+### Earth-fixed coordinates — `satkit::itrfcoord::ITRFCoord`
+- Build from an ECEF cartesian in **meters**: `ITRFCoord::from_vector(&Vector3)`
+  **(verified)**, `ITRFCoord::from([x, y, z])`, or `from_slice(&[..]) ->
+  Result`.
+- Geodetic accessors (WGS84): `latitude_rad()/latitude_deg()`,
+  `longitude_rad()/longitude_deg()`, `hae()` (height above ellipsoid, m),
+  `to_geodetic_rad()/to_geodetic_deg() -> (lat, lon, hae)` **(verified)**.
+
+### Gotchas
+- **`numeris::Vector3::new` takes `[[f64; 1]; 3]`** (column-major), e.g.
+  `Vector3::new([[x], [y], [z]])` **(verified)** — *not* three scalars. `.norm()`
+  for magnitude; index `v[(row, 0)]`.
+- **Axis convention differs from this project.** satkit ITRF/ECEF is X = prime
+  meridian, Y = 90°E, Z = north; our world frame is X = 90°E, Y = north, Z =
+  prime meridian (so project `(X,Y,Z)` = ECEF `(Y,Z,X)`). We avoid the
+  permutation entirely by converting to geodetic lat/lon/alt and rebuilding the
+  point with our own `earth::surface_position`/`geodetic_normal` (see §6.5).
+- Units are **meters** out of SGP4/ITRFCoord; our world space is km (÷1000).
