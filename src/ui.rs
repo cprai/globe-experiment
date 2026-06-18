@@ -1,12 +1,14 @@
+use crate::globe::clock::Clock;
 use crate::globe::satellite::Satellite;
 use crate::globe::sun::Sun;
 
 /// The control/readout panel, pinned to the top-left corner over the globe:
-/// the sun sliders plus the tracked station's datetime and position.
+/// the sun sliders, the simulation clock (play/pause + speed), and the
+/// tracked station's datetime and position.
 ///
 /// Solar declination spans +/-23.44 deg over the year; the subsolar longitude
 /// sweeps the full globe over a day.
-pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite) {
+pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite, clock: &mut Clock) {
     egui::Area::new(egui::Id::new("sun_control"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
@@ -36,15 +38,15 @@ pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite) {
             ui.add_space(8.0);
             ui.separator();
 
-            // Tracked station: the (fixed) datetime the SGP4 prediction was
-            // evaluated at, plus the resulting ground track and altitude.
+            // Tracked station: the SGP4 prediction's datetime (driven by the
+            // simulation clock) plus the resulting ground track and altitude.
             ui.label(
                 egui::RichText::new(&satellite.name)
                     .color(egui::Color32::from_rgb(255, 120, 100))
                     .strong(),
             );
             ui.label(
-                egui::RichText::new(format!("Time (UTC): {}", satellite.time_label))
+                egui::RichText::new(format!("Time (UTC): {}", clock.datetime_label()))
                     .color(egui::Color32::WHITE),
             );
             ui.label(
@@ -57,6 +59,27 @@ pub fn sun_panel(ctx: &egui::Context, sun: &mut Sun, satellite: &Satellite) {
             ui.label(
                 egui::RichText::new(format!("Altitude: {:.0} km", satellite.altitude_km))
                     .color(egui::Color32::WHITE),
+            );
+
+            // Clock controls: play/pause and a real-time..10x speed slider.
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let label = if clock.paused { "Play" } else { "Pause" };
+                if ui.button(label).clicked() {
+                    clock.paused = !clock.paused;
+                }
+                ui.label(
+                    egui::RichText::new(format!("Speed: {:.1}x", clock.multiplier))
+                        .color(egui::Color32::WHITE),
+                );
+            });
+            ui.add(
+                egui::Slider::new(
+                    &mut clock.multiplier,
+                    Clock::MIN_MULTIPLIER..=Clock::MAX_MULTIPLIER,
+                )
+                .step_by(0.1)
+                .show_value(false),
             );
         });
 }

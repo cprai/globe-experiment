@@ -80,7 +80,9 @@ src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
 src/globe/camera.rs      orbital camera (km world space)
 src/globe/sun.rs         subsolar point + star-map orientation
-src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos
+src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos;
+                         update_to(time) re-propagates as the clock advances
+src/globe/clock.rs       simulation Clock: wall-dt x speed, play/pause
 src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; downloaded source textures (build input)
@@ -134,6 +136,14 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   WGS84 helpers. A 4th render pass draws a constant-pixel marker circle at the
   station's projected position (hidden on the CPU when the globe occludes it),
   and the egui panel shows the datetime + sub-satellite lat/lon/altitude.
+- **Phase 6** (2026-06-18): **simulation clock.** Added `clock.rs` (`Clock`):
+  time starts at the TLE epoch and advances by the wall-clock delta between
+  redraws x a multiplier (1x real time .. 10x), with play/pause. Each running
+  frame re-propagates the satellite (`Satellite::update_to`), so the marker
+  moves. UI gained a play/pause button + speed slider (+ live multiplier);
+  the displayed datetime now comes from the clock. A running clock is another
+  "animating" redraw source; per the owner it **starts playing**, so the app
+  renders continuously from launch and only idles when paused.
 
 ---
 
@@ -142,11 +152,13 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
 A winit `ApplicationHandler`. `main()` builds an `EventLoop`, sets
 `ControlFlow::Wait`, runs `App::default()`.
 
-- `App { camera: Camera, sun: Sun, satellite: Satellite, controller:
-  Controller, gfx: Option<Gfx> }`. Camera/sun/satellite state lives here
-  (`Satellite` is built once via `Default`, which runs the SGP4 propagation).
-  **No message enum / no indirection** — input mutates the camera directly
-  (the phase-1 iced `Interaction { Pan, Zoom, Tilt }` enum is gone).
+- `App { camera: Camera, sun: Sun, satellite: Satellite, clock: Clock,
+  controller: Controller, gfx: Option<Gfx> }`. Camera/sun/satellite/clock
+  state lives here. `App` has a **manual `Default`** (not derived): it builds
+  the `Satellite` (parses the TLE, runs SGP4) and then `Clock::new(satellite
+  .epoch())`, so the clock starts at the TLE epoch. **No message enum / no
+  indirection** — input mutates the camera directly (the phase-1 iced
+  `Interaction { Pan, Zoom, Tilt }` enum is gone).
 - `Gfx` holds everything tied to the window/GPU, created once in
   `resumed()`: `window: Arc<Window>`, `surface`, `device`, `queue`,
   `config`, `globe: GlobeRenderer`, `egui_ctx`, `egui_state`,
@@ -194,9 +206,14 @@ calls `redraw()`. Everything else → `handle_input`:
 1. `controller.tick(&mut camera, config.height)` advances flick inertia
    **and** the zoom glide; returns `animating`.
 2. egui: `take_egui_input` → `run_ui(|ui| ui::sun_panel(ui.ctx(), &mut sun,
-   &satellite))` → `handle_platform_output`. (0.34 deprecated `Context::run`
-   for `run_ui`, whose closure gets a transparent fullscreen `&mut Ui`; the
-   Area panel hangs off `ui.ctx()`.)
+   &satellite, &mut clock))` → `handle_platform_output`. (0.34 deprecated
+   `Context::run` for `run_ui`, whose closure gets a transparent fullscreen
+   `&mut Ui`; the Area panel hangs off `ui.ctx()`.) The closure mutates `sun`
+   and `clock` (disjoint field borrows).
+2b. `clock.tick()` (after the UI, so this frame's play/pause + speed apply)
+   advances sim time by the wall-clock delta x multiplier; if it ran,
+   `satellite.update_to(clock.now())` re-propagates SGP4. `animating |=`
+   clock-running, so a playing clock keeps requesting frames.
 3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
    resets the cursor every frame; method renamed from `is_pointer_over_area`
    in 0.34).
@@ -242,9 +259,12 @@ found by the owner on Windows):
 
 `ControlFlow::Wait` + targeted `request_redraw()` on: camera change from
 input, active flick inertia or zoom glide (each frame requests the next
-until it settles), egui zero repaint delay (slider drag), resize, and
-surface lost/timeout recovery. Idle requests nothing → zero frames. Future
-sun animation just becomes another "animating" flag.
+until it settles), **the simulation clock running** (each frame requests the
+next while playing), egui zero repaint delay (slider drag), resize, and
+surface lost/timeout recovery. Idle requests nothing → zero frames — but
+because the clock **starts playing**, the app is non-idle from launch until
+the clock is paused. (A future sun animation would just be another such
+"animating" flag.)
 
 ---
 
@@ -377,17 +397,19 @@ The renderer uploads `star_rot_inv` = `star_rotation().transpose()`
 ## 6.5. Satellite (`src/globe/satellite.rs`)
 
 Tracks one object (the ISS) from an embedded TLE, propagated with the
-**satkit** crate's SGP4. Computed **once** (`Satellite::load`, also the
-`Default` impl) since the evaluation datetime is fixed.
+**satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE and
+propagates at its epoch; `update_to(time)` **re-propagates** each running
+frame as the `Clock` advances. The parsed `TLE` is **retained** in the struct
+for this (and `sgp4` needs `&mut TLE`).
 
 - **TLE**: `assets/TLE.txt` (3-line: name + two element lines), `include_str!`-
-  embedded. Parsed with `TLE::load_3line(line0, line1, line2)`.
-- **Time**: `Instant::from_datetime(2024, 1, 1, 12, 0, 0.0)` — the TLE's epoch
-  (`24001.50000000`). TLEs are only accurate ~days around epoch, so the eval
-  time is pinned here; the UI shows it as a read-only label (`EVAL_LABEL`).
-- **Propagate**: `sgp4(&mut tle, &[time]) -> SGP4State`. `state.pos` is a
-  `DMatrix<f64>` shaped **3×N** (one column per time), in **meters**, **TEME**
-  frame. We take column 0 into a `Vector3` (`numeris`, ctor takes `[[f64;1];3]`).
+  embedded. Parsed with `TLE::load_3line(line0, line1, line2)`. `tle.epoch` is
+  an `Instant` (the `24001.50000000` epoch); `Satellite::epoch()` exposes it
+  so the clock can start there.
+- **Propagate** (shared `propagate(&mut tle, &time)` helper): `sgp4(&mut tle,
+  &[time]) -> SGP4State`. `state.pos` is a `DMatrix<f64>` shaped **3×N** (one
+  column per time), in **meters**, **TEME** frame. Column 0 → a `Vector3`
+  (`numeris`, ctor takes `[[f64;1];3]`).
 - **TEME→ITRF**: `qteme2itrf(&time) * teme` — a GMST-only rotation about the
   polar axis (the returned quaternion has x=y=0), so it needs **no EOP / data
   files**. Then `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` → (lat, lon,
@@ -396,24 +418,48 @@ Tracks one object (the ISS) from an embedded TLE, propagated with the
   with our own helpers: `earth::surface_position(lat, lon) +
   earth::geodetic_normal(lat, lon) * altitude_km`. This guarantees the marker
   lands on the exact WGS84 ellipsoid the mesh uses. Units: meters→km.
-- **Stored**: `name`, `time_label`, `position_km` (world frame), and
-  `latitude_deg`/`longitude_deg`/`altitude_km` for the UI.
+- **Stored**: `tle` (private), `name`, `position_km` (world frame), and
+  `latitude_deg`/`longitude_deg`/`altitude_km` for the UI. (The datetime now
+  lives in the `Clock`, not here.)
 - **Verified** (2026-06-18, headless probe): ISS at epoch → lat 50.68°, lon
-  176.9°, alt 421 km (consistent with the 51.6° inclination, ~420 km orbit).
+  176.9°, alt 421 km; +60 s → lon crosses the date line (~5.6°/min), +3600 s →
+  opposite hemisphere, alt steady ~420 km (consistent with 51.6° inclination,
+  ~92 min orbit).
 - Malformed embedded data panics (`expect`), like the other baked-in assets.
+
+## 6.6. Clock (`src/globe/clock.rs`)
+
+`Clock` is the simulation time source that drives the satellite.
+
+- Fields: `epoch: Instant` (sim time zero = TLE epoch), `elapsed_seconds: f64`
+  (sim seconds past epoch), `multiplier: f32` (pub; `MIN_MULTIPLIER 1.0` ..
+  `MAX_MULTIPLIER 10.0`), `paused: bool` (pub), `last: Option<std::time::
+  Instant>` (wall-clock reference of the previous advance).
+- `now()` = `epoch + Duration::from_seconds(elapsed_seconds)` (single source of
+  truth; no per-frame Instant accumulation drift).
+- `tick() -> bool`: if paused, drops `last` (so resuming doesn't jump by the
+  paused interval) and returns false. Else advances `elapsed_seconds += dt *
+  multiplier` where `dt` is the wall-clock delta since `last` (0 on the first
+  tick after a resume), and returns true. Returned bool feeds `animating`.
+- `multiplier`/`paused` are mutated **directly by the UI** (like `Sun`); `tick`
+  handles the `last` reset based on `paused`, so direct mutation is safe.
+- `datetime_label()` formats `now().as_datetime()` as `YYYY-MM-DD HH:MM:SS UTC`.
 
 ## 7. UI (`src/ui.rs`) — egui panel
 
-`sun_panel(ctx, &mut Sun, &Satellite)` draws an `egui::Area` anchored top-left
-(`[10,10]`, width 260): a white "Sun latitude" label + slider
-`−23.44..=23.44` step `0.1` (= season / solar declination), and a "Sun
+`sun_panel(ctx, &mut Sun, &Satellite, &mut Clock)` draws an `egui::Area`
+anchored top-left (`[10,10]`, width 260): a white "Sun latitude" label +
+slider `−23.44..=23.44` step `0.1` (= season / solar declination), and a "Sun
 longitude" label + slider `−180..=180` step `0.5` (= time of day). Sliders
 mutate `&mut Sun` directly; `show_value(false)` (the value is in the label,
 formatted as `deg` since the ASCII conversion). egui claims its own events
 first (see event routing), so dragging a slider never pans the globe. Below a
-separator it shows the **read-only** station readout: name, the SGP4
-evaluation datetime (UTC), and sub-satellite lat/lon + altitude (all from
-`Satellite`, computed once — the datetime is fixed).
+separator it shows the station readout: name, the **clock's** datetime (UTC,
+`clock.datetime_label()`), and sub-satellite lat/lon + altitude (from
+`Satellite`). Then the **clock controls**: a `Play`/`Pause` button (toggles
+`clock.paused`; ASCII labels per the source rule) with a live `Speed: N.Nx`
+label, and a speed slider `MIN_MULTIPLIER..=MAX_MULTIPLIER` (1x..10x) step
+`0.1`, `show_value(false)`, mutating `&mut clock.multiplier`.
 
 ---
 
@@ -919,8 +965,10 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 clamp ±89.
 **`src/globe/sun.rs`**: default (−40, 15). **`renderer.rs`**: STACKS 64,
 SLICES 128, MARKER_RADIUS_PX 6.
-**`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), eval datetime
-2024-01-01 12:00:00 UTC (the TLE epoch), via `satkit` 0.18 SGP4.
+**`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
+SGP4; re-propagated each running frame.
+**`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 10.0; starts at
+the TLE epoch, `paused = false` (runs at launch).
 
 ---
 
@@ -993,20 +1041,38 @@ version bump — this crate's API is still moving.
   needs EOP, prefer the `*_approx` variants (GMST-only) to stay data-free.
 
 ### Time — `satkit::Instant`
-- Microseconds since the Unix epoch. Construct a UTC datetime with
-  `Instant::from_datetime(year: i32, month, day, hour, minute, second: f64)
-  -> Result<Instant>` **(verified)** (seconds is fractional `f64`). Debug prints
-  `Instant { year, month, day, hour, minute, second }`.
+- Microseconds since the Unix epoch; **`Copy`** **(verified)** (so `*instant`
+  / `&[*t]` work). Construct a UTC datetime with `Instant::from_datetime(year:
+  i32, month, day, hour, minute, second: f64) -> Result<Instant>`
+  **(verified)** (seconds is fractional `f64`). Debug prints `Instant { year,
+  month, day, hour, minute, second }`.
+- **Unixtime**: `as_unixtime() -> f64`, `from_unixtime(f64) -> Instant`
+  (leap seconds ignored).
+- **Arithmetic**: `Instant + Duration -> Instant` **(verified)** (also `-`,
+  `+=`, `-=`); `Instant - Instant -> Duration`.
+- **Calendar out**: `as_datetime() -> (i32, i32, i32, i32, i32, f64)` =
+  (year, month, day, hour, minute, second) UTC **(verified)**; also implements
+  `Display` (`to_string()`).
 - The `TimeLike` trait abstracts time across `Instant` and (with the `chrono`
   feature) `chrono::DateTime<Utc>`; the propagation/transform fns are generic
   over `T: TimeLike`.
+
+### Duration — `satkit::Duration`
+- Microsecond-backed. Constructors: `new(usec: i64)`, `from_microseconds(i64)`,
+  `from_milliseconds(f64)`, `from_seconds(f64)` **(verified)**,
+  `from_minutes(f64)`, `from_hours(f64)`, `from_days(f64)`, `zero()`.
+- Use with `Instant` arithmetic above (e.g. advance a clock:
+  `epoch + Duration::from_seconds(elapsed)`).
 
 ### TLE — `satkit::tle::TLE`
 - Constructors (all but `new` return `Result`): `load_3line(line0, line1,
   line2)` **(verified)** (name + two element lines), `load_2line(line1,
   line2)`, `from_lines(&[String]) -> Result<Vec<TLE>>` (auto 2-/3-line),
   `from_url(url)` (download feature), `new()` (empty/invalid).
-- Field `tle.name: String` **(verified)**, plus the parsed orbital elements.
+- Public fields include `name: String` **(verified)** and `epoch: Instant`
+  **(verified)** (the element-set epoch), plus the parsed orbital elements
+  (`inclination`, `raan`, `eccen`, `arg_of_perigee`, `mean_anomaly`,
+  `mean_motion`, `bstar`, `sat_num`, ...).
 - `sgp4` takes **`&mut TLE`** — it lazily builds and caches the SGP4 propagator
   inside the TLE on first use, so the binding must be mutable.
 

@@ -22,9 +22,10 @@ relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
 a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
 in kilometers** (so it can host real-scale orbital simulation). It also tracks
-a satellite: an embedded TLE is propagated with the **satkit** crate's SGP4 to
-a fixed datetime and drawn as a marker circle, with that datetime shown in the
-UI. The crate is
+a satellite: an embedded TLE is propagated with the **satkit** crate's SGP4,
+driven by a **simulation clock** (play/pause, 1x-10x real-time speed), and
+drawn as a marker circle that moves as time advances, with the clock's
+datetime shown in the UI. The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
 phase 2) — do not reintroduce it.
 
@@ -93,8 +94,12 @@ cargo run --release
   passed to the shader as a visible flag.
 - **Idle = zero GPU work.** `main()` sets `ControlFlow::Wait`; frames are
   driven *only* by targeted `window.request_redraw()` (input changed the
-  camera, inertia/zoom glide coasting, egui repaint, resize, surface
-  recovery). **Never add an unconditional vsync render loop.**
+  camera, inertia/zoom glide coasting, **the simulation clock running**, egui
+  repaint, resize, surface recovery). **Never add an unconditional vsync
+  render loop.** Note: the clock is another "animating" source and **starts
+  playing** (owner's choice), so the app renders continuously from launch and
+  is only idle once the clock is **paused** — this is still condition-gated
+  `request_redraw`, not an unconditional loop.
 - **The terminator / night-side darkening must use the GEOMETRIC normal**
   (`cos_sun = dot(n_geo, sun)`, the `daylight` smoothstep), never the
   bump-mapped normal `n`. Bump detail on the day/night edge speckles it.
@@ -229,9 +234,12 @@ the owner. Re-introducing them silently is a regression.
 - **Camera limits**: `Camera` associated consts in `src/globe/camera.rs` (in
   km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
 - **Satellite tracking**: `src/globe/satellite.rs` (TLE parse + SGP4 + frame
-  conversion to a world-space km point). The TLE is `assets/TLE.txt`, embedded
-  via `include_str!` (assets/ is gitignored, like the textures). The fixed
-  evaluation datetime + marker colors live there and in the marker shader.
+  conversion to a world-space km point; `update_to(time)` re-propagates each
+  tick). The TLE is `assets/TLE.txt`, embedded via `include_str!` (assets/ is
+  gitignored, like the textures). Marker colors live in the marker shader.
+- **Simulation clock**: `src/globe/clock.rs` (`Clock`: advances by wall-clock
+  dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`). Starts at
+  the TLE epoch.
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
 
 ---

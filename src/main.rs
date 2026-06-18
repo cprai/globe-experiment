@@ -10,6 +10,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use globe::camera::Camera;
+use globe::clock::Clock;
 use globe::input::Controller;
 use globe::renderer::GlobeRenderer;
 use globe::satellite::Satellite;
@@ -25,14 +26,31 @@ fn main() {
     event_loop.run_app(&mut app).expect("run event loop");
 }
 
-#[derive(Default)]
 struct App {
     camera: Camera,
     sun: Sun,
-    /// The tracked space station (parsed/propagated once from the TLE).
+    /// The tracked space station, re-propagated as the clock advances.
     satellite: Satellite,
+    /// Simulation clock that drives the satellite's motion.
+    clock: Clock,
     controller: Controller,
     gfx: Option<Gfx>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        // Build the satellite first; the clock starts at its TLE epoch.
+        let satellite = Satellite::load();
+        let clock = Clock::new(satellite.epoch());
+        Self {
+            camera: Camera::default(),
+            sun: Sun::default(),
+            satellite,
+            clock,
+            controller: Controller::default(),
+            gfx: None,
+        }
+    }
 }
 
 /// Everything tied to the window and GPU, created once on `resumed`.
@@ -222,16 +240,26 @@ impl App {
 
         // Step flick inertia with real frame time; while it's coasting,
         // each frame requests the next one.
-        let animating = self
+        let mut animating = self
             .controller
             .tick(&mut self.camera, gfx.config.height as f32);
 
         let raw_input = gfx.egui_state.take_egui_input(&gfx.window);
         let full_output = gfx.egui_ctx.run_ui(raw_input, |ui| {
-            ui::sun_panel(ui.ctx(), &mut self.sun, &self.satellite)
+            ui::sun_panel(ui.ctx(), &mut self.sun, &self.satellite, &mut self.clock)
         });
         gfx.egui_state
             .handle_platform_output(&gfx.window, full_output.platform_output);
+
+        // Advance the simulation clock (after the UI, so this frame's
+        // play/pause and speed changes apply) and re-propagate the satellite.
+        // A running clock is another "animating" source: it keeps requesting
+        // frames; when paused it advances nothing and the app can go idle.
+        let clock_running = self.clock.tick();
+        if clock_running {
+            self.satellite.update_to(&self.clock.now());
+        }
+        animating |= clock_running;
 
         // egui resets the cursor icon every frame; restore the globe's
         // grab cursor whenever the pointer isn't on the panel.
