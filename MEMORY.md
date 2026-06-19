@@ -415,7 +415,8 @@ whether either still needs frames.
 Replaces the old slider-driven `Sun`. `Sky::at(time)` computes, for a satkit
 `Instant`, the Sun direction and the star-map orientation in the renderer's
 world frame; recomputed every running frame (cheap: ephemeris interp + a few
-rotations). Geocentric model — Earth stays the globe at the origin.
+rotations). Geocentric model — Earth stays the globe at the origin. **For the
+full pipeline, frames, and math see §16** (this is the module-level summary).
 
 - `init_data_dir()` calls `satkit::utils::set_datadir(CARGO_MANIFEST_DIR/data)`
   once at the top of `main` (before the first ephemeris use). `set_datadir`
@@ -449,7 +450,8 @@ Tracks one object (the ISS) from an embedded TLE, propagated with the
 **satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE and
 propagates at its epoch; `update_to(time)` **re-propagates** each running
 frame as the `Clock` advances. The parsed `TLE` is **retained** in the struct
-for this (and `sgp4` needs `&mut TLE`).
+for this (and `sgp4` needs `&mut TLE`). **For the full pipeline, frames, and
+math see §16** (this is the module-level summary).
 
 - **TLE**: `assets/TLE.txt` (3-line: name + two element lines), `include_str!`-
   embedded. Parsed with `TLE::load_3line(line0, line1, line2)`. `tle.epoch` is
@@ -1216,3 +1218,194 @@ version bump — this crate's API is still moving.
   permutation entirely by converting to geodetic lat/lon/alt and rebuilding the
   point with our own `earth::surface_position`/`geodetic_normal` (see §6.5).
 - Units are **meters** out of SGP4/ITRFCoord; our world space is km (÷1000).
+
+---
+
+## 16. Orbital & astronomical computation — end-to-end reference
+
+The single place that explains, in full, how the Sun (and any planet) and the
+satellite are positioned/oriented every frame: the reference frames, the
+transforms and their math, the exact satkit calls, units, data files, and
+accuracy. Quick references elsewhere: module summaries in §6 (Sky), §6.5
+(Satellite), §6.6 (Clock); the satkit API cheat-sheet in §15; the camera in
+§4. **Source is authoritative** (`sky.rs`, `satellite.rs`, `earth.rs`,
+`camera.rs`, `renderer.rs`) — this section is the consolidated explanation.
+
+### 16.1 Model, units, cadence
+
+- **Geocentric.** The Earth is the rendered globe, fixed at the origin in the
+  project world frame; it does **not** translate or rotate. Everything
+  astronomical (Sun direction, Earth attitude, star orientation, satellite
+  position) is computed *for the current simulation time* and expressed in that
+  fixed world frame. The visible "Earth rotation" is actually the **camera**
+  and the **sky/Sun** moving (the camera is star-fixed, §16.7).
+- **Units.** World space is **kilometers**. satkit returns **meters**, so
+  every satkit length is ÷1000 on the way in. Angles in code are radians;
+  degrees only at the UI edge.
+- **Time** is a satkit `Instant` (µs since the Unix epoch, UTC). The `Clock`
+  (§6.6, §16.4) advances it by wall-dt × speed; **every running frame**
+  re-evaluates both the satellite (`Satellite::update_to`) and the sky
+  (`Sky::at`) at `clock.now()`. Paused ⇒ nothing recomputes, no frames.
+
+### 16.2 Reference frames (the cast)
+
+| Frame | Definition | Used for |
+|---|---|---|
+| **TEME** | True Equator Mean Equinox; SGP4's native quasi-inertial frame | SGP4 output (satellite) |
+| **GCRF/ICRF** | Geocentric Celestial Reference Frame; inertial; Z = celestial pole, X ≈ vernal equinox | JPL ephemeris output; the star (celestial) frame |
+| **ITRF** | "standard" Earth-fixed ECEF: X = equator∩prime-meridian, Y = 90°E, Z = north pole | output of the GCRF/TEME→Earth rotations |
+| **world** | this project's frame: **Y = north**, **Z = prime meridian (lon0/lat0)**, **X = 90°E**; km; origin = Earth center | the whole renderer (mesh, camera, uniforms) |
+| **celestial (star)** | GCRF re-permuted to Y-up so the equirect star lookup's pole = celestial pole | star map sampling; the camera's inertial rig |
+
+The **world** frame is just **ITRF with axes permuted** so north is +Y (the
+project's convention, baked into `earth.rs` and the mesh): `world (X,Y,Z) =
+ITRF (Y,Z,X)`.
+
+### 16.3 The axis permutation `P`
+
+`P` maps a **standard ECEF/GCRF** vector (Z = pole) into the **world** frame
+(Y = north): `P(x,y,z) = (y,z,x)`. As a `glam::Mat3` it is
+`from_cols((0,0,1),(1,0,0),(0,1,0))`. It is a proper rotation/permutation, so
+`Pᵀ = P⁻¹`.
+
+Why this exact `P`: the project picked Y = north, +Z at lon0/lat0. For a point
+at geodetic `(φ, λ)` the **standard** ECEF unit vector is `(cosφ cosλ, cosφ
+sinλ, sinφ)`; applying `P` gives `(cosφ sinλ, sinφ, cosφ cosλ)`, which is
+exactly `earth::geodetic_normal(φ, λ)`. So `P` is the bridge between every
+satkit (standard-ECEF) result and the world frame, and it is consistent with
+the WGS84 helpers (`earth::surface_position`/`geodetic_normal`) the mesh is
+built from. (Verified: `P · sun_itrf` → asin/atan2 matches
+`ITRFCoord::to_geodetic`.)
+
+### 16.4 Time handling
+
+`satkit::Instant` ↔ datetime via `from_datetime(y,mo,d,h,mi,s)` /
+`as_datetime()`; arithmetic via `Instant + Duration::from_seconds(..)`. `Clock`
+stores `epoch` (the TLE epoch) + `elapsed_seconds`; `now() = epoch +
+Duration::from_seconds(elapsed_seconds)`. All satkit propagation/transform
+functions are generic over `T: TimeLike` and take this `Instant` (UTC). satkit
+performs the UTC→TT/TDB conversions it needs internally for the ephemeris; the
+`*_approx` Earth-orientation transforms ignore UT1−UTC (≤0.9 s ⇒ ≤~13 arcsec of
+Earth rotation, sub-pixel here — see §16.9).
+
+### 16.5 Satellites — SGP4 (`satellite.rs`)
+
+Pipeline (TLE → world-space km point), re-run every running frame by
+`update_to(time)`:
+
+1. **TLE** `assets/TLE.txt` (3-line: name + 2 element lines), embedded via
+   `include_str!`, parsed once with `TLE::load_3line(l0,l1,l2) -> TLE`. The
+   parsed `TLE` is **retained** (sgp4 needs `&mut TLE` — it caches its
+   propagator) and `tle.epoch` (an `Instant`) seeds the `Clock`.
+2. **Propagate**: `sgp4(&mut tle, &[time]) -> SGP4State { pos, vel:
+   DMatrix<f64>, errcode }`. `pos` is **3×N** (one column per input time) in
+   **meters**, **TEME** frame. We pass one time, take column 0 →
+   `Vector3([[x],[y],[z]])`.
+3. **TEME → ITRF**: `qteme2itrf(&time) * teme`. This is a **GMST-only**
+   rotation about the polar axis (the returned quaternion has `x=y=0`); it
+   ignores polar motion, so it needs **no EOP data**. Result is standard ECEF,
+   meters.
+4. **ITRF → geodetic**: `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` →
+   `(lat, lon, hae)` (WGS84; radians, meters).
+5. **geodetic → world**: `position_km = earth::surface_position(lat,lon) +
+   earth::geodetic_normal(lat,lon) * altitude_km`. Going through geodetic +
+   the project's own WGS84 helpers (rather than `P·itrf/1000` directly)
+   guarantees the marker sits on the **exact** ellipsoid the mesh uses; the two
+   are equivalent.
+6. **Stored**: `position_km` (world, for the marker), `latitude_deg`,
+   `longitude_deg`, `altitude_km` (UI). The marker is drawn by the 4th render
+   pass (§10) and CPU-occluded behind the globe (`marker_occluded`, §9).
+
+Caveats: SGP4 is only accurate ~days around the TLE epoch (far-future clock
+times still render, but drift physically); `sgp4`/`qteme2itrf`/`ITRFCoord` need
+**no data files**.
+
+### 16.6 Sun & planets — JPL ephemeris (`sky.rs`)
+
+Pipeline (Sun → world direction + Earth/sky orientation), re-run every running
+frame by `Sky::at(time)`:
+
+1. **Body position**: `geocentric_pos(SolarSystem::Sun, &time) -> Result<
+   Vector3>` — position **relative to Earth's center**, **meters**, **GCRF**
+   (inertial). The same call serves any body: `SolarSystem` = {Mercury, Venus,
+   EMB, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Moon, **Sun**}. Only the
+   Sun is currently consumed/rendered, but planet positions are one enum
+   variant away.
+2. **Earth orientation GCRF → ITRF**: `qgcrf2itrf_approx(&time)` (IAU-76/FK5,
+   **EOP-free**, ~1 arcsec). `sun_itrf = q * sun_gcrf` (standard ECEF, meters).
+3. **Sun in world**: `sun_dir = normalize(P · sun_itrf)`. Uploaded as the
+   `sun_dir` uniform; drives day/night, the terminator, city-light fade, ocean
+   glint, and the backdrop sun disc.
+4. **Subsolar point** (UI, read-only): inverse of `geodetic_normal` —
+   `lat = asin(sun_dir.y)`, `lon = atan2(sun_dir.x, sun_dir.z)`.
+5. **Star-map orientation**: build `R_itrf2gcrf` as a `Mat3` from
+   `qitrf2gcrf_approx(&time)` by rotating the three basis vectors (the
+   `Quaternion` is `Copy`, so one `q` rotates all three). Then
+   **`star_rot_inv = P · R_itrf2gcrf · Pᵀ`** — world→celestial. This is the
+   `star_rot_inv` uniform: the shader maps each world view direction into the
+   Y-up celestial frame for the equirectangular star lookup. As `time`
+   advances `R_itrf2gcrf` rotates about the celestial pole, so the sky turns at
+   the **sidereal rate**, consistent with the Sun's motion.
+
+### 16.7 Star backdrop & the inertial camera
+
+The shader's star/sun passes (§10) are **unchanged** — only the uniform
+*values* (`sun_dir`, `star_rot_inv`) became ephemeris-driven; both are still
+functions of the **camera-relative** view direction (the backdrop-anchoring
+invariant in `CLAUDE.md`).
+
+The camera (§4) is built in the **celestial frame** and rotated into the world
+by **`celestial_to_world = star_rot_inv.transpose()`** (`= P · R_gcrf2itrf ·
+Pᵀ`, the inverse of world→celestial), in `renderer::prepare`, via
+`camera.view_proj(aspect, c2w)` / `camera.eye(c2w)`. Because `star_rot_inv ·
+celestial_to_world = I`, a rig held constant in the celestial frame yields a
+constant star lookup direction — **the stars are locked to the camera while the
+ECEF globe spins underneath**. So `Camera.longitude/latitude` are an inertial
+look direction, not geography.
+
+Limitation: the Milky-Way texture is not precisely registered to ICRF, so the
+**absolute** sky orientation is arbitrary; the **motion** (sidereal rotation +
+Sun consistency) is physically correct.
+
+### 16.8 satkit usage & data files (summary)
+
+- **Crate**: `satkit = "0.18"`, `default-features = false` (drops `download` +
+  `omm-xml`); linear algebra is `numeris` (`Vector3`/`Quaternion`/`DMatrix`).
+- **Functions used**: `tle::TLE::load_3line`; `sgp4::sgp4`;
+  `frametransform::{qteme2itrf, qgcrf2itrf_approx, qitrf2gcrf_approx}`;
+  `jplephem::geocentric_pos`; `itrfcoord::ITRFCoord::{from_vector,
+  to_geodetic_rad/deg}`; `utils::set_datadir`; types `Instant`, `Duration`,
+  `Vector3`, `SolarSystem`. Full signatures: §15.
+- **Data files**: only the **JPL DE440 ephemeris** is needed —
+  `data/linux_p1550p2650.440` (~98 MiB). `build.rs` downloads it into the
+  gitignored `data/` dir; `sky::init_data_dir()` (called once at the top of
+  `main`) does `set_datadir(CARGO_MANIFEST_DIR/data)`. Everything else is
+  data-free because we use the EOP-free `*_approx` Earth-orientation
+  transforms. `data_found()` returns **false** (it checks the full EOP/space-
+  weather bundle) even though the ephemeris alone resolves fine — do not gate
+  on it. The project dir must stay put between build and run (the data path is
+  compiled in via `CARGO_MANIFEST_DIR`).
+
+### 16.9 Accuracy & limitations
+
+- **Ephemeris**: DE440, sub-km Sun position; file spans years 1550–2650.
+- **Earth orientation**: IAU-76/FK5 `*_approx` ⇒ ~1 arcsec, ignoring polar
+  motion and UT1−UTC. ~1 arcsec ≈ 30 m on the ground — well sub-pixel at any
+  sane zoom; visually exact. Full IERS-2010 precision (`qgcrf2itrf`/
+  `qitrf2gcrf`) is available but needs the EOP bundle (not downloaded).
+- **SGP4**: TLE valid ~days around epoch.
+- **Atmosphere** is a *separate*, spherical scattering model (§11) — not part
+  of this ephemeris pipeline; its planet radius (6360 km) is its own constant.
+- **Star texture** not ICRF-registered (absolute orientation arbitrary).
+
+### 16.10 Validation (headless probes, 2026-06-18)
+
+- **ISS** at the TLE epoch: `|r| ≈ 6787 km` (~420 km altitude, matches the
+  51.6° inclination / ~92 min orbit); +60 s the sub-point crosses the date line
+  (~5.6°/min in longitude); +3600 s it is in the opposite hemisphere.
+- **Sun**: 2024-01-01 12:00 UTC → subsolar `lat −23.02°, lon 0.84°`, distance
+  `0.9833 AU` (near the Jan-3 perihelion); 2024-07-01 → `+23.05°`, `1.0167 AU`
+  (aphelion); +6 h → `lon −89°` (Sun moved ~90° west).
+- **star_rot_inv**: `det = 1.0`, orthonormal to ~6e-8 (a proper rotation).
+- **Data**: `set_datadir` resolves the build-downloaded ephemeris and
+  `geocentric_pos` succeeds offline.

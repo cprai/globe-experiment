@@ -2,8 +2,9 @@
 
 Project rules, conventions, and constraints for the **Globe** viewer.
 Companion file: `MEMORY.md` holds the technical reference (how each
-subsystem works, the rendering/atmosphere math, exact constants, file
-map, phase history). Read both. When `MEMORY.md` and the source disagree,
+subsystem works, the rendering/atmosphere math, the orbital & ephemeris
+math — see its §16 for the full satellite/Sun/planet computation and how the
+satkit crate is used — exact constants, file map, phase history). Read both. When `MEMORY.md` and the source disagree,
 **the source wins** — the look-tuning constants in particular drift
 between sessions.
 
