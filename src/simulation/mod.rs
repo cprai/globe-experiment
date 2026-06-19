@@ -20,7 +20,7 @@ use sky::Sky;
 /// renderer needs, as plain `glam` data (no GPU types). Produced together with
 /// [`TelemetryState`] by [`SimulationState::frame_state`] from the
 /// application-resolved camera.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RenderState {
     /// World-frame view-projection matrix (built by the application from the
     /// camera + `celestial_to_world` + viewport aspect).
@@ -32,10 +32,19 @@ pub struct RenderState {
     /// World -> celestial rotation for the star-map lookup (uploaded as
     /// `star_rot_inv`).
     pub star_rot_inv: Mat3,
-    /// Space-station marker position in the world frame (km).
-    pub sat_pos: Vec3,
+    /// One marker per tracked satellite, in the same order as
+    /// `SimulationState::satellites`. The renderer draws them instanced.
+    pub markers: Vec<SatelliteMarker>,
+}
+
+/// A single satellite's on-screen marker for one frame: where to draw it and
+/// whether it is visible. Element of [`RenderState::markers`].
+#[derive(Clone, Copy, Debug)]
+pub struct SatelliteMarker {
+    /// Marker position in the world frame (km).
+    pub position_km: Vec3,
     /// Whether the marker is visible (false when the solid Earth occludes it).
-    pub marker_visible: bool,
+    pub visible: bool,
 }
 
 /// Everything the UI readout displays for one frame, as a plain owned snapshot
@@ -51,10 +60,19 @@ pub struct TelemetryState {
     pub subsolar_lat_deg: f32,
     /// Subsolar geodetic longitude, degrees (ephemeris-derived).
     pub subsolar_lon_deg: f32,
-    /// Tracked satellite name (e.g. "ISS (ZARYA)").
-    pub satellite_name: String,
     /// Current simulation datetime, formatted for display (UTC).
     pub datetime_label: String,
+    /// One readout per tracked satellite, in the same order as
+    /// `SimulationState::satellites`.
+    pub satellites: Vec<SatelliteTelemetry>,
+}
+
+/// One tracked satellite's readout for the UI panel. Element of
+/// [`TelemetryState::satellites`].
+#[derive(Clone, Debug)]
+pub struct SatelliteTelemetry {
+    /// Object name (e.g. "ISS (ZARYA)").
+    pub name: String,
     /// Sub-satellite geodetic latitude, degrees.
     pub latitude_deg: f32,
     /// Sub-satellite geodetic longitude, degrees.
@@ -72,30 +90,37 @@ pub fn init() {
 }
 
 /// All simulation state: the clock (datetime + play/paused + speed), the
-/// tracked satellite (TLE; position propagated on demand), and the ephemeris-driven
-/// sky (Sun direction + star-map orientation). Held by composition so each
-/// subsystem keeps its own tuned logic.
+/// tracked satellites (each a TLE; positions propagated on demand), and the
+/// ephemeris-driven sky (Sun direction + star-map orientation). Held by
+/// composition so each subsystem keeps its own tuned logic.
 ///
 /// This struct owns *what is being simulated* and the astronomical math over
 /// it; it does not own the camera (that lives in `application`) and carries no
 /// windowing/GPU/UI types.
 pub struct SimulationState {
     pub clock: Clock,
-    pub satellite: Satellite,
+    /// The tracked objects, assembled by the caller (`main`) and passed to
+    /// [`new`](Self::new). Rendered as markers in this order.
+    pub satellites: Vec<Satellite>,
     pub sky: Sky,
 }
 
 impl SimulationState {
-    /// Builds the initial state: the satellite is loaded first, the clock
-    /// starts at its TLE epoch, and the sky is evaluated at that same time.
-    /// `init` must already have run (the satellite/sky read satkit globals).
-    pub fn new() -> Self {
-        let satellite = Satellite::load();
-        let clock = Clock::new(satellite.epoch());
+    /// Builds the initial state from a caller-provided list of satellites: the
+    /// clock starts at the first satellite's TLE epoch and the sky is evaluated
+    /// at that same time. `init` must already have run (the satellites/sky read
+    /// satkit globals). Panics if `satellites` is empty - the clock needs a
+    /// start epoch and the tool always tracks at least one object.
+    pub fn new(satellites: Vec<Satellite>) -> Self {
+        let epoch = satellites
+            .first()
+            .expect("at least one satellite to track")
+            .epoch();
+        let clock = Clock::new(epoch);
         let sky = Sky::at(&clock.now());
         Self {
             clock,
-            satellite,
+            satellites,
             sky,
         }
     }
@@ -127,42 +152,46 @@ impl SimulationState {
 
     /// Produces this frame's [`RenderState`] (for the renderer) and
     /// [`TelemetryState`] (for the UI readout) together, from the
-    /// application-resolved camera (world-frame `eye` and `view_proj`). Both
-    /// are derived from a *single* satellite propagation at the clock's current
-    /// time, so the marker position and the on-screen lat/lon/altitude always
-    /// agree and the orbit is propagated only once per frame. The astronomical
-    /// fields come from the current sky and satellite; the marker's visibility
-    /// is the Earth-occlusion test of the line of sight from `eye` to the
-    /// station. Takes `&mut self` because the satellite is propagated on demand
-    /// (satkit's `sgp4` needs `&mut` to cache its initialization).
+    /// application-resolved camera (world-frame `eye` and `view_proj`). Each
+    /// tracked satellite is propagated *once* at the clock's current time and
+    /// that single result feeds both its marker and its readout, so they always
+    /// agree and every orbit is propagated only once per frame. The marker's
+    /// visibility is the Earth-occlusion test of the line of sight from `eye` to
+    /// the object. Takes `&mut self` because the satellites are propagated on
+    /// demand (satkit's `sgp4` needs `&mut` to cache its initialization).
     pub fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState) {
         let now = self.clock.now();
-        let sat = self.satellite.state_at(&now);
+
+        let mut markers = Vec::with_capacity(self.satellites.len());
+        let mut satellites = Vec::with_capacity(self.satellites.len());
+        for satellite in &mut self.satellites {
+            let sat = satellite.state_at(&now);
+            markers.push(SatelliteMarker {
+                position_km: sat.position_km,
+                visible: !marker_occluded(eye, sat.position_km),
+            });
+            satellites.push(SatelliteTelemetry {
+                name: satellite.name.clone(),
+                latitude_deg: sat.latitude_deg,
+                longitude_deg: sat.longitude_deg,
+                altitude_km: sat.altitude_km,
+            });
+        }
 
         let render = RenderState {
             view_proj,
             camera_pos: eye,
             sun_dir: self.sky.sun_dir,
             star_rot_inv: self.sky.star_rot_inv,
-            sat_pos: sat.position_km,
-            marker_visible: !marker_occluded(eye, sat.position_km),
+            markers,
         };
         let telemetry = TelemetryState {
             subsolar_lat_deg: self.sky.subsolar_lat_deg,
             subsolar_lon_deg: self.sky.subsolar_lon_deg,
-            satellite_name: self.satellite.name.clone(),
             datetime_label: self.clock.datetime_label(),
-            latitude_deg: sat.latitude_deg,
-            longitude_deg: sat.longitude_deg,
-            altitude_km: sat.altitude_km,
+            satellites,
         };
         (render, telemetry)
-    }
-}
-
-impl Default for SimulationState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

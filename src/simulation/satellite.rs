@@ -1,20 +1,22 @@
-//! Space-station tracking: parse the embedded TLE and propagate it with the
-//! satkit SGP4 implementation to a given datetime, exposing the result in the
-//! renderer's world frame (km). Only the TLE is retained; the position state is
-//! a pure function of (TLE, datetime), so it is recomputed on demand via
-//! `state_at` rather than stored - nothing in the struct goes stale as the
-//! simulation clock advances.
+//! Satellite tracking: parse a TLE and propagate it with the satkit SGP4
+//! implementation to a given datetime, exposing the result in the renderer's
+//! world frame (km). Each [`Satellite`] is one tracked object; the simulation
+//! holds a `Vec<Satellite>` (see `SimulationState`) and the array is assembled
+//! in `main` from the inline TLE literals below. Only the TLE is retained; the
+//! position state is a pure function of (TLE, datetime), so it is recomputed on
+//! demand via `state_at` rather than stored - nothing in the struct goes stale
+//! as the simulation clock advances.
 //!
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
 //! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
 //! world-space point via the project's WGS84 helpers (`earth`), so the marker
 //! lands on exactly the same ellipsoid the globe mesh is built from.
 //!
-//! `qteme2itrf` needs no data *file* (we run EOP-free, with zero polar motion),
-//! but it - like every satkit frame transform - reads satkit's global EOP
-//! table on first use, which lazily resolves a data dir and creates an empty
-//! `satkit-data` dir as a side effect. `sky::init_satkit` pre-seeds that table
-//! empty at startup to suppress the dir; see its docs.
+//! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
+//! EOP table (real polar motion + UT1-UTC), which `sky::init_satkit` pre-seeds
+//! from the bundled `EOP-All.csv` at startup. That seeding also suppresses the
+//! stray `satkit-data` dir satkit would otherwise create on first use; see its
+//! docs.
 
 use glam::Vec3;
 use satkit::frametransform::qteme2itrf;
@@ -25,16 +27,32 @@ use satkit::{Instant, Vector3};
 
 use crate::earth;
 
-/// The TLE for the station (ISS / ZARYA), inlined as a source literal. Unlike
-/// the textures/ephemeris/EOP (build-downloaded into the gitignored `assets/`
-/// and baked into the binary), this small element set lives directly in source
-/// so a fresh checkout needs no `assets/TLE.txt` file. The lines are
-/// column-sensitive TLE format - keep the exact spacing. `concat!` keeps source
-/// indentation out of the string.
-const TLE_TEXT: &str = concat!(
+// Tracked-object TLEs, inlined as source literals. Unlike the
+// textures/ephemeris/EOP (build-downloaded into the gitignored `assets/` and
+// baked into the binary), these small element sets live directly in source so a
+// fresh checkout needs no data file. The lines are column-sensitive TLE format
+// (each element line is exactly 69 chars) - keep the exact spacing. `concat!`
+// keeps source indentation out of the string. satkit parses by column and does
+// not verify the trailing checksum digit. `main` assembles the tracked array
+// from these via [`Satellite::from_tle`].
+
+/// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
+/// element set.
+pub const ISS_TLE: &str = concat!(
     "ISS (ZARYA)\n",
     "1 25544U 98067A   24001.50000000  .00016717  00000-0  10270-3 0  9003\n",
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
+);
+
+/// The Hubble Space Telescope (HST), epoch ~2024-001.5. NOTE: the orbit shape
+/// is realistic (inclination 28.47 deg, ~540 km / ~15.1 rev/day), but this set
+/// was assembled from memory - the RAAN/anomaly/epoch-fraction phase is
+/// approximate. Replace with a freshly fetched TLE for true positional
+/// accuracy. Included as a second tracked object so multiple markers render.
+pub const HST_TLE: &str = concat!(
+    "HST\n",
+    "1 20580U 90037B   24001.49473380  .00002000  00000-0  10000-3 0  9990\n",
+    "2 20580  28.4690  85.5400 0002600 310.0000  50.0000 15.09600000123456\n",
 );
 
 /// A satellite tracked from its TLE. Holds only the (immutable-meaning) inputs:
@@ -53,12 +71,13 @@ pub struct Satellite {
 }
 
 impl Satellite {
-    /// Parses the embedded TLE. Panics on malformed embedded data (the data is
-    /// baked in, so a failure is a build-time bug, handled like the other
-    /// embedded assets). No propagation happens here - the state is computed on
-    /// demand via [`state_at`](Self::state_at).
-    pub fn load() -> Self {
-        let mut lines = TLE_TEXT.lines();
+    /// Parses a 3-line TLE (name line + the two element lines, e.g. [`ISS_TLE`]).
+    /// Panics on malformed input - the TLEs are inline source literals, so a
+    /// failure is a build-time bug, handled like the other embedded data. No
+    /// propagation happens here - the state is computed on demand via
+    /// [`state_at`](Self::state_at).
+    pub fn from_tle(tle_3line: &str) -> Self {
+        let mut lines = tle_3line.lines();
         let line0 = lines.next().expect("TLE line 0 (name)");
         let line1 = lines.next().expect("TLE line 1");
         let line2 = lines.next().expect("TLE line 2");
@@ -127,11 +146,5 @@ fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
         latitude_deg: latitude.to_degrees(),
         longitude_deg: longitude.to_degrees(),
         altitude_km,
-    }
-}
-
-impl Default for Satellite {
-    fn default() -> Self {
-        Self::load()
     }
 }

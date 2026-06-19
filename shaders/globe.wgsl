@@ -6,10 +6,9 @@ struct Uniforms {
     // the sun: longitude spins it about the polar axis, latitude tilts
     // it about the horizontal equinox axis).
     star_rot_inv: mat3x3<f32>,
-    // Space-station marker: world-space position (km).
-    sat_pos: vec3<f32>,
-    // x,y = viewport size in pixels; z = marker radius in pixels;
-    // w = visible flag (0 = hidden, e.g. occluded by the globe).
+    // Marker params shared by every satellite marker:
+    // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
+    // Per-marker world position + visibility are per-instance (see vs_marker).
     marker: vec4<f32>,
 };
 
@@ -490,15 +489,23 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, 1.0);
 }
 
-// Space-station marker: a flat, constant-pixel-size circle drawn at the
-// station's projected screen position, after everything else (so it reads
-// as an overlay) with alpha blending. No vertex/index buffer - the quad is
-// generated from the vertex index. Visibility (occlusion behind the globe)
-// is decided on the CPU and passed in `marker.w`; when hidden the quad is
+// Satellite markers: a flat, constant-pixel-size circle drawn at each tracked
+// object's projected screen position, after everything else (so they read as
+// overlays) with alpha blending. Drawn as one instanced call - the quad is
+// generated from the vertex index, and the per-marker world position +
+// visibility arrive as instance attributes (one per satellite). Visibility
+// (occlusion behind the globe) is decided on the CPU; when hidden the quad is
 // pushed off-screen so it produces no fragments.
 
 const MARKER_FILL: vec3<f32> = vec3<f32>(1.0, 0.25, 0.2);
 const MARKER_RING: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+
+struct MarkerInstance {
+    // World-frame marker position (km).
+    @location(0) position: vec3<f32>,
+    // Visible flag: >= 0.5 = drawn, < 0.5 = hidden (occluded by the globe).
+    @location(1) visible: f32,
+};
 
 struct MarkerOutput {
     @builtin(position) position: vec4<f32>,
@@ -507,7 +514,7 @@ struct MarkerOutput {
 };
 
 @vertex
-fn vs_marker(@builtin(vertex_index) vertex_index: u32) -> MarkerOutput {
+fn vs_marker(@builtin(vertex_index) vertex_index: u32, inst: MarkerInstance) -> MarkerOutput {
     // Two triangles covering [-1, 1]^2.
     var corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
@@ -523,8 +530,8 @@ fn vs_marker(@builtin(vertex_index) vertex_index: u32) -> MarkerOutput {
     out.uv = corner;
 
     // Hidden (occluded by the globe): emit an off-screen, clipped vertex.
-    let clip = uniforms.view_proj * vec4<f32>(uniforms.sat_pos, 1.0);
-    if uniforms.marker.w < 0.5 || clip.w <= 0.0 {
+    let clip = uniforms.view_proj * vec4<f32>(inst.position, 1.0);
+    if inst.visible < 0.5 || clip.w <= 0.0 {
         out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
         return out;
     }

@@ -54,8 +54,8 @@ files at runtime.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.
-- Satellite tracking: a TLE (the ISS) is propagated with SGP4 and shown as a
-  marker on the globe. A simulation clock advances time (play/pause and an
-  exponential real-time to 100x speed slider), so the Sun, stars, and the
-  satellite all move live; the panel shows the current datetime, the subsolar
-  point, and the station's ground position.
+- Satellite tracking: each tracked object's TLE (the ISS and Hubble) is
+  propagated with SGP4 and shown as a marker on the globe. A simulation clock
+  advances time (play/pause and an exponential real-time to 100x speed slider),
+  so the Sun, stars, and every satellite all move live; the panel shows the
+  current datetime, the subsolar point, and each object's ground position.

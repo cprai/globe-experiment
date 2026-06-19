@@ -160,7 +160,9 @@ impl Gfx {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.globe.prepare(&self.queue, render, self.viewport());
+        let viewport = self.viewport();
+        self.globe
+            .prepare(&self.device, &self.queue, render, viewport);
 
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
@@ -235,11 +237,38 @@ struct Uniforms {
     _pad1: f32,
     /// Inverse star map rotation; mat3x3 columns padded to vec4 stride.
     star_rot_inv: [[f32; 4]; 3],
-    /// Space-station marker world position (km); vec3 padded to vec4.
-    sat_pos: [f32; 3],
-    _pad2: f32,
-    /// Marker params: x,y = viewport size px, z = radius px, w = visible.
+    /// Marker params shared by every marker: x,y = viewport size px,
+    /// z = radius px, w = unused. (Per-marker position/visibility is
+    /// per-instance, in the marker instance buffer, not here.)
     marker: [f32; 4],
+}
+
+/// One on-screen satellite marker, as instance data for the marker pipeline.
+/// Layout must match the marker instance attributes in `vs_marker`
+/// (globe.wgsl). One instance is drawn per tracked satellite.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MarkerInstance {
+    /// World-frame position (km).
+    position: [f32; 3],
+    /// Visible flag: 1.0 = drawn, 0.0 = hidden (occluded by the globe; the
+    /// vertex shader pushes it off-screen).
+    visible: f32,
+}
+
+/// Initial marker-instance buffer capacity (number of satellites). The buffer
+/// grows on demand if more are tracked; this just avoids a first-frame
+/// reallocation for the common small counts.
+const INITIAL_MARKER_CAPACITY: u32 = 8;
+
+/// Allocates a marker-instance vertex buffer sized for `capacity` markers.
+fn make_marker_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("marker instances"),
+        size: u64::from(capacity) * std::mem::size_of::<MarkerInstance>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 /// Owns every long-lived wgpu object for the globe: textures, LUTs,
@@ -255,6 +284,14 @@ struct GlobeRenderer {
     index_count: u32,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    /// Per-satellite marker instance data (position + visibility), drawn
+    /// instanced. Grows on demand in `prepare`; not in the bind group, so
+    /// growing it never touches `bind_group`.
+    markers: wgpu::Buffer,
+    /// Number of markers `markers` can hold without reallocation.
+    marker_capacity: u32,
+    /// Number of markers written for the current frame (instances to draw).
+    marker_count: u32,
 }
 
 impl GlobeRenderer {
@@ -279,6 +316,8 @@ impl GlobeRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
 
         // The build script transcodes every texture to BC7 in a KTX2
         // container (sRGB for the color maps, linear for the normal and
@@ -684,9 +723,12 @@ impl GlobeRenderer {
             })
         };
 
-        // The space-station marker: a constant-pixel-size circle generated
-        // from the vertex index (no vertex buffer), alpha-blended over the
-        // finished scene, drawn last.
+        // The satellite markers: one constant-pixel-size circle per tracked
+        // object, generated from the vertex index, alpha-blended over the
+        // finished scene, drawn last as a single instanced draw. The quad
+        // corners come from the vertex index; the per-marker world position and
+        // visibility come from the instance buffer (one `MarkerInstance` per
+        // satellite).
         let make_marker_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("marker pipeline"),
@@ -695,7 +737,12 @@ impl GlobeRenderer {
                     module: &module,
                     entry_point: Some("vs_marker"),
                     compilation_options: Default::default(),
-                    buffers: &[],
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<MarkerInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        // 0 => position (vec3), 1 => visible (f32).
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32],
+                    }],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
@@ -738,22 +785,33 @@ impl GlobeRenderer {
             index_count: mesh.indices.len() as u32,
             uniforms,
             bind_group,
+            markers,
+            marker_capacity: INITIAL_MARKER_CAPACITY,
+            marker_count: 0,
         }
     }
 
-    /// Writes the per-frame uniforms from the simulation's `RenderState`. Call
-    /// before submitting the frame's command buffer; `queue.write_buffer` is
-    /// ordered before it. `viewport` is the surface size in pixels (width,
-    /// height), used only for the screen-space marker. All camera/astronomical
-    /// math is done by the simulation (see `simulation::SimulationState`); this
-    /// just packs the finished values into the GPU layout.
-    fn prepare(&self, queue: &wgpu::Queue, render: &RenderState, viewport: (f32, f32)) {
+    /// Writes the per-frame uniforms and marker instances from the simulation's
+    /// `RenderState`. Call before submitting the frame's command buffer;
+    /// `queue.write_buffer` is ordered before it. `viewport` is the surface size
+    /// in pixels (width, height), used only for the screen-space markers. Takes
+    /// `&mut self` (and `&Device`) because the marker instance buffer grows on
+    /// demand when more satellites are tracked than it currently holds. All
+    /// camera/astronomical math is done by the simulation (see
+    /// `simulation::SimulationState`); this just packs the finished values into
+    /// the GPU layout.
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        render: &RenderState,
+        viewport: (f32, f32),
+    ) {
         let (width, height) = viewport;
 
         // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
         // columns are padded to vec4 stride.
         let star_cols = render.star_rot_inv.to_cols_array_2d();
-        let visible = if render.marker_visible { 1.0 } else { 0.0 };
 
         let uniforms = Uniforms {
             view_proj: render.view_proj.to_cols_array(),
@@ -764,11 +822,29 @@ impl GlobeRenderer {
             star_rot_inv: std::array::from_fn(|c| {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
-            sat_pos: render.sat_pos.to_array(),
-            _pad2: 0.0,
-            marker: [width, height, MARKER_RADIUS_PX, visible],
+            marker: [width, height, MARKER_RADIUS_PX, 0.0],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+
+        // One marker instance per tracked satellite. Grow the buffer first if
+        // this frame has more markers than it currently holds (only ever
+        // happens once, since the count is fixed at startup).
+        let instances: Vec<MarkerInstance> = render
+            .markers
+            .iter()
+            .map(|m| MarkerInstance {
+                position: m.position_km.to_array(),
+                visible: if m.visible { 1.0 } else { 0.0 },
+            })
+            .collect();
+        self.marker_count = instances.len() as u32;
+        if self.marker_count > self.marker_capacity {
+            self.marker_capacity = self.marker_count.next_power_of_two();
+            self.markers = make_marker_buffer(device, self.marker_capacity);
+        }
+        if !instances.is_empty() {
+            queue.write_buffer(&self.markers, 0, bytemuck::cast_slice(&instances));
+        }
     }
 
     fn render(&self, render_pass: &mut wgpu::RenderPass<'_>) {
@@ -788,10 +864,15 @@ impl GlobeRenderer {
         render_pass.set_pipeline(&self.atmosphere_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        // The station marker last, as a screen overlay (its own quad is
-        // generated in the vertex shader, so no vertex buffer is needed).
-        render_pass.set_pipeline(&self.marker_pipeline);
-        render_pass.draw(0..6, 0..1);
+        // The satellite markers last, as screen overlays: one instanced draw,
+        // one instance per tracked object. The quad corners are generated in
+        // the vertex shader; the instance buffer supplies each marker's world
+        // position and visibility. Skipped entirely when nothing is tracked.
+        if self.marker_count > 0 {
+            render_pass.set_pipeline(&self.marker_pipeline);
+            render_pass.set_vertex_buffer(0, self.markers.slice(..));
+            render_pass.draw(0..6, 0..self.marker_count);
+        }
     }
 }
 

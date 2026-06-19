@@ -29,9 +29,10 @@ the Earth rotates beneath it. The geometry is
 in kilometers** (real-scale orbital simulation). The Sun
 direction, Earth's orientation, and the star-map orientation are computed from
 the **satkit** crate's **JPL DE440 ephemeris** + Earth-orientation transforms
-for the current time (no more sun sliders). It tracks satellites: a
-TLE is propagated with satkit's SGP4. All of this is driven by a
-**simulation clock** (play/pause, exponential 1x-100x real-time speed); the
+for the current time (no more sun sliders). It tracks satellites: each
+TLE is propagated with satkit's SGP4 (the tracked array is built in `main` and
+passed to the simulation). All of this is driven by a
+**simulation clock** (play/pause, exponential 1x-100x real-time speed); each
 satellite is drawn as a marker circle and everything animates as time
 advances, with the clock's datetime shown in the UI.
 
@@ -105,15 +106,18 @@ cargo run --release
 
 ### Rendering invariants
 - **No depth buffer anywhere.** Draw order does all occlusion: stars →
-  surface → atmosphere → satellite marker, in that order, into one render
+  surface → atmosphere → satellite markers, in that order, into one render
   pass. This only works because the scene is convex spheres. Do not add
   geometry that breaks that assumption without also adding a depth
-  attachment. The **marker is a screen-space overlay** drawn last (a
-  constant-pixel circle generated from the vertex index, alpha-blended); it
-  has no depth, so its occlusion behind the globe is decided **on the CPU**
-  (`marker_occluded` in `src/simulation/mod.rs`, a ray vs. mean-radius sphere;
-  fed into `RenderState.marker_visible`) and passed to the shader as a visible
-  flag.
+  attachment. The **markers are screen-space overlays** drawn last as a single
+  **instanced** draw (one instance per tracked satellite): each is a
+  constant-pixel circle whose quad is generated from the vertex index and whose
+  world position + visibility come from a per-instance marker buffer,
+  alpha-blended. They have no depth, so occlusion behind the globe is decided
+  **on the CPU** per marker (`marker_occluded` in `src/simulation/mod.rs`, a ray
+  vs. mean-radius sphere; one `SatelliteMarker { position_km, visible }` per
+  object in `RenderState.markers`) and passed to the shader as a per-instance
+  visible flag.
 - **Idle = zero GPU work.** `application::run` sets `ControlFlow::Wait`; frames are
   driven *only* by targeted `window.request_redraw()` (input changed the
   camera, inertia/zoom glide coasting, **the simulation clock running**, egui
@@ -360,17 +364,23 @@ section is for the larger, explicitly-deferred ideas.)
   `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
   `Uniforms` packing; `MARKER_RADIUS_PX`). Mesh in `src/renderer/mesh.rs`.
 - **Simulation state / RenderState / TelemetryState**: `src/simulation/mod.rs`
-  (`SimulationState` composes clock/satellite/sky; `advance`,
-  `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)`;
-  `marker_occluded`).
+  (`SimulationState` composes clock / `Vec<Satellite>` / sky; `advance`,
+  `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)` where
+  both carry a per-satellite `Vec` (`markers` / `satellites`); `marker_occluded`).
+  `SimulationState::new(satellites)` takes the tracked list and starts the clock
+  at the **first** satellite's epoch (panics if the list is empty).
 - **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
-  frame conversion to a world-space km point). The `Satellite` struct stores
-  only the `tle` + `name`; the position is **not** stored - `state_at(time)`
-  propagates it on demand (returning a `SatelliteState`) wherever it's needed,
-  so nothing goes stale as the clock advances. The TLE (ISS / ZARYA) is an
-  **inline source literal**
-  (`TLE_TEXT`, a `concat!` of the three TLE lines) - not `include_str!`, so a
-  fresh checkout needs no data file. Marker colors live in the marker shader.
+  frame conversion to a world-space km point). Each `Satellite` is one tracked
+  object storing only the `tle` + `name`; the position is **not** stored -
+  `state_at(time)` propagates it on demand (returning a `SatelliteState`)
+  wherever it's needed, so nothing goes stale as the clock advances. The TLEs
+  are **inline source literals** (`pub const ISS_TLE`, `HST_TLE` - `concat!` of
+  the three TLE lines each; not `include_str!`, so a fresh checkout needs no
+  data file); `Satellite::from_tle(text)` parses one. **The tracked array is
+  assembled in `main`** (`vec![Satellite::from_tle(ISS_TLE), ...]`) and passed
+  into `SimulationState::new`, not built inside the simulation. The HST set is
+  flagged in-source as approximate (real orbit shape, made-up phase). Marker
+  colors live in the marker shader.
 - **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by
   wall-clock dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`).
   Starts at the TLE epoch.
@@ -394,8 +404,9 @@ section is for the larger, explicitly-deferred ideas.)
 ### Scenarios & valid time range (read before adding a scenario)
 - **Scenarios do not exist yet** — they will be added later. Each will pin the
   simulation to a specific **past** event (a satellite/TLE + a time window).
-  Today the only "scenario" is the inline `TLE_TEXT` element set (ISS) in
-  `satellite.rs` and a clock that starts at its epoch.
+  Today the only "scenario" is the inline TLE element sets (`ISS_TLE` +
+  `HST_TLE`) in `satellite.rs`, assembled into the tracked array in `main`, with
+  a clock that starts at the first (ISS) epoch.
 - **Every scenario's time window must fall inside the valid EOP range** so the
   astronomical accuracy goal actually holds. That range is bounded on **both**
   ends:

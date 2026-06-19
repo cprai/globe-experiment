@@ -32,28 +32,36 @@ pub fn control_panel(ctx: &egui::Context, telemetry: &TelemetryState, clock: &mu
             ui.add_space(8.0);
             ui.separator();
 
-            // Tracked station: the SGP4 prediction's datetime (driven by the
-            // simulation clock) plus the resulting ground track and altitude.
-            ui.label(
-                egui::RichText::new(&telemetry.satellite_name)
-                    .color(egui::Color32::from_rgb(255, 120, 100))
-                    .strong(),
-            );
+            // The SGP4 prediction's datetime (driven by the simulation clock),
+            // shared by every tracked object.
             ui.label(
                 egui::RichText::new(format!("Time (UTC): {}", telemetry.datetime_label))
                     .color(egui::Color32::WHITE),
             );
-            ui.label(
-                egui::RichText::new(format!(
-                    "Lat {:.2} deg   Lon {:.2} deg",
-                    telemetry.latitude_deg, telemetry.longitude_deg
-                ))
-                .color(egui::Color32::WHITE),
-            );
-            ui.label(
-                egui::RichText::new(format!("Altitude: {:.0} km", telemetry.altitude_km))
+
+            // One block per tracked satellite: name + ground track + altitude.
+            for sat in &telemetry.satellites {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(&sat.name)
+                        .color(egui::Color32::from_rgb(255, 120, 100))
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Lat {:.2} deg   Lon {:.2} deg",
+                        sat.latitude_deg, sat.longitude_deg
+                    ))
                     .color(egui::Color32::WHITE),
-            );
+                );
+                ui.label(
+                    egui::RichText::new(format!("Altitude: {:.0} km", sat.altitude_km))
+                        .color(egui::Color32::WHITE),
+                );
+            }
+
+            ui.add_space(4.0);
+            ui.separator();
 
             // Clock controls: play/pause and a real-time..100x speed slider.
             ui.add_space(4.0);

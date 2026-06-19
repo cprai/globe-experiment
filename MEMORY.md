@@ -108,14 +108,16 @@ src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState +
                          marker_occluded; init() wrapper for satkit seeding
 src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
-src/simulation/satellite.rs  TLE parse + satkit SGP4 -> world-space km marker
-                         pos; state_at(time) propagates on demand (no stored pos)
+src/simulation/satellite.rs  one Satellite per tracked object: TLE parse +
+                         satkit SGP4 -> world-space km marker pos; state_at(time)
+                         propagates on demand (no stored pos); from_tle ctor +
+                         ISS_TLE/HST_TLE consts (array built in main)
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; build-downloaded source textures + JPL
                          DE440 ephemeris + EOP-All.csv (cached build inputs).
-                         The station TLE is NOT here - it's an inline source
-                         literal (TLE_TEXT in satellite.rs)
+                         The satellite TLEs are NOT here - they're inline source
+                         literals (ISS_TLE/HST_TLE in satellite.rs)
 OUT_DIR/                 gitignored build artifacts, include_bytes!'d:
                          5 BC7 textures + 3 f16 LUTs (*.ktx2) + the copied
                          JPL DE440 ephemeris (linux_p1550p2650.440) + EOP-All.csv
@@ -164,9 +166,9 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   be visually identical.
 - **Phase 5** (2026-06-18): **satellite tracking.** Added the `satkit` crate
   and a `satellite` module that parses an embedded TLE (the ISS; originally
-  `assets/TLE.txt` via `include_str!`, inlined as the `TLE_TEXT` source literal
-  on 2026-06-19), propagates it with satkit's SGP4 to a fixed datetime (the TLE
-  epoch),
+  `assets/TLE.txt` via `include_str!`, inlined as a source literal on
+  2026-06-19, later the `ISS_TLE` const in Phase 11), propagates it with
+  satkit's SGP4 to a fixed datetime (the TLE epoch),
   converts TEME→ITRF→geodetic, and reconstructs a world-space km point via the
   WGS84 helpers. A 4th render pass draws a constant-pixel marker circle at the
   station's projected position (hidden on the CPU when the globe occludes it),
@@ -227,6 +229,20 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   nutation tables (Tab5A/5B/5D) bundled — not done. Valid EOP range ≈ 1962 →
   build date; past-only keeps every scenario in range and the snapshot valid
   forever. Owner-requested.
+- **Phase 11** (2026-06-19): **multiple satellites.** `SimulationState` now
+  holds a `Vec<Satellite>` instead of one, and the tracked array is **assembled
+  in `main`** (`vec![Satellite::from_tle(ISS_TLE), Satellite::from_tle(HST_TLE)]`)
+  and passed to `SimulationState::new(satellites)` (clock starts at the first
+  satellite's epoch; empty list panics). `Satellite::load`/`TLE_TEXT` became
+  `Satellite::from_tle(text)` + `pub const ISS_TLE`/`HST_TLE` (HST flagged
+  approximate: real orbit shape, made-up phase). `frame_state` loops the
+  satellites, building a per-object `Vec` in both `RenderState.markers`
+  (`SatelliteMarker { position_km, visible }`) and `TelemetryState.satellites`
+  (`SatelliteTelemetry { name, lat, lon, alt }`); `RenderState` lost `Copy`. The
+  renderer draws all markers in **one instanced draw** from a per-instance
+  marker buffer (position + visible flag) that grows on demand; `sat_pos` left
+  the uniform block. The UI panel lists one block per satellite under a shared
+  datetime line. Owner-requested.
 
 ---
 
@@ -234,8 +250,10 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
 
 `main()` is tiny: `simulation::init()` (seeds satkit's globals - the embedded
 DE440 ephemeris and the real bundled EOP table - before any
-ephemeris/frame-transform use; thin wrapper over `sky::init_satkit`), then
-`SimulationState::new()`, then
+ephemeris/frame-transform use; thin wrapper over `sky::init_satkit`), then it
+assembles the tracked `Vec<Satellite>` from the inline TLE consts
+(`Satellite::from_tle(ISS_TLE)`, `HST_TLE`), then
+`SimulationState::new(satellites)`, then
 `application::run(ApplicationState::new(simulation))`. `run` builds the
 `EventLoop`, sets `ControlFlow::Wait`, and runs the `ApplicationState` (a winit
 `ApplicationHandler`).
@@ -307,23 +325,23 @@ calls `redraw()`. Everything else → `handle_input`:
    **and** the zoom glide; returns `animating`.
 2. `simulation.advance()`: `clock.tick()` advances sim time by the wall-clock
    delta x multiplier; if it ran, `sky = Sky::at(now)` (ephemeris) is recomputed
-   for `now = clock.now()`. The satellite position is **not** propagated here -
+   for `now = clock.now()`. Satellite positions are **not** propagated here -
    that happens once in `frame_state` (step 3). Returns clock-running, so
    `animating |=` it and a playing clock keeps requesting frames. (Runs
    *before* the UI now, so this frame applies the **previous** frame's
    play/pause + speed edits - a one-frame, ~16 ms delay, imperceptible. This
-   ordering is what lets one satellite propagation feed both the marker and the
-   readout; see step 3.)
+   ordering is what lets each satellite's single propagation feed both its
+   marker and its readout; see step 3.)
 3. **Resolve the camera** (in `application`, since the camera lives here):
    `c2w = simulation.celestial_to_world()` (= `sky.star_rot_inv.transpose()`),
    `eye = camera.eye(c2w)`, `view_proj = camera.view_proj(aspect, c2w)` with
    `aspect` from `gfx.viewport()`. Then `(render_state, telemetry) =
-   simulation.frame_state(eye, view_proj)`: **one** `satellite.state_at(now)`
-   call feeds both - `render_state` packs `view_proj`/`camera_pos`/`sun_dir`/
-   `star_rot_inv`/`sat_pos` + the CPU marker-occlusion flag (`marker_occluded`)
-   into a `RenderState`; `telemetry` packs the subsolar lat/lon, satellite name,
-   datetime label, and sub-satellite lat/lon/alt into a `TelemetryState` for the
-   UI.
+   simulation.frame_state(eye, view_proj)`: it loops `self.satellites`, calling
+   `state_at(now)` **once** per object, and that single result feeds both sides
+   - `render_state` packs `view_proj`/`camera_pos`/`sun_dir`/`star_rot_inv` + a
+   `Vec<SatelliteMarker>` (world pos + CPU marker-occlusion flag via
+   `marker_occluded`); `telemetry` packs the subsolar lat/lon, datetime label,
+   and a `Vec<SatelliteTelemetry>` (name + sub-satellite lat/lon/alt) for the UI.
 4. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(),
    &telemetry, &mut simulation.clock))` → `handle_platform_output`. (0.34
    deprecated `Context::run` for `run_ui`, whose closure gets a transparent
@@ -340,8 +358,9 @@ calls `redraw()`. Everything else → `handle_input`:
    (not `Result`): `Success`/`Suboptimal` carry the frame; `Lost`/`Outdated` →
    reconfigure + return `FrameOutcome::Reconfigured`; `Timeout` →
    `Reconfigured`; `Occluded` → `Occluded`; `Validation` → panic. On a frame:
-   `GlobeRenderer::prepare(queue, render, viewport)` writes the uniforms
-   (`viewport` from `config`; pixel size feeds the constant-size marker) →
+   `GlobeRenderer::prepare(device, queue, render, viewport)` writes the uniforms
+   **and** the per-satellite marker instance buffer (growing it via `device` if
+   needed; `viewport` from `config`; pixel size feeds the constant-size markers) →
    `update_texture` per `textures_delta.set` → `update_buffers` → one render
    pass (clear BLACK → `globe.render` → `egui_renderer.render`) → submit egui
    commands chained with the frame encoder → `window.pre_present_notify()` →
@@ -575,23 +594,27 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
 
 ## 6.5. Satellite (`src/simulation/satellite.rs`)
 
-Tracks one object (the ISS) from an embedded TLE, propagated with the
-**satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE
-only - **no propagation at load**. The position state is **not stored**;
-`state_at(time)` propagates on demand and returns a `SatelliteState`. It is
-called once per frame in `SimulationState::frame_state`, which feeds that single
-propagation into **both** the renderer's `RenderState` (marker) and the UI's
-`TelemetryState` (readout), so the two never disagree and nothing goes stale as
-the `Clock` advances. The parsed `TLE` is **retained** in
-the struct, and `state_at` takes `&mut self` because `sgp4` needs `&mut TLE`
-(it caches its propagator init). **For the full pipeline, frames, and math see
-§16** (this is the module-level summary).
+One `Satellite` = one tracked object. The simulation holds a `Vec<Satellite>`
+(see §6.6/§3), **assembled in `main`** and passed to `SimulationState::new`.
+Each is one TLE propagated with the **satkit** crate's SGP4.
+`Satellite::from_tle(text)` parses a 3-line TLE only - **no propagation at
+load**. The position state is **not stored**; `state_at(time)` propagates on
+demand and returns a `SatelliteState`. `SimulationState::frame_state` calls it
+once per satellite per frame and feeds each result into **both** the renderer's
+`RenderState.markers` and the UI's `TelemetryState.satellites`, so the two never
+disagree and nothing goes stale as the `Clock` advances. The parsed `TLE` is
+**retained** in the struct, and `state_at` takes `&mut self` because `sgp4`
+needs `&mut TLE` (it caches its propagator init). **For the full pipeline,
+frames, and math see §16** (this is the module-level summary).
 
-- **TLE**: `TLE_TEXT` (3-line: name + two element lines), an inline source
-  literal (`concat!` of the three lines; was `include_str!("assets/TLE.txt")`).
-  Parsed with `TLE::load_3line(line0, line1, line2)`. `tle.epoch` is
-  an `Instant` (the `24001.50000000` epoch); `Satellite::epoch()` exposes it
-  so the clock can start there.
+- **TLEs**: `pub const ISS_TLE` (real) and `HST_TLE` (orbit shape real, phase
+  approximate - flagged in-source), each a 3-line (name + two element lines)
+  inline source literal (`concat!`; was `include_str!("assets/TLE.txt")`).
+  `Satellite::from_tle(text)` splits the lines and parses with
+  `TLE::load_3line(line0, line1, line2)` (parses by column; trailing checksum
+  **not** verified). `tle.epoch` is an `Instant`; `Satellite::epoch()` exposes
+  it, and `SimulationState::new` starts the clock at the **first** satellite's
+  epoch.
 - **Propagate** (shared `propagate(&mut tle, &time)` helper): `sgp4(&mut tle,
   &[time]) -> SGP4State`. `state.pos` is a `DMatrix<f64>` shaped **3×N** (one
   column per time), in **meters**, **TEME** frame. Column 0 → a `Vector3`
@@ -619,9 +642,10 @@ the struct, and `state_at` takes `&mut self` because `sgp4` needs `&mut TLE`
 
 ## 6.6. Clock (`src/simulation/clock.rs`)
 
-`Clock` is the simulation time source that drives the satellite.
+`Clock` is the simulation time source that drives the satellites.
 
-- Fields: `epoch: Instant` (sim time zero = TLE epoch), `elapsed_seconds: f64`
+- Fields: `epoch: Instant` (sim time zero = the first satellite's TLE epoch),
+  `elapsed_seconds: f64`
   (sim seconds past epoch), `multiplier: f32` (pub, stored as the **linear**
   factor; `MIN_MULTIPLIER 1.0` .. `MAX_MULTIPLIER 100.0`), `paused: bool`
   (pub), `last: Option<std::time::Instant>` (wall-clock ref of the previous
@@ -646,10 +670,11 @@ rendered marker exactly); the only thing it mutates is the `&mut Clock`. The
 **Sun sliders are gone** (the Sun is ephemeris-driven now); instead a read-only
 line shows the computed **subsolar point** (`telemetry.subsolar_lat_deg`/
 `lon_deg`). egui claims its own events first (see event routing), so interacting
-with the panel never pans the globe. Below a separator it shows the station
-readout: name (`telemetry.satellite_name`), the **clock's** datetime (UTC,
-`telemetry.datetime_label`), and sub-satellite lat/lon + altitude (from
-`telemetry`). Then the **clock controls**: a `Play`/`Pause` button (toggles
+with the panel never pans the globe. Below a separator it shows the **clock's**
+datetime (UTC, `telemetry.datetime_label`, shared by all objects), then **one
+block per tracked satellite** (looping `telemetry.satellites`): name + its
+sub-satellite lat/lon + altitude. Then the **clock controls**: a `Play`/`Pause`
+button (toggles
 `clock.paused`; ASCII labels per the source rule) with a live `Speed: N.Nx`
 label, and an **exponential (base e) speed slider**: it edits a local
 `speed_exp` over `MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln()` (= `0..=ln100`),
@@ -686,11 +711,13 @@ and wraps a **private** `GlobeRenderer` scene struct (`new` / `prepare` /
 `render`, no iced traits — the camera lives in `application`, not here).
 `GlobeRenderer` owns the
 **four** render pipelines (surface, atmosphere, stars, marker), the shared
-vertex/index buffers, the uniform buffer, and the bind group. `STACKS = 64`,
-`SLICES = 128`. The marker pipeline shares the bind-group layout but has **no
-vertex buffers** (its quad is generated from the vertex index) and uses
-alpha blending; it is built in the `rayon::join` tree alongside the other
-three.
+vertex/index buffers, the uniform buffer, the bind group, and the **marker
+instance buffer** (`markers` + `marker_capacity`/`marker_count`; grows on demand
+in `prepare`, not in the bind group). `STACKS = 64`, `SLICES = 128`. The marker
+pipeline shares the bind-group layout and takes **one instance vertex buffer**
+(`MarkerInstance { position: vec3, visible: f32 }`, `step_mode = Instance`; its
+quad corners still come from the vertex index) and uses alpha blending; it is
+built in the `rayon::join` tree alongside the other three.
 
 ### `new(device, queue, format)` and its rayon parallelization
 
@@ -725,15 +752,18 @@ view_proj:    mat4x4<f32>
 camera_pos:   vec3<f32> + 1 f32 pad   (_pad0)   // km
 sun_dir:      vec3<f32> + 1 f32 pad   (_pad1)
 star_rot_inv: mat3x3<f32>   // Rust: 3 columns each padded to [f32;4]
-sat_pos:      vec3<f32> + 1 f32 pad   (_pad2)   // marker world pos, km
-marker:       vec4<f32>     // x,y = viewport px; z = radius px; w = visible
+marker:       vec4<f32>     // x,y = viewport px; z = radius px; w = unused
 ```
 
-WGSL `mat3x3` columns have vec4 stride, so the Rust struct pads each
-column. `star_rot_inv` = `sky.star_rot_inv` (world ECEF → celestial GCRF,
-uploaded as-is) and `sun_dir` = `sky.sun_dir`, both ephemeris-derived. Written
-every frame in `prepare` (`queue.write_buffer`, ordered before the frame's
-submit).
+Per-marker position + visibility are **not** in the uniform - they live in the
+marker instance buffer (one `MarkerInstance { position: vec3, visible: f32 }`
+per satellite, drawn instanced; see the marker shader §). WGSL `mat3x3` columns
+have vec4 stride, so the Rust struct pads each column. `star_rot_inv` =
+`sky.star_rot_inv` (world ECEF → celestial GCRF, uploaded as-is) and `sun_dir` =
+`sky.sun_dir`, both ephemeris-derived. The uniform and the marker instances are
+written every frame in `prepare` (`queue.write_buffer`, ordered before the
+frame's submit); `prepare` takes `&mut self` + `&Device` so it can grow the
+marker buffer when the satellite count exceeds its capacity.
 
 ### Bind group 0 layout
 
@@ -761,22 +791,27 @@ build.rs is the quality dial).
 ### `render(render_pass)`
 
 Sets bind group + vertex/index buffers, then three `draw_indexed` calls in
-order: **stars → surface → atmosphere**, followed by a `draw(0..6)` for the
-**marker** (its quad comes from the vertex index, so the bound vertex/index
-buffers are simply unused). Draw order does the occlusion (no depth buffer).
-The atmosphere is additive over the whole disc (aerial perspective) and beyond
-the limb; the marker is an alpha-blended screen overlay on top.
+order: **stars → surface → atmosphere**, followed (when `marker_count > 0`) by
+the marker instance buffer bound to vertex slot 0 and one instanced
+`draw(0..6, 0..marker_count)` for the **markers** (quad corners from the vertex
+index, per-marker position/visibility from the instances). Draw order does the
+occlusion (no depth buffer). The atmosphere is additive over the whole disc
+(aerial perspective) and beyond the limb; the markers are alpha-blended screen
+overlays on top.
 
-### `prepare(queue, render, viewport)`
+### `prepare(device, queue, render, viewport)`
 
-Packs the simulation's `RenderState` into the GPU `Uniforms` and writes them
-(`queue.write_buffer`). All the math is done upstream now (2026-06-19 refactor):
-the camera resolution (`view_proj`/`camera_pos` via `celestial_to_world`) lives
-in `application`, and `sun_dir`/`star_rot_inv`/`sat_pos` plus the
-`marker_visible` flag (`marker_occluded`, a ray-vs-mean-radius-sphere test) come
-from `SimulationState::frame_state`. `prepare` only formats them (mat3 column
-padding, vec3 pads, `marker = [w, h, MARKER_RADIUS_PX, visible]`). `viewport` is
-the surface (width, height) px, used solely for the constant-pixel marker.
+Packs the simulation's `RenderState` into the GPU `Uniforms` (and the marker
+instance buffer) and writes them (`queue.write_buffer`). All the math is done
+upstream (2026-06-19 refactor): the camera resolution (`view_proj`/`camera_pos`
+via `celestial_to_world`) lives in `application`, and `sun_dir`/`star_rot_inv`
+plus the per-satellite `markers` (`SatelliteMarker { position_km, visible }`,
+visibility from `marker_occluded`, a ray-vs-mean-radius-sphere test) come from
+`SimulationState::frame_state`. `prepare` only formats them (mat3 column
+padding, vec3 pads, `marker = [w, h, MARKER_RADIUS_PX, 0]`) and maps each
+`SatelliteMarker` to a `MarkerInstance`, growing the instance buffer (via
+`device`) if the count exceeds capacity and recording `marker_count`. `viewport`
+is the surface (width, height) px, used solely for the constant-pixel markers.
 `MARKER_RADIUS_PX = 6`.
 
 ---
@@ -969,19 +1004,22 @@ no parallax, no zoom dependence); the globe drawn afterward occludes it.
 The 35-radius geometry is purely a screen-coverage device — nothing of it
 shows.
 
-### Satellite marker (`vs_marker` / `fs_marker`)
+### Satellite markers (`vs_marker` / `fs_marker`)
 
-A flat, constant-pixel-size circle at the station's projected screen position,
-drawn last (over the finished scene) with alpha blending. **No vertex/index
-buffer** — `vs_marker` builds a two-triangle `[-1,1]^2` quad from
-`@builtin(vertex_index)` (6 verts).
+A flat, constant-pixel-size circle at each tracked object's projected screen
+position, drawn last (over the finished scene) with alpha blending as **one
+instanced draw** (one instance per satellite). `vs_marker` builds a two-triangle
+`[-1,1]^2` quad from `@builtin(vertex_index)` (6 verts); the per-marker world
+position + visibility arrive as the `MarkerInstance` vertex attributes
+(`@location(0)` position, `@location(1)` visible).
 
-- `vs_marker`: project `uniforms.sat_pos` to clip. If `marker.w < 0.5`
-  (CPU-decided occlusion) or `clip.w <= 0` (behind camera), emit an off-screen
-  clipped vertex (`(0,0,2,1)`) so nothing rasterizes. Otherwise offset the
-  center by `corner * radius_px * 2 / viewport` NDC, **× clip.w** to
-  pre-compensate the perspective divide (keeps the circle round and
-  size-stable at any depth). Passes the corner as `uv`.
+- `vs_marker(vertex_index, inst)`: project `inst.position` to clip. If
+  `inst.visible < 0.5` (CPU-decided occlusion) or `clip.w <= 0` (behind camera),
+  emit an off-screen clipped vertex (`(0,0,2,1)`) so nothing rasterizes.
+  Otherwise offset the center by `corner * radius_px * 2 / viewport` NDC
+  (`radius_px` = `uniforms.marker.z`), **× clip.w** to pre-compensate the
+  perspective divide (keeps the circle round and size-stable at any depth).
+  Passes the corner as `uv`.
 - `fs_marker`: `r = length(uv)`; `fwidth(r)` antialiases the outer edge;
   `discard` outside. A white ring (`smoothstep` at r≈0.6) around a red-orange
   fill (`MARKER_FILL`/`MARKER_RING`) so the dot reads on any background.
@@ -1195,8 +1233,9 @@ clamp ±89.
 embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
-**`src/simulation/satellite.rs`**: TLE = inline `TLE_TEXT` literal (ISS), via `satkit` 0.18
-SGP4; position propagated on demand (`state_at`), not stored.
+**`src/simulation/satellite.rs`**: TLEs = inline `ISS_TLE`/`HST_TLE` consts
+(`from_tle` ctor), via `satkit` 0.18 SGP4; position propagated on demand
+(`state_at`), not stored. Array of `Satellite` built in `main`.
 **`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
 launch).
@@ -1492,14 +1531,17 @@ Earth rotation, sub-pixel here — see §16.9).
 
 ### 16.5 Satellites — SGP4 (`satellite.rs`)
 
-Pipeline (TLE → world-space km point), run on demand by `state_at(time)`
-(returns a `SatelliteState`; nothing is stored on the struct):
+The simulation tracks a `Vec<Satellite>` (built in `main`). Per-satellite
+pipeline (TLE → world-space km point), run on demand by `state_at(time)`
+(returns a `SatelliteState`; nothing is stored on the struct). `frame_state`
+runs it once per satellite per frame:
 
-1. **TLE** `TLE_TEXT` (3-line: name + 2 element lines), an inline source literal
-   (`concat!`; was `include_str!("assets/TLE.txt")`), parsed once with
-   `TLE::load_3line(l0,l1,l2) -> TLE`. The
-   parsed `TLE` is **retained** (sgp4 needs `&mut TLE` — it caches its
-   propagator) and `tle.epoch` (an `Instant`) seeds the `Clock`.
+1. **TLE** `ISS_TLE`/`HST_TLE` (3-line: name + 2 element lines), inline source
+   literals (`concat!`; was `include_str!("assets/TLE.txt")`), parsed by
+   `Satellite::from_tle(text)` → `TLE::load_3line(l0,l1,l2) -> TLE` (by column;
+   checksum not verified). The parsed `TLE` is **retained** (sgp4 needs
+   `&mut TLE` — it caches its propagator) and `tle.epoch` (an `Instant`) of the
+   **first** satellite seeds the `Clock`.
 2. **Propagate**: `sgp4(&mut tle, &[time]) -> SGP4State { pos, vel:
    DMatrix<f64>, errcode }`. `pos` is **3×N** (one column per input time) in
    **meters**, **TEME** frame. We pass one time, take column 0 →
@@ -1517,9 +1559,10 @@ Pipeline (TLE → world-space km point), run on demand by `state_at(time)`
    guarantees the marker sits on the **exact** ellipsoid the mesh uses; the two
    are equivalent.
 6. **Returned** (in a `SatelliteState`, not stored): `position_km` (world, for
-   the marker), `latitude_deg`, `longitude_deg`, `altitude_km` (UI). The marker
-   is drawn by the 4th render pass (§10) and CPU-occluded behind the globe
-   (`marker_occluded`, §9).
+   the marker), `latitude_deg`, `longitude_deg`, `altitude_km` (UI). `frame_state`
+   collects these into `RenderState.markers` + `TelemetryState.satellites`; the
+   markers are drawn by the 4th render pass as one instanced call (§10) and each
+   is CPU-occluded behind the globe (`marker_occluded`, §9).
 
 Caveats: SGP4 is only accurate ~days around the TLE epoch (far-future clock
 times still render, but drift physically); `sgp4`/`qteme2itrf`/`ITRFCoord` need
