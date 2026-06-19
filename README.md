@@ -15,12 +15,13 @@ cargo run --release
 ```
 
 That's it - the required textures (NASA-derived earth maps and a star
-field from [Solar System Scope](https://www.solarsystemscope.com/textures/))
-and the JPL DE440 planetary ephemeris are downloaded automatically (into
-`assets/`) on the first build, so the first build needs a network connection
-and takes a little longer (the ephemeris is ~98 MB). Both the textures and the
-ephemeris are embedded into the binary, so the build is self-contained and
-needs no data files at runtime.
+field from [Solar System Scope](https://www.solarsystemscope.com/textures/)),
+the JPL DE440 planetary ephemeris, and CelesTrak's Earth-orientation
+parameters (`EOP-All.csv`) are downloaded automatically (into `assets/`) on the
+first build, so the first build needs a network connection and takes a little
+longer (the ephemeris is ~98 MB). The textures, ephemeris, and EOP data are all
+embedded into the binary, so the build is self-contained and needs no data
+files at runtime.
 
 ## Controls
 
@@ -44,6 +45,10 @@ needs no data files at runtime.
   current simulated time, so the day/night terminator and the stars track real
   astronomy as time advances. The camera is fixed relative to the stars, so the
   Earth visibly rotates beneath it.
+- Real Earth-orientation parameters: satellite positions use measured polar
+  motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
+  accurate to sub-arcsecond. This holds for past dates within the bundled EOP
+  record (1962 onward); the tool simulates past scenarios only.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
   any zoom level, from full-globe spins down to country level.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the

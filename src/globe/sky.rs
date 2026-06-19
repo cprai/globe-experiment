@@ -24,35 +24,41 @@ use satkit::{Instant, SolarSystem, Vector3};
 /// `include_bytes!` can pick it up - no runtime data file.
 const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2650.440"));
 
+/// CelesTrak's Earth-orientation parameters (`EOP-All.csv`), embedded the same
+/// way as the ephemeris (build.rs downloads to `assets/` and copies to
+/// `OUT_DIR`). Provides polar motion + UT1-UTC for accurate ITRF<->GCRF/TEME
+/// transforms. Measured data starts 1962-01-01; the file also carries a few
+/// months of predictions past the build date. Since this is a past-only
+/// simulation tool, the snapshot stays valid for every in-range date.
+const EOP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EOP-All.csv"));
+
 /// Initializes satkit's global state for fully offline, data-dir-free use.
 /// Must be called once at startup, before any ephemeris/frame-transform use.
 ///
-/// Two pieces of satkit global state are seeded here:
+/// Two pieces of satkit global state are seeded here, both from embedded bytes:
 ///
-/// 1. The JPL ephemeris singleton, from the embedded bytes. satkit lazily
-///    loads it from disk on the first position query otherwise, after which
-///    this would fail with `AlreadyInitialized`.
+/// 1. The JPL ephemeris singleton (`EPHEMERIS`). satkit lazily loads it from
+///    disk on the first position query otherwise, after which this would fail
+///    with `AlreadyInitialized`.
 ///
-/// 2. The Earth-orientation-parameter (EOP) table, seeded empty. This is the
-///    subtle one: on its first read, satkit's EOP table lazily *resolves a
-///    data directory* and creates an empty `satkit-data` dir next to the
-///    binary as a side effect (then, with our `download` feature off, fails to
-///    populate it and falls back to zeros). EOP is read by every frame
-///    transform - including the EOP-free `*_approx` ones, because `gmst` does
-///    a UT1 conversion that consults it. We deliberately run EOP-free (zeros,
-///    ~1 arcsec), so we pre-seed the EOP singleton with an empty table (a
-///    header-only CSV parses to zero entries): this consumes satkit's one-shot
-///    default load so the directory is never created, while every EOP lookup
-///    still returns the same zeros we already relied on. The warning that an
-///    empty table would print on each out-of-range lookup is silenced too.
+/// 2. The Earth-orientation-parameter (EOP) table (`EOP`). Seeding it here is
+///    needed for two reasons. (a) *Accuracy*: real EOP (polar motion, UT1-UTC)
+///    is what lets the ITRF<->GCRF/TEME transforms reach sub-arcsec - the
+///    satellite path (`qteme2itrf`) consumes polar motion + UT1-UTC directly,
+///    and `gmst`'s UT1 conversion picks up UT1-UTC everywhere. (b) *No stray
+///    dir*: every frame transform reads satkit's global EOP table on first use,
+///    and satkit's default loader *resolves a data directory and creates an
+///    empty `satkit-data` dir next to the binary* as a side effect. Seeding the
+///    table up front consumes satkit's one-shot lazy load, so that dir is never
+///    created. `disable_eop_time_warning()` silences the once-per-run stderr
+///    warning satkit prints for lookups outside the table's date range (e.g. a
+///    pre-1962 time), which then fall back to zeros.
 ///
-/// Panics if the embedded ephemeris bytes fail to parse (a broken build).
+/// Panics if either embedded blob fails to parse (a broken build).
 pub fn init_satkit() {
     satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
 
-    // A header-only CSV: parse_csv skips the first line, so this yields an
-    // empty (all-zeros) EOP table without touching the filesystem.
-    satkit::earth_orientation_params::init_from_bytes(b"header\n").expect("seed empty EOP table");
+    satkit::earth_orientation_params::init_from_bytes(EOP).expect("init EOP from embedded bytes");
     satkit::earth_orientation_params::disable_eop_time_warning();
 }
 

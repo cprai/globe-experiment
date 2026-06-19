@@ -45,16 +45,17 @@ Runtime:
 - `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
 - `rayon = "1.10"` — parallelizes `GlobeRenderer::new`.
 - `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
-  station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`, data-free) **and** the
+  station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`) **and** the
   JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
-  orientation (`qgcrf2itrf_approx`/`qitrf2gcrf_approx`, the EOP-free ~1 arcsec
-  transforms). Defaults are off to drop its `download` feature (we download the
-  ephemeris ourselves in build.rs) and `omm-xml`. **The ephemeris needs the
-  DE440 binary** (`linux_p1550p2650.440`), which we embed via `include_bytes!`
-  and load with `jplephem::init_from_bytes`; everything else is data-free.
-  (Frame transforms still *read* satkit's global EOP table on first use, which
-  would create an empty `satkit-data` dir; `sky::init_satkit` pre-seeds an empty
-  EOP table to keep zeros and suppress the dir — see §16.8.) Pulls
+  orientation. Defaults are off to drop its `download` feature (we download the
+  data ourselves in build.rs) and `omm-xml`. **Two satkit data files are
+  bundled** (embedded via `include_bytes!`, loaded via `init_from_bytes`): the
+  DE440 ephemeris binary (`linux_p1550p2650.440`) and CelesTrak's `EOP-All.csv`
+  (real Earth-orientation params — polar motion + UT1-UTC). The satellite's
+  `qteme2itrf` consumes the real EOP (sub-arcsec); the Sun/star backdrop uses
+  the `*_approx` transforms (~1 arcsec). Note: frame transforms *read* satkit's
+  global EOP table on first use, which would create a stray `satkit-data` dir;
+  `sky::init_satkit` pre-seeds the table to suppress that — see §16.8. Pulls
   `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
   transitively.
 
@@ -104,11 +105,11 @@ src/globe/clock.rs       simulation Clock: wall-dt x speed, play/pause
 src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; build-downloaded source textures + JPL
-                         DE440 ephemeris (build inputs, cached downloads)
+                         DE440 ephemeris + EOP-All.csv (cached build inputs)
                          + TLE.txt (station TLE, embedded via include_str!)
 OUT_DIR/                 gitignored build artifacts, include_bytes!'d:
                          5 BC7 textures + 3 f16 LUTs (*.ktx2) + the copied
-                         JPL DE440 ephemeris (linux_p1550p2650.440)
+                         JPL DE440 ephemeris (linux_p1550p2650.440) + EOP-All.csv
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
@@ -196,16 +197,30 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   EOP singleton with an empty table (`earth_orientation_params::init_from_bytes`
   of a header-only CSV) + `disable_eop_time_warning()`, which consumes satkit's
   one-shot lazy load so the dir is never created; lookups still return zeros, so
-  the result is numerically identical. Owner-requested.
+  the result is numerically identical. (The **empty** seed is **superseded in
+  Phase 10** — real EOP is now bundled.) Owner-requested.
+- **Phase 10** (2026-06-19): **real EOP bundled** + project reframed as an
+  astronomically-accurate, past-only satellite simulation tool. CelesTrak's
+  `EOP-All.csv` is now downloaded in build.rs (the `EMBEDS` table, alongside the
+  ephemeris) into `assets/`, copied to `OUT_DIR`, embedded via `include_bytes!`
+  as `EOP`, and loaded with `earth_orientation_params::init_from_bytes` (same
+  call site as the old empty seed, so the no-`satkit-data`-dir guarantee
+  stands). Effect: the satellite's `qteme2itrf` now applies **real** polar
+  motion + UT1-UTC (sub-arcsec); the Sun/star backdrop still uses the
+  `*_approx` transforms (which pick up real UT1-UTC via `gmst` but not polar
+  motion, ~1"). Going full IERS-2010 for the sky would also need the IERS
+  nutation tables (Tab5A/5B/5D) bundled — not done. Valid EOP range ≈ 1962 →
+  build date; past-only keeps every scenario in range and the snapshot valid
+  forever. Owner-requested.
 
 ---
 
 ## 3. Application shell (`src/main.rs`)
 
 A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_satkit()`
-(seeds satkit's globals - the embedded DE440 ephemeris and an empty EOP table -
-before any ephemeris/frame-transform use), then builds an `EventLoop`, sets
-`ControlFlow::Wait`, runs `App::default()`.
+(seeds satkit's globals - the embedded DE440 ephemeris and the real bundled EOP
+table - before any ephemeris/frame-transform use), then builds an `EventLoop`,
+sets `ControlFlow::Wait`, runs `App::default()`.
 
 - `App { camera: Camera, sky: Sky, satellite: Satellite, clock: Clock,
   controller: Controller, gfx: Option<Gfx> }`. Camera/sky/satellite/clock
@@ -456,29 +471,32 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
     "/linux_p1550p2650.440"))`. Sets satkit's `JPL_INSTANCE` `OnceLock`
     (settable once); **must** run before any position query, else satkit's lazy
     disk loader wins and this returns `AlreadyInitialized`.
-  - `satkit::earth_orientation_params::init_from_bytes(...)` +
-    `disable_eop_time_warning()`. Why it's needed: every frame transform reads
-    satkit's global EOP table on first use - including the `*_approx` ones,
-    because `gmst` does a UT1 conversion that consults it, and `qteme2itrf`
-    reads polar motion - and satkit's default EOP loader *resolves a data dir
-    and creates an empty `satkit-data` dir next to the binary* as a side effect.
-    Seeding the table up front consumes the one-shot lazy load
+  - `satkit::earth_orientation_params::init_from_bytes(EOP)` +
+    `disable_eop_time_warning()`, where `EOP` is CelesTrak's `EOP-All.csv`
+    embedded via `include_bytes!(concat!(env!("OUT_DIR"), "/EOP-All.csv"))`.
+    Two reasons. (a) *Accuracy*: real EOP (polar motion + UT1-UTC) is what makes
+    the satellite's ITRF transform sub-arcsec. (b) *No stray dir*: every frame
+    transform reads satkit's global EOP table on first use - including the
+    `*_approx` ones, because `gmst` does a UT1 conversion that consults it, and
+    `qteme2itrf` reads polar motion - and satkit's default loader *resolves a
+    data dir and creates an empty `satkit-data` dir next to the binary* as a
+    side effect. Seeding up front consumes the one-shot lazy load
     (`DEFAULT_LOAD_ONCE`) so that dir is never created. **Don't remove the
     seed** - the dir comes back.
-    - **Current content: empty** (`b"header\n"`; parse_csv skips the header →
-      zero entries). Lookups return zeros, so Earth orientation is the
-      `*_approx` (~1 arcsec) result. This is a **stopgap**, not the accuracy
-      target.
-    - **Target (astronomical accuracy): seed real EOP here.** Bundle CelesTrak
-      `EOP-All.csv` like the ephemeris (build.rs → `assets/` → `OUT_DIR` →
-      `include_bytes!`) and pass those bytes to this same call, then switch the
-      Sun/star/satellite transforms from `*_approx` to the full
-      `qgcrf2itrf`/`qitrf2gcrf` (IERS-2010). Past-only scenarios make a bundled
-      file permanently valid for in-range dates. **Not yet implemented**; when
-      you do it, keep the seed-before-first-use ordering and the
-      no-`satkit-data`-dir guarantee, and respect the valid-range bounds in
-      §16.9.
-  - Net (today): no `set_datadir`/`data/` dir, no `satkit-data` dir - the app is
+    - **What consumes it.** Satellite `qteme2itrf` is the **full** (non-approx)
+      transform: real polar motion (via `qitrf2tirs`) + real UT1-UTC (via
+      `gmst`) → sub-arcsec ground track. The Sun/star backdrop uses `*_approx`,
+      which picks up real UT1-UTC via `gmst` but neglects polar motion (~0.3")
+      and uses approximate nutation (~1"); fine for a backdrop.
+    - **Full IERS-2010 for the sky is a bigger job** (not done): switching to
+      `qgcrf2itrf`/`qitrf2gcrf` additionally needs satkit's IERS nutation tables
+      (Tab5A/5B/5D), which `ierstable` `.unwrap()`s from the data dir — would
+      `panic` + re-create `satkit-data` unless those are also bundled and seeded
+      (`ierstable::init_from_bytes`).
+    - **Valid range** ≈ 1962-01-01 → last `EOP-All.csv` row (≈ build date);
+      out-of-range lookups return `None` → zeros. Past-only keeps scenarios in
+      range and the snapshot permanently valid. See §16.9.
+  - Net: no `set_datadir`/`data/` dir, no `satkit-data` dir - the app is
     fully offline and data-dir-free.
 - **Sun**: `geocentric_pos(SolarSystem::Sun, time)` → GCRF position (meters);
   `qgcrf2itrf_approx(time) * sun_gcrf` → standard ITRF; then permute to the
@@ -494,11 +512,13 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
   surface_position`/`geodetic_normal` bake in. Verified: P·sun matches
   `ITRFCoord::to_geodetic` (Jan-1-2024 subsolar lat −23.02°, lon 0.84°), and
   `star_rot_inv` is a proper rotation (det 1, orthonormal to ~6e-8).
-- **Accuracy**: the `*_approx` (IAU-76/FK5) transforms are ~1 arcsec and need
-  **no EOP data** — only the ephemeris file. 1 arcsec is well sub-pixel here.
-  (They still *read* satkit's EOP global on first use — see §15 / §16.8 — so we
-  pre-seed it empty in `init_satkit` to keep zeros and avoid the `satkit-data`
-  dir.)
+- **Accuracy**: the Sun/star backdrop uses the `*_approx` (IAU-76/FK5)
+  transforms (~1 arcsec — sub-pixel here). With real EOP bundled (§16.8) they do
+  pick up real UT1-UTC via `gmst`, but still neglect polar motion and use
+  approximate nutation; that residual only affects the backdrop, so it's left
+  as-is. (The satellite path is the full transform and *does* get sub-arcsec —
+  see §6.5/§16.) Both read satkit's EOP global on first use — `init_satkit`
+  seeds it so no `satkit-data` dir appears.
 - `subsolar_lat_deg`/`subsolar_lon_deg` (from `sun_dir`) are shown read-only
   in the panel (the old sliders are gone).
 
@@ -521,11 +541,11 @@ math see §16** (this is the module-level summary).
   &[time]) -> SGP4State`. `state.pos` is a `DMatrix<f64>` shaped **3×N** (one
   column per time), in **meters**, **TEME** frame. Column 0 → a `Vector3`
   (`numeris`, ctor takes `[[f64;1];3]`).
-- **TEME→ITRF**: `qteme2itrf(&time) * teme` — with our empty EOP table the
-  polar-motion term is zero, so this is effectively a GMST rotation about the
-  polar axis, needing **no EOP/data files** for the result. (It does read
-  satkit's EOP global on first use; `init_satkit` seeds it empty so no
-  `satkit-data` dir is created — see §15 / §16.8.) Then
+- **TEME→ITRF**: `qteme2itrf(&time) * teme` — the **full** (non-approx)
+  transform, so with the bundled real EOP it applies real polar motion (via
+  `qitrf2tirs`) and real UT1-UTC (via `gmst`), giving sub-arcsec accuracy. (For
+  in-range dates only; pre-1962 or beyond the EOP file → zeros. `init_satkit`
+  seeds the EOP table so no `satkit-data` dir is created — see §15 / §16.8.) Then
   `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` → (lat, lon,
   height-above-ellipsoid).
 - **To world space**: rather than permute ECEF axes, reconstruct the point
@@ -1001,17 +1021,23 @@ tables. The whole bake is sub-second.
 ## 12. Build pipeline (`build.rs`)
 
 Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es). `assets/`
-holds the cached downloads (source images + the ephemeris) as gitignored build
-input.
+holds the cached downloads (source images + the ephemeris + EOP) as gitignored
+build input.
 
-### 0. Ephemeris embed
-`embed_ephemeris(out_dir)` fetches the JPL DE440 binary `linux_p1550p2650.440`
-(~98 MiB) from `ssd.jpl.nasa.gov` into `assets/` via ureq (256 MiB cap), unless
-already present; emits `cargo::rerun-if-changed=assets/<name>` so deleting it
-re-downloads. It then **copies** the file into `OUT_DIR` so `sky.rs` can
-`include_bytes!` it — the ephemeris is embedded in the binary (loaded via
-satkit `jplephem::init_from_bytes`), so there is no runtime data file. Adds
-~98 MB to the network-dependent first build and to the binary.
+### 0. Embed satkit data files
+`embed_verbatim(embed, out_dir)`, run for each entry of the `EMBEDS` table,
+downloads a file into `assets/` via ureq (per-entry size cap) unless already
+present, emits `cargo::rerun-if-changed=assets/<name>` so deleting it
+re-downloads, then **copies** it into `OUT_DIR` so `sky.rs` can `include_bytes!`
+it. No transcode — embedded verbatim. The two entries:
+- **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) from
+  `ssd.jpl.nasa.gov` (256 MiB cap) — loaded via `jplephem::init_from_bytes`.
+- **CelesTrak `EOP-All.csv`** (~2-3 MiB) from `celestrak.org/SpaceData/`
+  (64 MiB cap) — Earth-orientation params, loaded via
+  `earth_orientation_params::init_from_bytes`.
+
+So there are no runtime data files. Adds ~100 MB to the network-dependent first
+build and to the binary (the EOP file is small; the ephemeris dominates).
 
 ### 1. Download
 `ASSETS`: five solarsystemscope.com textures, each tagged `srgb: bool` —
@@ -1101,10 +1127,10 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
 **`renderer.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
-**`src/globe/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440, loaded
-via `jplephem::init_from_bytes`); Sun via
-`jplephem::geocentric_pos(SolarSystem::Sun)`, Earth orientation via
-`q*2*_approx` (EOP-free ~1 arcsec); re-evaluated each running frame.
+**`src/globe/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440) +
+embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
+via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
+`q*2*_approx` (~1 arcsec); re-evaluated each running frame.
 **`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
 SGP4; re-propagated each running frame.
 **`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
@@ -1181,17 +1207,19 @@ version bump — this crate's API is still moving.
   `gmst`, and `ITRFCoord` produce correct results with **no** data files. But
   note `qteme2itrf` and `gmst` (and the `*_approx` transforms) still *read*
   satkit's global EOP table on first use, which lazily creates an empty
-  `satkit-data` dir (see Frame transforms above); we suppress that by seeding an
-  empty EOP table in `init_satkit`. If you adopt a function that needs real EOP,
-  prefer the `*_approx` variants and pre-seed EOP (`init_from_bytes`) rather
-  than letting the lazy disk loader run.
+  `satkit-data` dir (see Frame transforms above); we suppress that by seeding
+  the EOP table in `init_satkit`. We bundle real EOP (`EOP-All.csv`) and seed it
+  via `init_from_bytes` rather than letting the lazy disk loader run; `qteme2itrf`
+  then gets real polar motion + UT1-UTC.
 - **EOP table — `satkit::earth_orientation_params`**: a global EOP singleton.
-  `init_from_bytes(&[u8])` / `init_from_path(&Path)` seed it (CelesTrak
-  `EOP-All.csv` text; `parse_csv` skips the header line, so a header-only buffer
-  → an empty/all-zeros table) and consume the one-shot lazy default load.
-  `disable_eop_time_warning()` silences the out-of-range warning. `get(tm) ->
-  Option<[f64;6]>` returns `[dut1, xp, yp, lod, dX, dY]` or `None` (→ callers
-  use zeros). We call the two `init_*`-style setters in `init_satkit` to stay
+  `init_from_bytes(&[u8])` / `init_from_path(&Path)` seed it from CelesTrak
+  `EOP-All.csv` text and consume the one-shot lazy default load. (`parse_csv`
+  skips the header line; the real file has 12 columns per row from 1962-01-01
+  on, and a header-only buffer would yield an empty/all-zeros table — we did
+  that before bundling the real file.) `disable_eop_time_warning()` silences the
+  out-of-range warning. `get(tm) -> Option<[f64;6]>` returns
+  `[dut1, xp, yp, lod, dX, dY]` or `None` for out-of-range times (→ callers use
+  zeros). `init_satkit` seeds it from the embedded real `EOP-All.csv` to stay
   fully offline (see §16.8).
 
 ### Time — `satkit::Instant`
@@ -1248,20 +1276,23 @@ version bump — this crate's API is still moving.
   transforms hit it, because `gmst` converts to UT1 (which reads `dut1` from the
   table), and `qteme2itrf` reads polar motion. Without data the lookups return
   zeros (so the math is genuinely EOP-free), but the **dir is still created** as
-  a side effect. We suppress it by pre-seeding an empty EOP table in
-  `init_satkit` (see §3 / §16.8). So "EOP-free" below means "result uses zeros",
-  **not** "never touches the EOP global".
+  a side effect. We suppress it by seeding the EOP table in `init_satkit` (see
+  §3 / §16.8) — with the real bundled `EOP-All.csv`, so in-range lookups return
+  real values.
 - `qteme2itrf<T: TimeLike>(tm: &T) -> Quaternion` **(verified)**: TEME →
-  ITRF (Earth-fixed/ECEF). With our empty EOP table the polar-motion term is
-  zero, so the result is effectively a pure GMST rotation about the polar axis.
-  `gmst(...)`/`earth_rotation_angle(...)` are pure math but `gmst` reads EOP via
-  its UT1 conversion (see the side-effect note above).
-- **GCRF ↔ ITRF**: full `qgcrf2itrf`/`qitrf2gcrf` (IERS 2010, **needs EOP
-  data**, also uses the `ierstable` IERS files) and
-  **`qgcrf2itrf_approx`/`qitrf2gcrf_approx`** (IAU-76/FK5, ~1 arcsec, EOP-free
-  result — what we use). Each `<T: TimeLike>(tm: &T) -> Quaternion`. `*_approx`
-  is the conjugate pair. State (pos+vel) variants: `gcrf_to_itrf_state[_approx]`
-  etc.
+  ITRF (Earth-fixed/ECEF). The **full** transform: `qitrf2tirs(tm).conjugate() *
+  rotz(-gmst)`, applying polar motion (`qitrf2tirs` reads `xp`,`yp` from EOP) and
+  UT1-UTC (`gmst`'s UT1 conversion reads `dut1`). With real EOP bundled this is
+  sub-arcsec; this is what the satellite uses. `earth_rotation_angle(...)` is
+  pure math; `gmst` reads `dut1` from EOP.
+- **GCRF ↔ ITRF**: full `qgcrf2itrf`/`qitrf2gcrf` (IERS 2010, needs EOP data —
+  bundled — **and** the `ierstable` IERS nutation files Tab5A/5B/5D, which it
+  `.unwrap()`s from the data dir → **not** bundled, so calling these would
+  panic) and **`qgcrf2itrf_approx`/`qitrf2gcrf_approx`** (IAU-76/FK5, ~1 arcsec;
+  read `dut1` via `gmst` but neglect polar motion + use approximate nutation —
+  what the Sun/star backdrop uses). Each `<T: TimeLike>(tm: &T) -> Quaternion`.
+  `*_approx` is the conjugate pair. State (pos+vel) variants:
+  `gcrf_to_itrf_state[_approx]` etc.
 - Apply a quaternion to a vector with `q * v` (numeris `Quaternion: Mul<Vector3>`);
   `Quaternion` is `Copy`, so one `q` can rotate several vectors **(verified)** —
   build a `Mat3` by rotating the three basis vectors.
@@ -1407,12 +1438,11 @@ Pipeline (TLE → world-space km point), re-run every running frame by
    DMatrix<f64>, errcode }`. `pos` is **3×N** (one column per input time) in
    **meters**, **TEME** frame. We pass one time, take column 0 →
    `Vector3([[x],[y],[z]])`.
-3. **TEME → ITRF**: `qteme2itrf(&time) * teme`. With our empty EOP table the
-   polar-motion term is zero, so this is effectively a **GMST** rotation about
-   the polar axis (`x=y=0` in the quaternion); it needs **no EOP data** for the
-   result (it does read satkit's EOP global — seeded empty in `init_satkit`, §15
-   / §16.8). Result is standard ECEF,
-   meters.
+3. **TEME → ITRF**: `qteme2itrf(&time) * teme` — the **full** transform, so with
+   the bundled real EOP it applies real polar motion + UT1-UTC → sub-arcsec (in
+   range; pre-1962/post-file → zeros). Reads satkit's EOP global, seeded by
+   `init_satkit` from the real `EOP-All.csv` (§15 / §16.8). Result is standard
+   ECEF, meters.
 4. **ITRF → geodetic**: `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` →
    `(lat, lon, hae)` (WGS84; radians, meters).
 5. **geodetic → world**: `position_km = earth::surface_position(lat,lon) +
@@ -1482,29 +1512,34 @@ Sun consistency) is physically correct.
 - **Functions used**: `tle::TLE::load_3line`; `sgp4::sgp4`;
   `frametransform::{qteme2itrf, qgcrf2itrf_approx, qitrf2gcrf_approx}`;
   `jplephem::{geocentric_pos, init_from_bytes}`;
+  `earth_orientation_params::{init_from_bytes, disable_eop_time_warning}`;
   `itrfcoord::ITRFCoord::{from_vector, to_geodetic_rad/deg}`; types `Instant`,
   `Duration`, `Vector3`, `SolarSystem`. Full signatures: §15.
-- **Data files**: only the **JPL DE440 ephemeris** is needed —
-  `linux_p1550p2650.440` (~98 MiB), and it is **embedded** in the binary.
-  `build.rs` downloads it into the gitignored `assets/` and copies it into
-  `OUT_DIR`; `sky.rs` `include_bytes!`-es it and `sky::init_satkit()` (called
-  once at the top of `main`) loads it via `jplephem::init_from_bytes` and also
-  seeds an empty EOP table (so satkit never creates a `satkit-data` dir — §16.8).
-  Everything else is data-free because we use the EOP-free `*_approx`
-  Earth-orientation transforms. No runtime data file, so the binary is
-  self-contained — nothing has to stay on disk between build and run.
+- **Data files**: two, both **embedded** in the binary (no runtime data file):
+  the **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) and CelesTrak's
+  **`EOP-All.csv`** (~2-3 MiB Earth-orientation params). `build.rs` downloads
+  both into the gitignored `assets/` and copies them into `OUT_DIR`; `sky.rs`
+  `include_bytes!`-es each and `sky::init_satkit()` (called once at the top of
+  `main`) loads them via `jplephem::init_from_bytes` /
+  `earth_orientation_params::init_from_bytes`. The EOP seed also stops satkit
+  from creating a `satkit-data` dir (§16.8). The satellite consumes the real EOP
+  (sub-arcsec); the Sun/star backdrop uses the `*_approx` transforms (~1 arcsec).
+  The binary is self-contained — nothing has to stay on disk between build and
+  run.
 
 ### 16.9 Accuracy & limitations
 
 - **Ephemeris**: DE440, sub-km Sun position; file spans years 1550–2650.
-- **Earth orientation — current vs. target.** *Today:* IAU-76/FK5 `*_approx`
-  ⇒ ~1 arcsec, ignoring polar motion and UT1−UTC (the EOP table is seeded
-  empty). ~1 arcsec ≈ 30 m on the ground. *Target* (this is a satellite
-  **simulation** tool, not just a viewer): bundle real EOP and use the full
-  IERS-2010 `qgcrf2itrf`/`qitrf2gcrf` for sub-arcsec orientation — see §16.8.
-- **Valid time range (load-bearing for scenarios).** Real EOP, once bundled,
-  is only defined on a bounded interval, so every scenario's epoch window must
-  lie inside it:
+- **Earth orientation — satellite full, backdrop approximate.** Real EOP
+  (`EOP-All.csv`) is bundled. The **satellite** uses the full `qteme2itrf`
+  (real polar motion + UT1-UTC) → sub-arcsec, in-range. The **Sun/star
+  backdrop** uses the `*_approx` (IAU-76/FK5) transforms: they pick up real
+  UT1-UTC via `gmst` but neglect polar motion (~0.3") and use approximate
+  nutation (~1"); fine for a backdrop. Full IERS-2010 for the sky additionally
+  needs the IERS nutation tables (Tab5A/5B/5D) bundled — not done (§16.8).
+- **Valid time range (load-bearing for scenarios).** The bundled EOP is only
+  defined on a bounded interval, so every scenario's epoch window must lie
+  inside it:
   - **Lower bound 1962-01-01** — the IERS EOP series starts here; nothing
     measured exists before. (The satellite era starts 1957, so a handful of the
     earliest objects predate EOP.) Earlier dates → satkit returns no EOP →

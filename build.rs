@@ -40,21 +40,43 @@ struct Asset {
 /// Generous cap per download; the largest texture is ~10 MB.
 const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
 
-/// JPL Development Ephemeris (DE440) binary, downloaded into the gitignored
-/// `assets/` dir at build time and copied into `OUT_DIR` so the runtime can
-/// `include_bytes!` it. At ~98 MiB it is large, but embedding it (like the
-/// textures) gives a self-contained binary with no runtime data file - satkit
-/// loads it via `jplephem::init_from_bytes`.
-const EPHEMERIS_URL: &str =
-    "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440";
+/// Files downloaded once and embedded into the binary verbatim (no transcode),
+/// for satkit's astronomical computations. Each is cached in the gitignored
+/// `assets/` dir and copied into `OUT_DIR` so the runtime can `include_bytes!`
+/// it - giving a self-contained binary with no runtime data files:
+///
+/// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sun/planet
+///   positions, loaded via `jplephem::init_from_bytes`.
+/// - CelesTrak's `EOP-All.csv` Earth-orientation parameters (~2-3 MiB): polar
+///   motion + UT1-UTC for accurate ITRF<->GCRF, loaded via
+///   `earth_orientation_params::init_from_bytes`. It spans 1962-01-01 onward
+///   (measured) plus a few months of predictions; since this is a past-only
+///   simulation tool the frozen-at-build-time snapshot stays valid for every
+///   in-range date (delete the cached file to refresh).
+const EMBEDS: &[Embed] = &[
+    Embed {
+        url: "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440",
+        // ~98 MiB; generous headroom for future DE versions.
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://celestrak.org/SpaceData/EOP-All.csv",
+        // A few MiB of text; generous cap.
+        limit: 64 * 1024 * 1024,
+    },
+];
 
-/// The ephemeris is ~98 MiB; allow generous headroom for future DE versions.
-const EPHEMERIS_LIMIT: u64 = 256 * 1024 * 1024;
+struct Embed {
+    url: &'static str,
+    limit: u64,
+}
 
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
 
-    embed_ephemeris(&out_dir);
+    for embed in EMBEDS {
+        embed_verbatim(embed, &out_dir);
+    }
 
     for asset in ASSETS {
         let source = download_if_missing(asset.url);
@@ -64,16 +86,14 @@ fn main() {
     bake_luts(&out_dir);
 }
 
-/// Downloads the JPL ephemeris into `assets/` unless it is already there, then
-/// copies it into `OUT_DIR` so the runtime can `include_bytes!` it. Registers
-/// the cached source with cargo so deleting it re-downloads on the next build.
-/// The cached download lives in `assets/` (like the textures) while the copy
-/// in `OUT_DIR` is what gets embedded.
-fn embed_ephemeris(out_dir: &Path) {
-    let name = EPHEMERIS_URL
-        .rsplit('/')
-        .next()
-        .expect("ephemeris url has a file name");
+/// Downloads `embed.url` into `assets/` unless it is already there, then copies
+/// it into `OUT_DIR` under the same file name so the runtime can
+/// `include_bytes!` it. Registers the cached source with cargo so deleting it
+/// re-downloads on the next build. The cached download lives in `assets/` (like
+/// the textures) while the copy in `OUT_DIR` is what gets embedded.
+fn embed_verbatim(embed: &Embed, out_dir: &Path) {
+    let url = embed.url;
+    let name = url.rsplit('/').next().expect("embed url has a file name");
     let source = PathBuf::from(format!("assets/{name}"));
 
     println!("cargo::rerun-if-changed={}", source.display());
@@ -82,15 +102,15 @@ fn embed_ephemeris(out_dir: &Path) {
         fs::create_dir_all("assets")
             .unwrap_or_else(|error| panic!("failed to create assets directory: {error}"));
 
-        let mut response = ureq::get(EPHEMERIS_URL)
+        let mut response = ureq::get(url)
             .call()
-            .unwrap_or_else(|error| panic!("failed to download {EPHEMERIS_URL}: {error}"));
+            .unwrap_or_else(|error| panic!("failed to download {url}: {error}"));
         let bytes = response
             .body_mut()
             .with_config()
-            .limit(EPHEMERIS_LIMIT)
+            .limit(embed.limit)
             .read_to_vec()
-            .unwrap_or_else(|error| panic!("failed to read response of {EPHEMERIS_URL}: {error}"));
+            .unwrap_or_else(|error| panic!("failed to read response of {url}: {error}"));
 
         fs::write(&source, bytes)
             .unwrap_or_else(|error| panic!("failed to write {source:?}: {error}"));

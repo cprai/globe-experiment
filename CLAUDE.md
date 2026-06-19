@@ -53,10 +53,12 @@ cargo run --release
 ```
 
 - **First build needs a network connection** and is slow (~1.5 min extra):
-  `build.rs` downloads five textures plus the ~98 MB JPL ephemeris into the
-  gitignored `assets/`, BC7-encodes the textures, and copies the ephemeris
+  `build.rs` downloads five textures, the ~98 MB JPL ephemeris, and CelesTrak's
+  `EOP-All.csv` (~2-3 MB Earth-orientation params) into the gitignored
+  `assets/`, BC7-encodes the textures, and copies the ephemeris and EOP file
   into `OUT_DIR`. Subsequent builds reuse the cached `OUT_DIR/*.ktx2` and the
-  cached `assets/` downloads.
+  cached `assets/` downloads. (Delete `assets/EOP-All.csv` to pull a fresher
+  EOP snapshot.)
 - Smoke test: `timeout <n> cargo run 2>&1 | head` (or redirect to a file —
   pipe buffering can swallow output). wgpu validation errors panic in the
   first frames, so a clean 15-25 s run means pipelines/bindings are valid.
@@ -136,25 +138,31 @@ cargo run --release
   ones, because `gmst` does a UT1 conversion that consults it, and `qteme2itrf`
   reads polar motion. satkit's default EOP loader *resolves a data directory
   and creates an empty `satkit-data` dir next to the binary* as a side effect.
-  So `init_satkit` always pre-seeds the EOP singleton via
+  So `init_satkit` pre-seeds the EOP singleton via
   `earth_orientation_params::init_from_bytes(...)` (plus
   `disable_eop_time_warning()`); this consumes satkit's one-shot lazy load so
-  the dir is never created. **Do not drop the EOP seed** — the empty
+  the dir is never created. **Do not drop the EOP seed** — the stray
   `satkit-data` dir comes back. (Run from a clean dir to verify none appears.)
-  - **Current content: an empty table** (`b"header\n"` → zero entries), so
-    every EOP lookup returns zeros and Earth orientation falls back to the
-    `*_approx` (IAU-76/FK5, ~1 arcsec) result. This is a **stopgap, not the
-    accuracy target.**
-  - **Target for astronomical accuracy: bundle real EOP data** (CelesTrak
-    `EOP-All.csv`) the same way the ephemeris is bundled — download in
-    `build.rs` into `assets/`, copy to `OUT_DIR`, `include_bytes!`, and pass
-    those bytes to the same `init_from_bytes` call here. With real EOP loaded,
-    switch the satellite/sky from the `*_approx` transforms to the full
-    `qgcrf2itrf`/`qitrf2gcrf` (IERS-2010) to actually consume it. Past-only
-    scenarios make this durable: a past date's EOP never changes (see the
-    scenario-bounds note under Conventions and `MEMORY.md` §16.8/§16.9). **Not
-    yet implemented** — when you do it, keep the seed-before-first-use ordering
-    and the no-`satkit-data`-dir guarantee above.
+  - **Content: real EOP, bundled** — CelesTrak's `EOP-All.csv`, embedded the
+    same way as the ephemeris (`build.rs` downloads it to `assets/`, copies to
+    `OUT_DIR`; `sky.rs` `include_bytes!`-es it as `EOP` and feeds it to
+    `init_from_bytes`). So polar motion + UT1-UTC are real, not zeros.
+  - **What consumes it.** The **satellite** path (`qteme2itrf`) is the full,
+    non-`approx` transform: it applies real polar motion (via `qitrf2tirs`) and
+    real UT1-UTC (via `gmst`), so the simulated ground track is sub-arcsec. The
+    **sky** path still uses the `*_approx` transforms; those pick up real
+    UT1-UTC through `gmst` but still neglect polar motion (~0.3") and use
+    approximate nutation (~1"). That residual is sub-arcsec and only affects the
+    Sun/star *backdrop*, so it's left as-is.
+  - **Going fully IERS-2010 for the sky is a bigger job — don't assume it's a
+    one-liner.** Switching the sky to `qgcrf2itrf`/`qitrf2gcrf` additionally
+    needs satkit's IERS nutation tables (Tab5A/5B/5D), which it reads from the
+    data dir via `ierstable` and **`.unwrap()`s** — i.e. it would `panic` (and
+    re-create `satkit-data`) unless those tables are *also* bundled and seeded
+    (`ierstable::init_from_bytes`). Not done; not needed for the satellite.
+  - **Validity:** EOP is bounded (≈1962 → build date); see the scenario-bounds
+    note under Conventions and `MEMORY.md` §16.8/§16.9. Past-only scenarios make
+    the bundled snapshot permanently valid (history doesn't change).
 - **The camera is in the inertial (star-fixed) frame** (owner-requested
   2026-06-18). `Camera`'s orbital rig is built around the origin as before but
   interpreted in the celestial frame, then rotated into the Earth-fixed world
@@ -301,14 +309,18 @@ the owner. Re-introducing them silently is a regression.
 - **Sun / Earth orientation / star map**: `src/globe/sky.rs` (`Sky::at(time)`
   → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
   `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()` (called once at
-  the top of `main`, before any `Sky` is built) seeds satkit's global state:
-  the embedded ephemeris (`jplephem::init_from_bytes`) **and** the EOP table
-  (`earth_orientation_params::init_from_bytes`, currently empty) — see the
-  "`init_satkit()` must seed satkit's EOP table" golden rule above.
+  the top of `main`, before any `Sky` is built) seeds satkit's global state from
+  embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
+  real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
+  `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
+  rule above. The EOP files live alongside the ephemeris (`assets/EOP-All.csv`
+  cached, copied to `OUT_DIR`).
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
-  **including** the JPL ephemeris (`linux_p1550p2650.440`, ~98 MB): `build.rs`
-  downloads it into the gitignored `assets/` and copies it into `OUT_DIR`, and
-  `sky.rs` embeds it with `include_bytes!`. No runtime data file.
+  **including** the two satkit data files that are bundled verbatim: the JPL
+  ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB).
+  `build.rs` downloads both into the gitignored `assets/` (the `EMBEDS` table)
+  and copies them into `OUT_DIR`; `sky.rs` embeds each with `include_bytes!`. No
+  runtime data file.
 
 ### Scenarios & valid time range (read before adding a scenario)
 - **Scenarios do not exist yet** — they will be added later. Each will pin the
@@ -330,10 +342,10 @@ the owner. Re-introducing them silently is a regression.
     this bound by construction.
 - **So: when you add a scenario, check its start and end epochs against the
   bundled EOP file's `[first_entry .. last_entry]` MJD range** (and against
-  1962 for the lower bound). If a scenario can't be brought in-range, it does
-  not meet the accuracy bar — flag it rather than shipping a silently-degraded
-  result. (This note stands even while EOP is seeded empty — it's the
-  acceptance criterion the empty seed is a placeholder for.)
+  1962 for the lower bound). The bundled `assets/EOP-All.csv`'s last data row is
+  the concrete upper bound; the first row (1962-01-01, MJD 37665) is the lower.
+  If a scenario can't be brought in-range, it does not meet the accuracy bar —
+  flag it rather than shipping a silently-degraded result.
 
 ---
 
@@ -345,26 +357,28 @@ the owner. Re-introducing them silently is a regression.
   far zoom; the city-light dither can twinkle/alias when blobs shrink
   sub-pixel at low zoom (no MSAA either). Mitigations are documented but
   not implemented.
-- **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs + the ~98 MB JPL ephemeris
-  are embedded via `include_bytes!`, so the binary is large (~260 MB) and links
-  slowly. Runtime file loading is a known, unimplemented follow-up.
-- **JPL ephemeris is embedded, not a runtime file.** `build.rs` downloads
-  `linux_p1550p2650.440` (DE440, ~98 MB) from JPL on the first build into the
+- **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs + the ~98 MB JPL ephemeris +
+  ~2-3 MB EOP are embedded via `include_bytes!`, so the binary is large
+  (~260 MB) and links slowly. Runtime file loading is a known, unimplemented
+  follow-up.
+- **JPL ephemeris and EOP are embedded, not runtime files.** `build.rs`
+  downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
+  (Earth-orientation params) from CelesTrak on the first build into the
   gitignored `assets/` (adds to the already-network-dependent first build) and
-  copies it into `OUT_DIR`; `sky.rs` embeds it with `include_bytes!` and loads
-  it via `jplephem::init_from_bytes`. So there is **no runtime data file** -
-  the binary is self-contained - but a fresh checkout still needs network for
-  the first build.
-- **Earth orientation: currently `*_approx` (~1 arcsec), targeting full EOP.**
-  Today Earth orientation uses the EOP-free `*_approx` transforms with an empty
-  EOP table (zeros), so no EOP data is bundled yet. The astronomical-accuracy
-  goal calls for bundling real EOP (`EOP-All.csv`) and switching to the full
-  IERS-2010 transforms — see the EOP-seed golden rule and the scenario-bounds
-  note. Because the tool is **past-only**, a bundled EOP file is valid forever
-  for in-range dates (a past date's EOP never changes). Whichever way, satkit
-  would try to *resolve* an EOP data dir on first use and create an empty
-  `satkit-data` dir; `init_satkit` seeds the EOP table up front to suppress
-  that — keep that seeding when you bundle real EOP.
+  copies both into `OUT_DIR`; `sky.rs` embeds each with `include_bytes!` and
+  loads them via `jplephem::init_from_bytes` / `earth_orientation_params::
+  init_from_bytes`. So there is **no runtime data file** - the binary is
+  self-contained - but a fresh checkout still needs network for the first build.
+- **Earth orientation: satellite is full EOP; sky is `*_approx` (~1").** With
+  real EOP bundled, the satellite's `qteme2itrf` applies real polar motion +
+  UT1-UTC (sub-arcsec). The Sun/star backdrop still uses the `*_approx`
+  transforms (real UT1-UTC via `gmst`, but polar motion neglected + approximate
+  nutation, ~1") — fine for a backdrop. Going full IERS-2010 for the sky would
+  *additionally* require bundling satkit's IERS nutation tables (Tab5A/5B/5D,
+  which `ierstable` `.unwrap()`s from the data dir) — not done. Because the tool
+  is **past-only**, the bundled EOP is valid forever for in-range dates. Keep
+  `init_satkit`'s EOP seed regardless: satkit would otherwise resolve an EOP
+  data dir on first use and create a stray `satkit-data` dir.
 - **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
   **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
   personality. MSVC on Windows is unaffected; do not make it
