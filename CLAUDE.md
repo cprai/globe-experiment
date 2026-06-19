@@ -362,8 +362,9 @@ section is for the larger, explicitly-deferred ideas.)
   `marker_occluded`).
 - **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
   frame conversion to a world-space km point; `update_to(time)` re-propagates
-  each tick). The TLE is `assets/TLE.txt`, embedded via `include_str!` (assets/
-  is gitignored, like the textures). Marker colors live in the marker shader.
+  each tick). The TLE (ISS / ZARYA) is an **inline source literal**
+  (`TLE_TEXT`, a `concat!` of the three TLE lines) - not `include_str!`, so a
+  fresh checkout needs no data file. Marker colors live in the marker shader.
 - **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by
   wall-clock dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`).
   Starts at the TLE epoch.
@@ -387,8 +388,8 @@ section is for the larger, explicitly-deferred ideas.)
 ### Scenarios & valid time range (read before adding a scenario)
 - **Scenarios do not exist yet** — they will be added later. Each will pin the
   simulation to a specific **past** event (a satellite/TLE + a time window).
-  Today the only "scenario" is the embedded `assets/TLE.txt` and a clock that
-  starts at its epoch.
+  Today the only "scenario" is the inline `TLE_TEXT` element set (ISS) in
+  `satellite.rs` and a clock that starts at its epoch.
 - **Every scenario's time window must fall inside the valid EOP range** so the
   astronomical accuracy goal actually holds. That range is bounded on **both**
   ends:

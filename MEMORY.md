@@ -112,8 +112,9 @@ src/simulation/satellite.rs  TLE parse + satkit SGP4 -> world-space km marker
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; build-downloaded source textures + JPL
-                         DE440 ephemeris + EOP-All.csv (cached build inputs)
-                         + TLE.txt (station TLE, embedded via include_str!)
+                         DE440 ephemeris + EOP-All.csv (cached build inputs).
+                         The station TLE is NOT here - it's an inline source
+                         literal (TLE_TEXT in satellite.rs)
 OUT_DIR/                 gitignored build artifacts, include_bytes!'d:
                          5 BC7 textures + 3 f16 LUTs (*.ktx2) + the copied
                          JPL DE440 ephemeris (linux_p1550p2650.440) + EOP-All.csv
@@ -161,8 +162,10 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   The look-tuning constants are untouched and the rendition is intended to
   be visually identical.
 - **Phase 5** (2026-06-18): **satellite tracking.** Added the `satkit` crate
-  and a `satellite` module that parses an embedded TLE (`assets/TLE.txt`, the
-  ISS), propagates it with satkit's SGP4 to a fixed datetime (the TLE epoch),
+  and a `satellite` module that parses an embedded TLE (the ISS; originally
+  `assets/TLE.txt` via `include_str!`, inlined as the `TLE_TEXT` source literal
+  on 2026-06-19), propagates it with satkit's SGP4 to a fixed datetime (the TLE
+  epoch),
   converts TEME→ITRF→geodetic, and reconstructs a world-space km point via the
   WGS84 helpers. A 4th render pass draws a constant-pixel marker circle at the
   station's projected position (hidden on the CPU when the globe occludes it),
@@ -571,8 +574,9 @@ frame as the `Clock` advances. The parsed `TLE` is **retained** in the struct
 for this (and `sgp4` needs `&mut TLE`). **For the full pipeline, frames, and
 math see §16** (this is the module-level summary).
 
-- **TLE**: `assets/TLE.txt` (3-line: name + two element lines), `include_str!`-
-  embedded. Parsed with `TLE::load_3line(line0, line1, line2)`. `tle.epoch` is
+- **TLE**: `TLE_TEXT` (3-line: name + two element lines), an inline source
+  literal (`concat!` of the three lines; was `include_str!("assets/TLE.txt")`).
+  Parsed with `TLE::load_3line(line0, line1, line2)`. `tle.epoch` is
   an `Instant` (the `24001.50000000` epoch); `Satellite::epoch()` exposes it
   so the clock can start there.
 - **Propagate** (shared `propagate(&mut tle, &time)` helper): `sgp4(&mut tle,
@@ -1175,7 +1179,7 @@ clamp ±89.
 embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
-**`src/simulation/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
+**`src/simulation/satellite.rs`**: TLE = inline `TLE_TEXT` literal (ISS), via `satkit` 0.18
 SGP4; re-propagated each running frame.
 **`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
@@ -1474,8 +1478,9 @@ Earth rotation, sub-pixel here — see §16.9).
 Pipeline (TLE → world-space km point), re-run every running frame by
 `update_to(time)`:
 
-1. **TLE** `assets/TLE.txt` (3-line: name + 2 element lines), embedded via
-   `include_str!`, parsed once with `TLE::load_3line(l0,l1,l2) -> TLE`. The
+1. **TLE** `TLE_TEXT` (3-line: name + 2 element lines), an inline source literal
+   (`concat!`; was `include_str!("assets/TLE.txt")`), parsed once with
+   `TLE::load_3line(l0,l1,l2) -> TLE`. The
    parsed `TLE` is **retained** (sgp4 needs `&mut TLE` — it caches its
    propagator) and `tle.epoch` (an `Instant`) seeds the `Clock`.
 2. **Propagate**: `sgp4(&mut tle, &[time]) -> SGP4State { pos, vel:

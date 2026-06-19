@@ -23,9 +23,17 @@ use satkit::{Instant, Vector3};
 
 use crate::earth;
 
-/// The TLE for the station, embedded like the textures (assets/ is
-/// gitignored, and everything else in the build is baked in too).
-const TLE_TEXT: &str = include_str!("../../assets/TLE.txt");
+/// The TLE for the station (ISS / ZARYA), inlined as a source literal. Unlike
+/// the textures/ephemeris/EOP (build-downloaded into the gitignored `assets/`
+/// and baked into the binary), this small element set lives directly in source
+/// so a fresh checkout needs no `assets/TLE.txt` file. The lines are
+/// column-sensitive TLE format - keep the exact spacing. `concat!` keeps source
+/// indentation out of the string.
+const TLE_TEXT: &str = concat!(
+    "ISS (ZARYA)\n",
+    "1 25544U 98067A   24001.50000000  .00016717  00000-0  10270-3 0  9003\n",
+    "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
+);
 
 /// A satellite tracked from its TLE, with its most recently propagated state.
 pub struct Satellite {
