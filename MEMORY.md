@@ -161,6 +161,12 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   the app points satkit there via `set_datadir`. The Sun lat/lon sliders are
   gone; the panel shows the computed subsolar point read-only. The shader and
   its uniforms are unchanged - only the values of `sun_dir`/`star_rot_inv`.
+- **Phase 8** (2026-06-18): **inertial camera.** The camera's orbital rig is
+  now built in the celestial frame and rotated into the Earth-fixed world by
+  `celestial_to_world = sky.star_rot_inv.transpose()` (in `renderer::prepare`,
+  via `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
+  relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
+  now an inertial look direction, not geography. Owner-requested.
 
 ---
 
@@ -244,7 +250,8 @@ calls `redraw()`. Everything else → `handle_input`:
 5. `globe.prepare(queue, camera, sky, satellite, viewport)` writes uniforms
    (`viewport` = surface (width, height) px; aspect is derived inside, and the
    pixel size feeds the constant-size marker; `sky` supplies `sun_dir` +
-   `star_rot_inv`). Also runs the CPU marker occlusion test.
+   `star_rot_inv`, and its transpose `celestial_to_world` rotates the inertial
+   camera rig into the world frame). Also runs the CPU marker occlusion test.
 6. egui tessellate → `update_texture` for each `textures_delta.set`
    **before** the pass → `update_buffers` (returns prep command buffers) →
    one render pass (clear BLACK → `globe.render` → `egui_renderer.render`)
@@ -289,26 +296,39 @@ the clock is paused. (A future sun animation would just be another such
 
 ## 4. Camera (`src/globe/camera.rs`)
 
-Orbital model anchored to a look-at point on the surface.
+Orbital model that lives in the **inertial (star-fixed) frame**: the rig math
+is the usual look-at-a-point-near-the-origin, but the result is interpreted in
+the celestial frame and rotated into the Earth-fixed world at render time, so
+the camera holds still relative to the stars while the Earth rotates beneath
+it. `longitude`/`latitude` therefore select an **inertial** viewing direction,
+not a geographic point.
 
-- Fields: `longitude`, `latitude` (look-at point, degrees), `distance`
-  (eye→target, **kilometers**), `tilt` (degrees off nadir; 0 = straight
-  down). Defaults: `0°N 0°E`, distance `2.0 · MEAN_RADIUS_KM` (≈ 12742 km),
-  tilt `0`.
+- Fields: `longitude`, `latitude` (inertial view direction, degrees),
+  `distance` (eye→target, **kilometers**), `tilt` (degrees off nadir; 0 =
+  straight down). Defaults: `0, 0`, distance `2.0 · MEAN_RADIUS_KM` (≈ 12742
+  km), tilt `0`.
 - Associated consts (km, written as `<radii> · earth::MEAN_RADIUS_KM` so the
   old tuned feel is preserved exactly): `FOV_Y = 45`,
   `MIN_DISTANCE = 0.01·R` (≈ 63.7 km), `MAX_DISTANCE = 10·R` (≈ 63710 km),
   `NEAR_PLANE = 0.01·R`, `FAR_PLANE = 50·R` (≈ 318550 km), `MAX_TILT = 80`.
   Latitude clamps to `±89°`; longitude wraps via `rem_euclid`.
-- `frame()` builds `(eye, target, up)` in km: `target =
-  earth::surface_position(lat, lon)` (WGS84 ellipsoid point) and `radial =
+- `frame()` builds the rig `(eye, target, up)` in km **in the inertial
+  frame**: `target = earth::surface_position(lat, lon)` and `radial =
   earth::geodetic_normal(lat, lon)` (local up). Local tangent frame `east =
   normalize(Y × radial)`, `north = radial × east`. Tilt is a quaternion
   about `east`: `eye = target + tilt·radial·distance`, `up = tilt·north` —
   increasing tilt swings the eye off straight-down and reveals the horizon
   to the north.
-- `view_proj(aspect) = perspective_rh(45°, aspect, NEAR_PLANE, FAR_PLANE) ×
-  look_at_rh(eye, target, up)`. The `_rh` variants give wgpu's 0..1 depth
+- `world_frame(c2w)` rotates that rig into the world frame by
+  `celestial_to_world` (a `Mat3`; the origin-centered rotation transforms eye,
+  target, and up alike). `view_proj(aspect, c2w)` and `eye(c2w)` take that
+  rotation; `renderer::prepare` passes `sky.star_rot_inv.transpose()` (the
+  inverse of the world→celestial rotation). This is what makes the camera
+  star-fixed: in the celestial frame the rig is constant (modulo user input),
+  so `star_rot_inv · relative_world = relative_celestial` stays put while the
+  ECEF globe spins.
+- `view_proj(aspect, c2w) = perspective_rh(45°, aspect, NEAR_PLANE, FAR_PLANE)
+  × look_at_rh(world rig)`. The `_rh` variants give wgpu's 0..1 depth
   (no depth buffer is used regardless; near/far only bound clipping, and the
   star shell must fit inside `FAR_PLANE`).
 - `pan_degrees_per_pixel(viewport_height)` — cursor-stable panning:
@@ -601,7 +621,9 @@ the limb; the marker is an alpha-blended screen overlay on top.
 
 ### `prepare(queue, camera, sky, satellite, viewport)`
 
-Writes the uniforms. `sun_dir`/`star_rot_inv` come straight from `sky`.
+Writes the uniforms. `sun_dir`/`star_rot_inv` come straight from `sky`; the
+camera's `view_proj`/`eye` are evaluated with `celestial_to_world =
+sky.star_rot_inv.transpose()` so the inertial rig renders in the world frame.
 `viewport` is the surface (width, height) px; aspect is derived from it and the
 px size drives the constant-pixel marker. Computes the
 marker's `visible` flag with `marker_occluded(eye, sat_pos)` — a ray-vs-sphere

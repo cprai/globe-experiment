@@ -37,7 +37,8 @@ connection and takes a little longer (the ephemeris is ~98 MB).
   orientation, and the star backdrop are computed from the JPL DE440
   ephemeris (via the [satkit](https://crates.io/crates/satkit) crate) for the
   current simulated time, so the day/night terminator and the stars track real
-  astronomy as time advances.
+  astronomy as time advances. The camera is fixed relative to the stars, so the
+  Earth visibly rotates beneath it.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
   any zoom level, from full-globe spins down to country level.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the

@@ -545,12 +545,15 @@ impl GlobeRenderer {
         let (width, height) = viewport;
         let aspect = width / height.max(1.0);
 
-        // The sky's rotation already maps world (ECEF) view directions into
-        // the star map's celestial frame (see sky.rs), so it is uploaded as-is.
+        // The sky's rotation maps world (ECEF) view directions into the star
+        // map's celestial frame (see sky.rs), so it is uploaded as-is. Its
+        // inverse (transpose, it's orthonormal) maps the camera's inertial rig
+        // back into the world frame, keeping the camera fixed to the stars.
         let star_cols = sky.star_rot_inv.to_cols_array_2d();
+        let celestial_to_world = sky.star_rot_inv.transpose();
 
         // Hide the marker when the solid Earth is between eye and station.
-        let eye = camera.eye();
+        let eye = camera.eye(celestial_to_world);
         let visible = if marker_occluded(eye, satellite.position_km) {
             0.0
         } else {
@@ -558,7 +561,7 @@ impl GlobeRenderer {
         };
 
         let uniforms = Uniforms {
-            view_proj: camera.view_proj(aspect).to_cols_array(),
+            view_proj: camera.view_proj(aspect, celestial_to_world).to_cols_array(),
             camera_pos: eye.to_array(),
             _pad0: 0.0,
             sun_dir: sky.sun_dir.to_array(),

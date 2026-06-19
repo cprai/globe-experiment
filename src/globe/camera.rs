@@ -1,8 +1,16 @@
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 
 use super::earth;
 
-/// Orbital camera anchored to a look-at point on the globe surface.
+/// Orbital camera that lives in the **inertial (star-fixed) frame**.
+///
+/// The orbital math builds the rig (eye/target/up) around the origin exactly
+/// as a surface-anchored camera would, but that rig is interpreted in the
+/// celestial frame and rotated into the Earth-fixed world frame at render time
+/// (see `view_proj`). So the camera does not rotate with the Earth: it holds
+/// still relative to the stars while the globe spins beneath it. The
+/// longitude/latitude therefore select an inertial viewing direction, not a
+/// fixed geographic point.
 ///
 /// World space is in kilometers with the planet center at the origin; the
 /// surface is the WGS84 ellipsoid (see `earth`). The distance/near/far
@@ -10,9 +18,9 @@ use super::earth;
 /// `earth::MEAN_RADIUS_KM`, so the interaction feel is unchanged.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
-    /// Longitude of the look-at point, in degrees.
+    /// Longitude of the inertial viewing direction, in degrees.
     pub longitude: f32,
-    /// Latitude of the look-at point, in degrees. Clamped to +/-89 deg.
+    /// Latitude of the inertial viewing direction, in degrees. Clamped +/-89.
     pub latitude: f32,
     /// Distance from the camera to the look-at point, in kilometers.
     pub distance: f32,
@@ -73,8 +81,13 @@ impl Camera {
         (km_per_pixel / earth::MEAN_RADIUS_KM).to_degrees()
     }
 
-    pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        let (eye, target, up) = self.frame();
+    /// The view-projection matrix. `celestial_to_world` is the rotation from
+    /// the inertial (star) frame the rig lives in to the Earth-fixed world
+    /// frame the scene is drawn in (the inverse of the sky's world->celestial
+    /// rotation); applying it keeps the camera fixed relative to the stars
+    /// while the Earth rotates beneath it.
+    pub fn view_proj(&self, aspect: f32, celestial_to_world: Mat3) -> Mat4 {
+        let (eye, target, up) = self.world_frame(celestial_to_world);
 
         let view = Mat4::look_at_rh(eye, target, up);
         let proj = Mat4::perspective_rh(
@@ -87,12 +100,24 @@ impl Camera {
         proj * view
     }
 
-    /// The camera position in world space.
-    pub fn eye(&self) -> Vec3 {
-        self.frame().0
+    /// The camera position in the Earth-fixed world frame (km).
+    pub fn eye(&self, celestial_to_world: Mat3) -> Vec3 {
+        self.world_frame(celestial_to_world).0
     }
 
-    /// Computes the camera's (eye, target, up) in world space (km).
+    /// The rig rotated from the inertial frame into the Earth-fixed world
+    /// frame for rendering. The rotation is about the origin, so points and
+    /// directions transform alike.
+    fn world_frame(&self, celestial_to_world: Mat3) -> (Vec3, Vec3, Vec3) {
+        let (eye, target, up) = self.frame();
+        (
+            celestial_to_world * eye,
+            celestial_to_world * target,
+            celestial_to_world * up,
+        )
+    }
+
+    /// Computes the camera's (eye, target, up) in the inertial (star) frame.
     fn frame(&self) -> (Vec3, Vec3, Vec3) {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();
         let lon = self.longitude.to_radians();

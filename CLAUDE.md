@@ -19,7 +19,9 @@ An interactive Google-Earth-style 3D globe viewer. Rust (edition 2024),
 rendering, **egui 0.34** for the control overlay. It renders a
 physically lit Earth (day/night, procedural city lights, normal-mapped
 relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
-a star/sun backdrop, with an orbital pan/tilt/zoom camera. The geometry is
+a star/sun backdrop, with an orbital pan/tilt/zoom camera that lives in an
+**inertial (star-fixed) frame** — it holds still relative to the stars while
+the Earth rotates beneath it. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
 in kilometers** (so it can host real-scale orbital simulation). The Sun
 direction, Earth's orientation, and the star-map orientation are computed from
@@ -114,6 +116,14 @@ cargo run --release
   2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
   uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
   → world-frame permutation); do not replace it with a sun-attached rotation.
+- **The camera is in the inertial (star-fixed) frame** (owner-requested
+  2026-06-18). `Camera`'s orbital rig is built around the origin as before but
+  interpreted in the celestial frame, then rotated into the Earth-fixed world
+  by **`celestial_to_world = sky.star_rot_inv.transpose()`** in
+  `renderer::prepare` (passed to `camera.view_proj`/`eye`). Net effect: the
+  camera does not rotate with the Earth — the globe spins under a star-locked
+  view, so `Camera.longitude/latitude` are an **inertial** look direction, not
+  geography. Don't move the camera back into the ECEF/world frame.
 - **Backdrop anchoring**: both the star lookup and the sun disc are
   functions of the **camera-relative view direction** (`world − camera_pos`),
   not of position on the sky sphere. Anchoring either to the sky-sphere
