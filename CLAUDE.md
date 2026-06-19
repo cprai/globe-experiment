@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Project rules, conventions, and constraints for the **Globe** viewer.
+Project rules, conventions, and constraints for **Globe**, an
+astronomically-accurate satellite simulation tool (past scenarios only).
 Companion file: `MEMORY.md` holds the technical reference (how each
 subsystem works, the rendering/atmosphere math, the orbital & ephemeris
 math — see its §16 for the full satellite/Sun/planet computation and how the
@@ -15,7 +16,8 @@ been deleted and folded into here and `MEMORY.md`.
 
 ## What this is (one paragraph)
 
-An interactive Google-Earth-style 3D globe viewer. Rust (edition 2024),
+An **astronomically-accurate satellite simulation tool**, built on a
+Google-Earth-style physically-lit 3D globe renderer. Rust (edition 2024),
 **winit 0.30** window/event loop, **wgpu 29** (direct dependency) for
 rendering, **egui 0.34** for the control overlay. It renders a
 physically lit Earth (day/night, procedural city lights, normal-mapped
@@ -24,14 +26,23 @@ a star/sun backdrop, with an orbital pan/tilt/zoom camera that lives in an
 **inertial (star-fixed) frame** — it holds still relative to the stars while
 the Earth rotates beneath it. The geometry is
 **physical**: the globe is the WGS84 reference ellipsoid and **world space is
-in kilometers** (so it can host real-scale orbital simulation). The Sun
+in kilometers** (real-scale orbital simulation). The Sun
 direction, Earth's orientation, and the star-map orientation are computed from
 the **satkit** crate's **JPL DE440 ephemeris** + Earth-orientation transforms
-for the current time (no more sun sliders). It also tracks a satellite: an
-embedded TLE is propagated with satkit's SGP4. All of this is driven by a
+for the current time (no more sun sliders). It tracks satellites: a
+TLE is propagated with satkit's SGP4. All of this is driven by a
 **simulation clock** (play/pause, exponential 1x-100x real-time speed); the
 satellite is drawn as a marker circle and everything animates as time
-advances, with the clock's datetime shown in the UI. The crate is
+advances, with the clock's datetime shown in the UI.
+
+**Scope & accuracy intent (load-bearing):** the goal is astronomical
+accuracy, and the tool **only ever simulates scenarios that happened in the
+past, before the build date** — never live or future times. That past-only
+constraint is what makes full Earth-orientation accuracy achievable: real
+Earth-orientation-parameter (EOP) data is a fixed, never-changing record for
+any past date (see the EOP rules below and `MEMORY.md` §16.8). Treat any
+accuracy regression (e.g. silently widening error, drifting frames) as a bug,
+not a cosmetic issue. The crate is
 named `globe-experiment`; **iced is no longer a dependency** (removed in
 phase 2) — do not reintroduce it.
 
@@ -119,20 +130,31 @@ cargo run --release
   2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
   uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
   → world-frame permutation); do not replace it with a sun-attached rotation.
-- **`init_satkit()` must seed an empty EOP table, not just the ephemeris.**
-  Every satkit frame transform reads its global Earth-orientation-parameter
-  (EOP) table on first use — even the EOP-free `*_approx` ones, because `gmst`
-  does a UT1 conversion that consults it, and `qteme2itrf` reads polar motion.
-  satkit's default EOP loader *resolves a data directory and creates an empty
-  `satkit-data` dir next to the binary* as a side effect (then, with our
-  `download` feature off, leaves it empty and falls back to zeros). We run
-  EOP-free by design, so `init_satkit` pre-seeds the EOP singleton with an
-  empty table via `earth_orientation_params::init_from_bytes(b"header\n")` (a
-  header-only CSV → zero entries) plus `disable_eop_time_warning()`. This
-  consumes satkit's one-shot lazy load so the dir is never created, while every
-  EOP lookup still returns the zeros we already relied on (numerically
-  identical). **Do not drop the EOP seed** — the empty `satkit-data` dir comes
-  back. (Run from a clean dir to verify none appears.)
+- **`init_satkit()` must seed satkit's EOP table at startup, not just the
+  ephemeris.** Every satkit frame transform reads its global
+  Earth-orientation-parameter (EOP) table on first use — even the `*_approx`
+  ones, because `gmst` does a UT1 conversion that consults it, and `qteme2itrf`
+  reads polar motion. satkit's default EOP loader *resolves a data directory
+  and creates an empty `satkit-data` dir next to the binary* as a side effect.
+  So `init_satkit` always pre-seeds the EOP singleton via
+  `earth_orientation_params::init_from_bytes(...)` (plus
+  `disable_eop_time_warning()`); this consumes satkit's one-shot lazy load so
+  the dir is never created. **Do not drop the EOP seed** — the empty
+  `satkit-data` dir comes back. (Run from a clean dir to verify none appears.)
+  - **Current content: an empty table** (`b"header\n"` → zero entries), so
+    every EOP lookup returns zeros and Earth orientation falls back to the
+    `*_approx` (IAU-76/FK5, ~1 arcsec) result. This is a **stopgap, not the
+    accuracy target.**
+  - **Target for astronomical accuracy: bundle real EOP data** (CelesTrak
+    `EOP-All.csv`) the same way the ephemeris is bundled — download in
+    `build.rs` into `assets/`, copy to `OUT_DIR`, `include_bytes!`, and pass
+    those bytes to the same `init_from_bytes` call here. With real EOP loaded,
+    switch the satellite/sky from the `*_approx` transforms to the full
+    `qgcrf2itrf`/`qitrf2gcrf` (IERS-2010) to actually consume it. Past-only
+    scenarios make this durable: a past date's EOP never changes (see the
+    scenario-bounds note under Conventions and `MEMORY.md` §16.8/§16.9). **Not
+    yet implemented** — when you do it, keep the seed-before-first-use ordering
+    and the no-`satkit-data`-dir guarantee above.
 - **The camera is in the inertial (star-fixed) frame** (owner-requested
   2026-06-18). `Camera`'s orbital rig is built around the origin as before but
   interpreted in the celestial frame, then rotated into the Earth-fixed world
@@ -280,12 +302,38 @@ the owner. Re-introducing them silently is a regression.
   → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
   `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()` (called once at
   the top of `main`, before any `Sky` is built) seeds satkit's global state:
-  the embedded ephemeris (`jplephem::init_from_bytes`) **and** an empty EOP
-  table (`earth_orientation_params::init_from_bytes`) — see the next rule.
+  the embedded ephemeris (`jplephem::init_from_bytes`) **and** the EOP table
+  (`earth_orientation_params::init_from_bytes`, currently empty) — see the
+  "`init_satkit()` must seed satkit's EOP table" golden rule above.
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
   **including** the JPL ephemeris (`linux_p1550p2650.440`, ~98 MB): `build.rs`
   downloads it into the gitignored `assets/` and copies it into `OUT_DIR`, and
   `sky.rs` embeds it with `include_bytes!`. No runtime data file.
+
+### Scenarios & valid time range (read before adding a scenario)
+- **Scenarios do not exist yet** — they will be added later. Each will pin the
+  simulation to a specific **past** event (a satellite/TLE + a time window).
+  Today the only "scenario" is the embedded `assets/TLE.txt` and a clock that
+  starts at its epoch.
+- **Every scenario's time window must fall inside the valid EOP range** so the
+  astronomical accuracy goal actually holds. That range is bounded on **both**
+  ends:
+  - **Lower bound: 1962-01-01.** Measured EOP simply does not exist before
+    then (it's the start of the IERS series, not a satkit limitation). For
+    earlier dates satkit returns no EOP and silently falls back to zeros — i.e.
+    accuracy quietly degrades to the `*_approx` level, *and the satellite era
+    starts in 1957*, so most realistic scenarios are fine, but verify.
+  - **Upper bound: the build date** (more precisely, the last entry of the
+    bundled `EOP-All.csv`). Past dates only — never live/future. Beyond the
+    last entry satkit does **constant extrapolation** of the final value, which
+    silently degrades. The "past-only, before build date" rule keeps you below
+    this bound by construction.
+- **So: when you add a scenario, check its start and end epochs against the
+  bundled EOP file's `[first_entry .. last_entry]` MJD range** (and against
+  1962 for the lower bound). If a scenario can't be brought in-range, it does
+  not meet the accuracy bar — flag it rather than shipping a silently-degraded
+  result. (This note stands even while EOP is seeded empty — it's the
+  acceptance criterion the empty seed is a placeholder for.)
 
 ---
 
@@ -306,11 +354,17 @@ the owner. Re-introducing them silently is a regression.
   copies it into `OUT_DIR`; `sky.rs` embeds it with `include_bytes!` and loads
   it via `jplephem::init_from_bytes`. So there is **no runtime data file** -
   the binary is self-contained - but a fresh checkout still needs network for
-  the first build. Earth orientation uses the EOP-free `*_approx` transforms
-  (~1 arcsec, sub-pixel), so **no EOP/space-weather data is needed** — only the
-  ephemeris. (satkit would still try to *resolve* an EOP data dir on first use
-  and create an empty `satkit-data` dir; `init_satkit` seeds an empty EOP table
-  up front to suppress that — see the EOP-seed golden rule above.)
+  the first build.
+- **Earth orientation: currently `*_approx` (~1 arcsec), targeting full EOP.**
+  Today Earth orientation uses the EOP-free `*_approx` transforms with an empty
+  EOP table (zeros), so no EOP data is bundled yet. The astronomical-accuracy
+  goal calls for bundling real EOP (`EOP-All.csv`) and switching to the full
+  IERS-2010 transforms — see the EOP-seed golden rule and the scenario-bounds
+  note. Because the tool is **past-only**, a bundled EOP file is valid forever
+  for in-range dates (a past date's EOP never changes). Whichever way, satkit
+  would try to *resolve* an EOP data dir on first use and create an empty
+  `satkit-data` dir; `init_satkit` seeds the EOP table up front to suppress
+  that — keep that seeding when you bundle real EOP.
 - **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
   **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
   personality. MSVC on Windows is unaffected; do not make it

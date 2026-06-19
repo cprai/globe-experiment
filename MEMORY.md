@@ -1,10 +1,17 @@
 # MEMORY.md
 
-Technical reference for the **Globe** viewer: architecture, subsystem
-behavior, the rendering and atmosphere math, exact constants, and the
-project's history. Companion file: `CLAUDE.md` holds the rules,
-conventions, and constraints (what you must / must not do). This file is
-the "how and why."
+Technical reference for **Globe**, an **astronomically-accurate satellite
+simulation tool** built on a Google-Earth-style globe renderer:
+architecture, subsystem behavior, the rendering and atmosphere math, exact
+constants, and the project's history. Companion file: `CLAUDE.md` holds the
+rules, conventions, and constraints (what you must / must not do). This file
+is the "how and why."
+
+**Scope:** the tool only ever simulates **past** scenarios (events before the
+build date) — never live or future times. This is what makes full
+Earth-orientation accuracy attainable (a past date's EOP is a fixed record).
+See §16.8 (init) and §16.9 (accuracy & the valid time range). Scenarios are a
+planned feature (none exist yet; the embedded TLE is the stand-in).
 
 **Constants drift between sessions** — the values quoted here are a
 snapshot (2026-06-18). Always read the source for live values; the §
@@ -14,7 +21,9 @@ snapshot (2026-06-18). Always read the source for live values; the §
 
 ## 1. What it is, the stack, the file map
 
-A Google-Earth-style 3D globe viewer. Rust edition 2024. The crate is
+An astronomically-accurate satellite simulation tool on a Google-Earth-style
+3D globe renderer (past scenarios only — see the scope note above). Rust
+edition 2024. The crate is
 named `globe-experiment` (formerly `iced-test-app`, until iced was
 removed in phase 2). Feature set: day/night Earth with procedural city lights,
 normal-mapped terrain relief, GGX ocean sun-glint, Hillaire-2020
@@ -447,19 +456,30 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
     "/linux_p1550p2650.440"))`. Sets satkit's `JPL_INSTANCE` `OnceLock`
     (settable once); **must** run before any position query, else satkit's lazy
     disk loader wins and this returns `AlreadyInitialized`.
-  - `satkit::earth_orientation_params::init_from_bytes(b"header\n")` +
-    `disable_eop_time_warning()`. This seeds an **empty** EOP table (parse_csv
-    skips the header line → zero entries). Why it's needed: every frame
-    transform reads satkit's global EOP table on first use - including the
-    EOP-free `*_approx` ones, because `gmst` does a UT1 conversion that consults
-    it, and `qteme2itrf` reads polar motion - and satkit's default EOP loader
-    *resolves a data dir and creates an empty `satkit-data` dir next to the
-    binary* as a side effect. Seeding empty consumes the one-shot lazy load
-    (`DEFAULT_LOAD_ONCE`) so that dir is never created; lookups still return
-    zeros (we run EOP-free), so the numbers are unchanged. **Don't remove the
+  - `satkit::earth_orientation_params::init_from_bytes(...)` +
+    `disable_eop_time_warning()`. Why it's needed: every frame transform reads
+    satkit's global EOP table on first use - including the `*_approx` ones,
+    because `gmst` does a UT1 conversion that consults it, and `qteme2itrf`
+    reads polar motion - and satkit's default EOP loader *resolves a data dir
+    and creates an empty `satkit-data` dir next to the binary* as a side effect.
+    Seeding the table up front consumes the one-shot lazy load
+    (`DEFAULT_LOAD_ONCE`) so that dir is never created. **Don't remove the
     seed** - the dir comes back.
-  - Net: no `set_datadir`/`data/` dir, no EOP/space-weather bundle, no
-    `satkit-data` dir - the app is fully offline and data-dir-free.
+    - **Current content: empty** (`b"header\n"`; parse_csv skips the header →
+      zero entries). Lookups return zeros, so Earth orientation is the
+      `*_approx` (~1 arcsec) result. This is a **stopgap**, not the accuracy
+      target.
+    - **Target (astronomical accuracy): seed real EOP here.** Bundle CelesTrak
+      `EOP-All.csv` like the ephemeris (build.rs → `assets/` → `OUT_DIR` →
+      `include_bytes!`) and pass those bytes to this same call, then switch the
+      Sun/star/satellite transforms from `*_approx` to the full
+      `qgcrf2itrf`/`qitrf2gcrf` (IERS-2010). Past-only scenarios make a bundled
+      file permanently valid for in-range dates. **Not yet implemented**; when
+      you do it, keep the seed-before-first-use ordering and the
+      no-`satkit-data`-dir guarantee, and respect the valid-range bounds in
+      §16.9.
+  - Net (today): no `set_datadir`/`data/` dir, no `satkit-data` dir - the app is
+    fully offline and data-dir-free.
 - **Sun**: `geocentric_pos(SolarSystem::Sun, time)` → GCRF position (meters);
   `qgcrf2itrf_approx(time) * sun_gcrf` → standard ITRF; then permute to the
   world frame and normalize → `sun_dir`.
@@ -1477,10 +1497,26 @@ Sun consistency) is physically correct.
 ### 16.9 Accuracy & limitations
 
 - **Ephemeris**: DE440, sub-km Sun position; file spans years 1550–2650.
-- **Earth orientation**: IAU-76/FK5 `*_approx` ⇒ ~1 arcsec, ignoring polar
-  motion and UT1−UTC. ~1 arcsec ≈ 30 m on the ground — well sub-pixel at any
-  sane zoom; visually exact. Full IERS-2010 precision (`qgcrf2itrf`/
-  `qitrf2gcrf`) is available but needs the EOP bundle (not downloaded).
+- **Earth orientation — current vs. target.** *Today:* IAU-76/FK5 `*_approx`
+  ⇒ ~1 arcsec, ignoring polar motion and UT1−UTC (the EOP table is seeded
+  empty). ~1 arcsec ≈ 30 m on the ground. *Target* (this is a satellite
+  **simulation** tool, not just a viewer): bundle real EOP and use the full
+  IERS-2010 `qgcrf2itrf`/`qitrf2gcrf` for sub-arcsec orientation — see §16.8.
+- **Valid time range (load-bearing for scenarios).** Real EOP, once bundled,
+  is only defined on a bounded interval, so every scenario's epoch window must
+  lie inside it:
+  - **Lower bound 1962-01-01** — the IERS EOP series starts here; nothing
+    measured exists before. (The satellite era starts 1957, so a handful of the
+    earliest objects predate EOP.) Earlier dates → satkit returns no EOP →
+    silent fallback to zeros (`*_approx` accuracy).
+  - **Upper bound = last entry of the bundled `EOP-All.csv`** (≈ build date).
+    The tool is **past-only**, so scenarios are always below this; beyond it
+    satkit does constant extrapolation (silent degradation).
+  - **Discipline:** when a scenario is added, validate its `[start, end]`
+    epochs against the bundled file's first/last MJD (and 1962). Out-of-range =
+    does not meet the accuracy bar; flag it. See CLAUDE.md "Scenarios & valid
+    time range." Because dates are past-only, a bundled EOP file stays correct
+    forever (history doesn't change).
 - **SGP4**: TLE valid ~days around epoch.
 - **Atmosphere** is a *separate*, spherical scattering model (§11) — not part
   of this ephemeris pipeline; its planet radius (6360 km) is its own constant.

@@ -1,9 +1,12 @@
 # Globe
 
-An interactive 3D Earth viewer, in the spirit of Google Earth, written
+An astronomically-accurate satellite simulation tool, built on an
+interactive 3D Earth renderer in the spirit of Google Earth, written
 in Rust with [wgpu](https://wgpu.rs) for rendering, [winit](https://github.com/rust-windowing/winit)
 for windowing and input, and [egui](https://github.com/emilk/egui) for
-the control overlay.
+the control overlay. It simulates **past** scenarios (events before the
+build date), which is what lets it use a fixed, never-changing record of
+Earth-orientation data for full accuracy.
 
 ## Building and running
 
