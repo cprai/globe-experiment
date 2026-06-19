@@ -91,7 +91,7 @@ cargo run --release
   silently corrupts the atmosphere.
 
 ### Surface / display
-- **Surface format must be non-sRGB** (`Gfx::new` picks `find(|f|
+- **Surface format must be non-sRGB** (`Gfx::init` picks `find(|f|
   !f.is_srgb())`) and **present mode `AutoVsync`**. `get_default_config`'s
   defaults are *not* correct here (it picks an sRGB format and Mailbox on
   DX12) — these two overrides are deliberate. See `MEMORY.md` for why.
@@ -111,9 +111,10 @@ cargo run --release
   attachment. The **marker is a screen-space overlay** drawn last (a
   constant-pixel circle generated from the vertex index, alpha-blended); it
   has no depth, so its occlusion behind the globe is decided **on the CPU**
-  (`marker_occluded` in `renderer.rs`, a ray vs. mean-radius sphere) and
-  passed to the shader as a visible flag.
-- **Idle = zero GPU work.** `main()` sets `ControlFlow::Wait`; frames are
+  (`marker_occluded` in `src/simulation/mod.rs`, a ray vs. mean-radius sphere;
+  fed into `RenderState.marker_visible`) and passed to the shader as a visible
+  flag.
+- **Idle = zero GPU work.** `application::run` sets `ControlFlow::Wait`; frames are
   driven *only* by targeted `window.request_redraw()` (input changed the
   camera, inertia/zoom glide coasting, **the simulation clock running**, egui
   repaint, resize, surface recovery). **Never add an unconditional vsync
@@ -124,7 +125,7 @@ cargo run --release
 - **The terminator / night-side darkening must use the GEOMETRIC normal**
   (`cos_sun = dot(n_geo, sun)`, the `daylight` smoothstep), never the
   bump-mapped normal `n`. Bump detail on the day/night edge speckles it.
-- **Star map and Sun are ephemeris-driven** (`src/globe/sky.rs`). The Sun's
+- **Star map and Sun are ephemeris-driven** (`src/simulation/sky.rs`). The Sun's
   direction comes from the JPL DE440 ephemeris and the star map is oriented by
   Earth's real GCRF↔ITRF attitude, both for the current clock time. (This
   reverses the earlier deliberately-non-physical "sky rigidly attached to the
@@ -164,13 +165,16 @@ cargo run --release
     note under Conventions and `MEMORY.md` §16.8/§16.9. Past-only scenarios make
     the bundled snapshot permanently valid (history doesn't change).
 - **The camera is in the inertial (star-fixed) frame** (owner-requested
-  2026-06-18). `Camera`'s orbital rig is built around the origin as before but
-  interpreted in the celestial frame, then rotated into the Earth-fixed world
-  by **`celestial_to_world = sky.star_rot_inv.transpose()`** in
-  `renderer::prepare` (passed to `camera.view_proj`/`eye`). Net effect: the
-  camera does not rotate with the Earth — the globe spins under a star-locked
-  view, so `Camera.longitude/latitude` are an **inertial** look direction, not
-  geography. Don't move the camera back into the ECEF/world frame.
+  2026-06-18). The `Camera` rig (in `src/application/camera.rs`) is built around
+  the origin as before but interpreted in the celestial frame, then rotated into
+  the Earth-fixed world by **`celestial_to_world = sky.star_rot_inv.transpose()`**.
+  That rotation is produced by `SimulationState::celestial_to_world()` and applied
+  in `ApplicationState::redraw` (the camera lives in `application`, so it resolves
+  `camera.eye`/`camera.view_proj` there and passes the finished `eye`/`view_proj`
+  into `SimulationState::render_state`). Net effect: the camera does not rotate
+  with the Earth — the globe spins under a star-locked view, so
+  `Camera.longitude/latitude` are an **inertial** look direction, not geography.
+  Don't move the camera back into the ECEF/world frame.
 - **Backdrop anchoring**: both the star lookup and the sun disc are
   functions of the **camera-relative view direction** (`world − camera_pos`),
   not of position on the sky sphere. Anchoring either to the sky-sphere
@@ -179,12 +183,14 @@ cargo run --release
 
 ### Startup / window
 - **The first frame must render via a direct `self.redraw()` call** from
-  `resumed()`, never `request_redraw()`. The window starts hidden
-  (`with_visible(false)`) and is revealed after the first `present()`;
-  Windows does not deliver `RedrawRequested` to a hidden window, so a
-  requested redraw would never fire and the window would stay invisible
-  forever. There is also an `Occluded` first-frame guard for backends that
-  report a hidden window as occluded. **Do not "simplify" either.**
+  `ApplicationState::resumed()` (in `src/application/mod.rs`), never
+  `request_redraw()`. The window starts hidden (`with_visible(false)`) and is
+  revealed after the first `present()`; Windows does not deliver
+  `RedrawRequested` to a hidden window, so a requested redraw would never fire
+  and the window would stay invisible forever. The reveal is now driven by the
+  `FrameOutcome` that `Gfx::update` returns (`Presented`/`Occluded` reveal the
+  window; the `Occluded` first-frame guard also re-requests a redraw) — the
+  renderer never touches the window. **Do not "simplify" either.**
 
 ### Input feel
 - **Do not restructure the smoothed-zoom glide/coast in `input.rs`.** It
@@ -240,8 +246,9 @@ the owner. Re-introducing them silently is a regression.
   uniform strength.
 - A **`thread::scope` parallel texture *decode* + LUT bake** at startup —
   reverted in phase 1. NOTE: this is *not* the same as the current
-  rayon parallelization of `GlobeRenderer::new` (module compile + KTX2
-  uploads + pipeline compiles), which is **intentional** and was added on
+  rayon parallelization of `GlobeRenderer::new` (the private scene builder
+  inside `Gfx::init`: module compile + KTX2 uploads + pipeline compiles), which
+  is **intentional** and was added on
   explicit request after decode/bake moved to build time. Do not confuse
   the two; do not "re-revert" the rayon code.
 
@@ -256,7 +263,7 @@ first. (Concrete engineering follow-ups also live in `MEMORY.md` §14; this
 section is for the larger, explicitly-deferred ideas.)
 
 - **Full IERS-2010 Earth orientation for the sky.** Switch the Sun/star
-  backdrop in `src/globe/sky.rs` from the `*_approx` transforms
+  backdrop in `src/simulation/sky.rs` from the `*_approx` transforms
   (`qgcrf2itrf_approx` / `qitrf2gcrf_approx`) to the full
   `qgcrf2itrf` / `qitrf2gcrf`, closing the residual ~1" error (real polar
   motion + IERS-2010 nutation instead of approximate nutation / neglected
@@ -291,8 +298,8 @@ section is for the larger, explicitly-deferred ideas.)
   kilometers** (camera distance, mesh vertices, `camera_pos` uniform — all
   km). **+Y is north.** Longitude 0°, latitude 0° faces **+Z**; +X is east at
   the prime meridian. The physical constants and the `surface_position` /
-  `geodetic_normal` helpers live in `src/globe/earth.rs` (the single source
-  of truth; mesh **and** camera build their geometry from it).
+  `geodetic_normal` helpers live in `src/earth.rs` (a top-level shared module,
+  the single source of truth; mesh **and** camera build their geometry from it).
 - **Load-bearing identity (post-WGS84)**: on an ellipsoid the surface normal
   is **no longer** `normalize(position)`, so the mesh now carries an explicit
   per-vertex **geodetic normal**. That normal happens to equal the old
@@ -319,8 +326,16 @@ section is for the larger, explicitly-deferred ideas.)
   *why* (especially the non-obvious GPU/winit/precision reasons), small
   focused structs, descriptive names. The existing files are the style
   guide.
-- Each subsystem is one module under `src/globe/`; `globe/mod.rs` is
-  declarations only (no logic).
+- The code is organized into four top-level modules plus a shared `earth`:
+  **`application`** (windowing, the winit event loop, the camera + input, and
+  per-frame redraw orchestration; owns the `SimulationState` and the renderer),
+  **`simulation`** (`SimulationState` + the astronomical math; produces a
+  `RenderState`; no winit/wgpu/egui and no `Camera` type), **`renderer`** (the
+  `Gfx` struct: GPU setup + per-frame `update`), **`ui`** (the egui panel
+  logic), and **`earth`** (`src/earth.rs`: shared WGS84 constants/helpers).
+  `main.rs` is tiny: seed satkit, build `SimulationState`, build
+  `ApplicationState`, hand off to `application::run`. See `REFACTOR_PLAN.md` for
+  the module-boundary rationale.
 - **Run `cargo fmt` after every code change** (`.rs` edits). rustfmt with
   the default config is the sole formatting authority — don't hand-format,
   and keep diffs limited to real changes. (`cargo fmt` does not touch
@@ -330,23 +345,33 @@ section is for the larger, explicitly-deferred ideas.)
 - **Shader look knobs**: top of `shaders/globe.wgsl` (`const` block).
 - **Atmosphere medium constants**: `build.rs` `mod atmosphere` (bake side)
   *and* `shaders/globe.wgsl` (geometric twins).
-- **Input feel constants**: top of `src/globe/input.rs`.
+- **Input feel constants**: top of `src/application/input.rs`.
 - **Earth physical constants** (WGS84 axes, eccentricity, mean radius, GM,
   rotation rate) + the `surface_position`/`geodetic_normal` helpers:
-  `src/globe/earth.rs`.
-- **Camera limits**: `Camera` associated consts in `src/globe/camera.rs` (in
-  km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
-- **Satellite tracking**: `src/globe/satellite.rs` (TLE parse + SGP4 + frame
-  conversion to a world-space km point; `update_to(time)` re-propagates each
-  tick). The TLE is `assets/TLE.txt`, embedded via `include_str!` (assets/ is
-  gitignored, like the textures). Marker colors live in the marker shader.
-- **Simulation clock**: `src/globe/clock.rs` (`Clock`: advances by wall-clock
-  dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`). Starts at
-  the TLE epoch.
-- **Sun / Earth orientation / star map**: `src/globe/sky.rs` (`Sky::at(time)`
-  → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
-  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()` (called once at
-  the top of `main`, before any `Sky` is built) seeds satkit's global state from
+  `src/earth.rs` (top-level shared module).
+- **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
+  (in km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
+- **Render orchestration / windowing**: `src/application/mod.rs`
+  (`ApplicationState` + the winit `ApplicationHandler` + `run`). It resolves the
+  camera and calls `SimulationState::render_state` → `Gfx::update`.
+- **Renderer**: `src/renderer/mod.rs` (`Gfx`: `init`/`resize`/`viewport`/
+  `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
+  `Uniforms` packing; `MARKER_RADIUS_PX`). Mesh in `src/renderer/mesh.rs`.
+- **Simulation state / RenderState**: `src/simulation/mod.rs` (`SimulationState`
+  composes clock/satellite/sky; `advance`, `celestial_to_world`, `render_state`;
+  `marker_occluded`).
+- **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
+  frame conversion to a world-space km point; `update_to(time)` re-propagates
+  each tick). The TLE is `assets/TLE.txt`, embedded via `include_str!` (assets/
+  is gitignored, like the textures). Marker colors live in the marker shader.
+- **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by
+  wall-clock dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`).
+  Starts at the TLE epoch.
+- **Sun / Earth orientation / star map**: `src/simulation/sky.rs`
+  (`Sky::at(time)` → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's
+  JPL ephemeris + `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()`
+  (called once via the `simulation::init()` wrapper at the top of `main`, before
+  any `Sky` is built) seeds satkit's global state from
   embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
   real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
   `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden

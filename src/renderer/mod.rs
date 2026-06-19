@@ -1,18 +1,227 @@
-use glam::Vec3;
+mod mesh;
+
+use std::sync::Arc;
+
 use rayon::prelude::*;
 use wgpu::util::DeviceExt;
+use winit::dpi::PhysicalSize;
+use winit::window::Window;
 
-use super::camera::Camera;
-use super::earth;
-use super::mesh::{self, Vertex};
-use super::satellite::Satellite;
-use super::sky::Sky;
+use crate::simulation::RenderState;
+use mesh::Vertex;
 
 const STACKS: u32 = 64;
 const SLICES: u32 = 128;
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
+
+/// The renderer: owns the GPU surface/device/queue, the globe scene resources
+/// (pipelines, buffers, bind group), and the egui paint backend. Created once
+/// via [`Gfx::init`]; each frame [`Gfx::update`] writes the uniforms from a
+/// [`RenderState`] and draws the scene plus the egui overlay in a single pass.
+///
+/// The window is borrowed only to build the surface (and for the per-frame
+/// present-notify hint); window visibility and redraw scheduling are the
+/// caller's job, driven by the [`FrameOutcome`] this returns.
+pub struct Gfx {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    globe: GlobeRenderer,
+    egui_renderer: egui_wgpu::Renderer,
+}
+
+/// What happened when a frame was submitted, so the caller can drive window
+/// visibility and redraw scheduling without the renderer touching the window.
+pub enum FrameOutcome {
+    /// The frame was presented to the surface.
+    Presented,
+    /// The surface was occluded (hidden/minimized); nothing was drawn.
+    Occluded,
+    /// Acquiring the surface texture failed (lost/outdated/timeout); the
+    /// surface was reconfigured where needed. The caller should redraw.
+    Reconfigured,
+}
+
+/// Render-ready egui paint output, produced by the caller (which owns the
+/// `egui::Context` + `egui_winit::State`) and consumed by [`Gfx::update`].
+pub struct UiFrame {
+    pub primitives: Vec<egui::ClippedPrimitive>,
+    pub textures_delta: egui::TexturesDelta,
+    pub pixels_per_point: f32,
+}
+
+impl Gfx {
+    /// Builds the GPU surface/device, the globe scene resources, and the egui
+    /// paint backend. The window stays hidden during this (the caller reveals
+    /// it after the first presented frame).
+    pub fn init(window: Arc<Window>) -> Self {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("create surface");
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))
+        .expect("request adapter");
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("globe device"),
+            // The earth/star textures are BC7-compressed at build time.
+            // BC support is universal on desktop GPUs.
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+        }))
+        .expect("request device");
+
+        let size = window.inner_size();
+        let mut config = surface
+            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .expect("surface unsupported by adapter");
+        // A non-sRGB surface stores the shader's linear output raw, which
+        // the display then reads as sRGB-encoded. That is what iced's
+        // default `web-colors` feature did in phase 1, and every shader
+        // look-tuning constant is calibrated to it; an sRGB surface
+        // (hardware encode) renders visibly brighter.
+        let caps = surface.get_capabilities(&adapter);
+        if let Some(format) = caps.formats.iter().copied().find(|f| !f.is_srgb()) {
+            config.format = format;
+        }
+        // The default config takes the first advertised present mode, which
+        // is Mailbox on DX12 - unpaced rendering that makes scroll zoom and
+        // inertia judder. Vsync paces the animation loop to the refresh
+        // rate, matching iced's AutoVsync.
+        config.present_mode = wgpu::PresentMode::AutoVsync;
+        surface.configure(&device, &config);
+
+        // Shader-module compilation, texture upload, and pipeline
+        // creation happen here, before the first frame; decoding and the
+        // LUT bake already ran at build time (build.rs). This work is
+        // parallelized internally with rayon (see GlobeRenderer::new).
+        let globe = GlobeRenderer::new(&device, &queue, config.format);
+
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            config.format,
+            egui_wgpu::RendererOptions::default(),
+        );
+
+        Self {
+            surface,
+            device,
+            queue,
+            config,
+            globe,
+            egui_renderer,
+        }
+    }
+
+    /// Reconfigures the surface to a new size. The caller requests a redraw.
+    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+        self.config.width = size.width.max(1);
+        self.config.height = size.height.max(1);
+        self.surface.configure(&self.device, &self.config);
+    }
+
+    /// The surface size in pixels (width, height). The caller uses it to build
+    /// the camera's projection aspect and to scale input.
+    pub fn viewport(&self) -> (f32, f32) {
+        (self.config.width as f32, self.config.height as f32)
+    }
+
+    /// Renders one frame: writes the uniforms from `render`, then draws the
+    /// scene (stars -> surface -> atmosphere -> marker) and the egui overlay
+    /// in a single pass, and presents. `window` is borrowed only for the
+    /// pre-present latency hint. Returns a [`FrameOutcome`] so the caller can
+    /// reveal the window / reschedule a redraw.
+    pub fn update(&mut self, window: &Window, render: &RenderState, ui: UiFrame) -> FrameOutcome {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return FrameOutcome::Reconfigured;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return FrameOutcome::Reconfigured,
+            wgpu::CurrentSurfaceTexture::Occluded => return FrameOutcome::Occluded,
+            wgpu::CurrentSurfaceTexture::Validation => {
+                panic!("surface validation error on frame acquire")
+            }
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.globe.prepare(&self.queue, render, self.viewport());
+
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: ui.pixels_per_point,
+        };
+        for (id, delta) in &ui.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, delta);
+        }
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            });
+        let egui_commands = self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &ui.primitives,
+            &screen,
+        );
+
+        {
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("frame pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // egui-wgpu needs a `RenderPass<'static>`; the pass still ends
+            // at this scope's close, before the encoder is finished.
+            let mut render_pass = render_pass.forget_lifetime();
+
+            self.globe.render(&mut render_pass);
+            self.egui_renderer
+                .render(&mut render_pass, &ui.primitives, &screen);
+        }
+
+        self.queue
+            .submit(egui_commands.into_iter().chain([encoder.finish()]));
+        window.pre_present_notify();
+        frame.present();
+
+        for id in &ui.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+
+        FrameOutcome::Presented
+    }
+}
 
 /// Per-frame shader uniforms. Layout must match `Uniforms` in globe.wgsl:
 /// vec3 fields are padded to 16-byte alignment.
@@ -34,8 +243,9 @@ struct Uniforms {
 }
 
 /// Owns every long-lived wgpu object for the globe: textures, LUTs,
-/// mesh buffers, and the three render pipelines.
-pub struct GlobeRenderer {
+/// mesh buffers, and the three render pipelines. A private scene helper owned
+/// by [`Gfx`].
+struct GlobeRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
@@ -48,7 +258,7 @@ pub struct GlobeRenderer {
 }
 
 impl GlobeRenderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let mesh = mesh::wgs84_ellipsoid(STACKS, SLICES);
 
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -531,52 +741,37 @@ impl GlobeRenderer {
         }
     }
 
-    /// Writes the per-frame uniforms. Call before submitting the frame's
-    /// command buffer; `queue.write_buffer` is ordered before it. `viewport`
-    /// is the surface size in pixels (width, height).
-    pub fn prepare(
-        &self,
-        queue: &wgpu::Queue,
-        camera: &Camera,
-        sky: &Sky,
-        satellite: &Satellite,
-        viewport: (f32, f32),
-    ) {
+    /// Writes the per-frame uniforms from the simulation's `RenderState`. Call
+    /// before submitting the frame's command buffer; `queue.write_buffer` is
+    /// ordered before it. `viewport` is the surface size in pixels (width,
+    /// height), used only for the screen-space marker. All camera/astronomical
+    /// math is done by the simulation (see `simulation::SimulationState`); this
+    /// just packs the finished values into the GPU layout.
+    fn prepare(&self, queue: &wgpu::Queue, render: &RenderState, viewport: (f32, f32)) {
         let (width, height) = viewport;
-        let aspect = width / height.max(1.0);
 
-        // The sky's rotation maps world (ECEF) view directions into the star
-        // map's celestial frame (see sky.rs), so it is uploaded as-is. Its
-        // inverse (transpose, it's orthonormal) maps the camera's inertial rig
-        // back into the world frame, keeping the camera fixed to the stars.
-        let star_cols = sky.star_rot_inv.to_cols_array_2d();
-        let celestial_to_world = sky.star_rot_inv.transpose();
-
-        // Hide the marker when the solid Earth is between eye and station.
-        let eye = camera.eye(celestial_to_world);
-        let visible = if marker_occluded(eye, satellite.position_km) {
-            0.0
-        } else {
-            1.0
-        };
+        // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
+        // columns are padded to vec4 stride.
+        let star_cols = render.star_rot_inv.to_cols_array_2d();
+        let visible = if render.marker_visible { 1.0 } else { 0.0 };
 
         let uniforms = Uniforms {
-            view_proj: camera.view_proj(aspect, celestial_to_world).to_cols_array(),
-            camera_pos: eye.to_array(),
+            view_proj: render.view_proj.to_cols_array(),
+            camera_pos: render.camera_pos.to_array(),
             _pad0: 0.0,
-            sun_dir: sky.sun_dir.to_array(),
+            sun_dir: render.sun_dir.to_array(),
             _pad1: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
-            sat_pos: satellite.position_km.to_array(),
+            sat_pos: render.sat_pos.to_array(),
             _pad2: 0.0,
             marker: [width, height, MARKER_RADIUS_PX, visible],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'_>) {
+    fn render(&self, render_pass: &mut wgpu::RenderPass<'_>) {
         render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertices.slice(..));
         render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -598,29 +793,6 @@ impl GlobeRenderer {
         render_pass.set_pipeline(&self.marker_pipeline);
         render_pass.draw(0..6, 0..1);
     }
-}
-
-/// Whether the solid Earth blocks the line of sight from `eye` to `target`
-/// (both world-space km). Approximates the planet as a sphere of mean Earth
-/// radius - slightly conservative against the WGS84 ellipsoid, which is fine
-/// for deciding whether to hide the marker.
-fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
-    let to_target = target - eye;
-    let distance = to_target.length();
-    if distance <= 1e-3 {
-        return false;
-    }
-    let dir = to_target / distance;
-
-    // Ray-sphere intersection of the line of sight with the Earth sphere.
-    let b = dir.dot(eye);
-    let c = eye.length_squared() - earth::MEAN_RADIUS_KM * earth::MEAN_RADIUS_KM;
-    let disc = b * b - c;
-    if disc < 0.0 {
-        return false; // line of sight misses the Earth entirely
-    }
-    let t = -b - disc.sqrt(); // nearest intersection along the ray
-    t > 0.0 && t < distance // Earth sits between the eye and the station
 }
 
 /// Uploads a build-script-produced KTX2 texture: the texel data (BC7

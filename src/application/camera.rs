@@ -1,6 +1,6 @@
 use glam::{Mat3, Mat4, Quat, Vec3};
 
-use super::earth;
+use crate::earth;
 
 /// Orbital camera that lives in the **inertial (star-fixed) frame**.
 ///

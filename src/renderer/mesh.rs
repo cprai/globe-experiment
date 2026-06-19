@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use super::earth;
+use crate::earth;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

@@ -43,7 +43,7 @@ Runtime:
 - `glam = "0.33.1"` — camera/sun math (Mat3/Mat4/Quat/Vec3).
 - `bytemuck = "1.25" (derive)` — Pod casts for vertex/uniform data.
 - `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
-- `rayon = "1.10"` — parallelizes `GlobeRenderer::new`.
+- `rayon = "1.10"` — parallelizes `GlobeRenderer::new` (the scene builder inside `Gfx::init`).
 - `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
   station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`) **and** the
   JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
@@ -84,25 +84,32 @@ build.rs                 download 5 textures -> BC7/KTX2 transcode +
                          OUT_DIR; also download the JPL DE440 ephemeris into
                          data/. Contains inline `mod atmosphere`.
 .cargo/config.toml       Linux-only -lstdc++ for intel_tex_2's ISPC objs
-src/main.rs              winit ApplicationHandler: App + Gfx, event loop,
-                         wgpu surface/device, frame loop, egui integration
-src/ui.rs                egui control panel (clock + readouts, no sliders)
-src/globe/mod.rs         module declarations only (camera/clock/earth/input/
-                         mesh/renderer/satellite/sky) - no logic
-src/globe/earth.rs       WGS84 + Earth physical constants (axes, eccentricity,
-                         mean radius, GM, rotation) + surface_position /
-                         geodetic_normal helpers. Single source of truth for
-                         the planet geometry; mesh + camera both call it.
-src/globe/renderer.rs    GlobeRenderer: all wgpu objects, prepare, render
-src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
+src/main.rs              tiny: seed satkit (simulation::init), build
+                         SimulationState + ApplicationState, application::run
+src/application/mod.rs   ApplicationState + winit ApplicationHandler + run():
+                         window, egui logic side (Context + egui_winit::State),
+                         camera, controller, frame orchestration
+src/application/camera.rs  orbital camera (km world space, inertial-frame rig)
+src/application/input.rs   Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
-src/globe/camera.rs      orbital camera (km world space)
-src/globe/sky.rs         ephemeris-driven Sun dir + star-map orientation
+src/ui.rs                egui control panel (clock + readouts, no sliders);
+                         control_panel(ctx, &mut SimulationState)
+src/earth.rs             WGS84 + Earth physical constants (axes, eccentricity,
+                         mean radius, GM, rotation) + surface_position /
+                         geodetic_normal helpers. Top-level shared module, the
+                         single source of truth; mesh + camera both call it.
+src/renderer/mod.rs      Gfx: surface/device/queue/config + egui_wgpu +
+                         private GlobeRenderer scene; init/resize/viewport/
+                         update; FrameOutcome, UiFrame
+src/renderer/mesh.rs     WGS84-ellipsoid generator (km, with geodetic normals)
+src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState,
+                         advance / celestial_to_world / render_state;
+                         marker_occluded; init() wrapper for satkit seeding
+src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
-src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos;
-                         update_to(time) re-propagates as the clock advances
-src/globe/clock.rs       simulation Clock: wall-dt x speed, play/pause
-src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
+src/simulation/satellite.rs  TLE parse + satkit SGP4 -> world-space km marker
+                         pos; update_to(time) re-propagates as the clock advances
+src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; build-downloaded source textures + JPL
                          DE440 ephemeris + EOP-All.csv (cached build inputs)
@@ -114,7 +121,10 @@ CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
 Note: `src/globe/atmosphere.rs` **no longer exists** — the bake source was
-inlined into `build.rs` as `mod atmosphere` (2026-06-13).
+inlined into `build.rs` as `mod atmosphere` (2026-06-13). The whole `src/globe/`
+tree is also gone: a 2026-06-19 refactor split it into the top-level
+`application` / `simulation` / `renderer` / `ui` / `earth` modules (see
+`REFACTOR_PLAN.md`).
 
 ---
 
@@ -178,8 +188,9 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   its uniforms are unchanged - only the values of `sun_dir`/`star_rot_inv`.
 - **Phase 8** (2026-06-18): **inertial camera.** The camera's orbital rig is
   now built in the celestial frame and rotated into the Earth-fixed world by
-  `celestial_to_world = sky.star_rot_inv.transpose()` (in `renderer::prepare`,
-  via `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
+  `celestial_to_world = sky.star_rot_inv.transpose()` (since the 2026-06-19
+  refactor, in `ApplicationState::redraw` via `SimulationState::celestial_to_world`,
+  applied with `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
   relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
   now an inertial look direction, not geography. Owner-requested.
 - **Phase 9** (2026-06-19): **embedded ephemeris + offline EOP.** The DE440
@@ -215,26 +226,40 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
 
 ---
 
-## 3. Application shell (`src/main.rs`)
+## 3. Application shell (`application` / `simulation` / `renderer`)
 
-A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_satkit()`
-(seeds satkit's globals - the embedded DE440 ephemeris and the real bundled EOP
-table - before any ephemeris/frame-transform use), then builds an `EventLoop`,
-sets `ControlFlow::Wait`, runs `App::default()`.
+`main()` is tiny: `simulation::init()` (seeds satkit's globals - the embedded
+DE440 ephemeris and the real bundled EOP table - before any
+ephemeris/frame-transform use; thin wrapper over `sky::init_satkit`), then
+`SimulationState::new()`, then
+`application::run(ApplicationState::new(simulation))`. `run` builds the
+`EventLoop`, sets `ControlFlow::Wait`, and runs the `ApplicationState` (a winit
+`ApplicationHandler`).
 
-- `App { camera: Camera, sky: Sky, satellite: Satellite, clock: Clock,
-  controller: Controller, gfx: Option<Gfx> }`. Camera/sky/satellite/clock
-  state lives here. `App` has a **manual `Default`** (not derived): it builds
-  the `Satellite` (parses the TLE, runs SGP4), `Clock::new(satellite.epoch())`
-  (clock starts at the TLE epoch), and `Sky::at(clock.now())`. **No message
-  enum / no indirection** — input mutates the camera directly (the phase-1
-  iced `Interaction { Pan, Zoom, Tilt }` enum is gone).
-- `Gfx` holds everything tied to the window/GPU, created once in
-  `resumed()`: `window: Arc<Window>`, `surface`, `device`, `queue`,
-  `config`, `globe: GlobeRenderer`, `egui_ctx`, `egui_state`,
-  `egui_renderer`, and `shown: bool` (hidden-until-ready flag).
+The 2026-06-19 refactor (see `REFACTOR_PLAN.md`) split the old monolithic
+`main.rs`/`globe` into modules:
 
-### `Gfx::new` — device + surface setup (easy to get wrong)
+- **`application`** (`src/application/mod.rs`) owns the window, the egui *logic*
+  side (`Context` + `egui_winit::State`), the **camera + `Controller`** (all
+  input/animation), the `SimulationState`, and the `Gfx` renderer:
+  `ApplicationState { camera, simulation, controller, window: Option<Arc<Window>>,
+  egui_ctx, egui_state: Option<...>, gfx: Option<Gfx>, shown: bool }`. Built via
+  `ApplicationState::new(simulation)`; the window/egui_state/gfx are created on
+  the first `resumed()`. **No message enum / no indirection** — input mutates the
+  camera directly (the phase-1 iced `Interaction` enum is long gone). The camera
+  rig + `Controller` live here so a different input scheme (e.g. touch) stays
+  local to this module.
+- **`simulation`** (`src/simulation/mod.rs`) owns `SimulationState { clock,
+  satellite, sky }` (composition) + the astronomical math. `new()` builds the
+  `Satellite` (parses TLE, runs SGP4), `Clock::new(satellite.epoch())` (clock
+  starts at the TLE epoch), and `Sky::at(clock.now())`. It has **no
+  winit/wgpu/egui dependency and never names the `Camera` type** — it only ever
+  takes a resolved camera `eye`/`view_proj` and returns a `RenderState`.
+- **`renderer`** (`src/renderer/mod.rs`) owns `Gfx` (surface/device/queue/config
+  + `egui_wgpu::Renderer` + a private `GlobeRenderer` scene). The camera is *not*
+  here.
+
+### `Gfx::init` — device + surface setup (easy to get wrong)
 
 1. `Instance::new(InstanceDescriptor::new_without_display_handle())`.
 2. Surface from `window.clone()`; `request_adapter` (`HighPerformance`);
@@ -252,59 +277,70 @@ sets `ControlFlow::Wait`, runs `App::default()`.
      `present_modes.first()`, which is **Mailbox on DX12** — unpaced
      rendering that makes scroll-zoom and inertia judder (frames follow the
      bursty input cadence; the animation loop free-runs with jittery dt).
-4. `GlobeRenderer::new(&device, &queue, config.format)` — eager, before
-   the first frame. After the BC7/LUT build work this is fast: GPU upload +
-   pipeline creation only, no decode, no bake.
-5. egui: `Context::default()`, `egui_winit::State::new(...)`,
-   `egui_wgpu::Renderer::new(&device, config.format,
-   RendererOptions::default())`.
+4. `GlobeRenderer::new(&device, &queue, config.format)` — the private scene
+   builder, eager, before the first frame. After the BC7/LUT build work this is
+   fast: GPU upload + pipeline creation only, no decode, no bake.
+5. egui: only `egui_wgpu::Renderer::new(&device, config.format,
+   RendererOptions::default())` is built here. The `egui::Context` +
+   `egui_winit::State` (the logic/platform side) are created in
+   `ApplicationState::resumed` and live in `application`.
 
-### Event routing (`window_event` → `handle_input`)
+### Event routing (`window_event` → `handle_input`, in `application`)
 
 Replaces iced's `stack![]` overlay capture. `CloseRequested` exits;
-`Resized` reconfigures the surface + requests redraw; `RedrawRequested`
+`Resized` calls `gfx.resize` + `window.request_redraw`; `RedrawRequested`
 calls `redraw()`. Everything else → `handle_input`:
 1. Feed the event to `egui_state.on_window_event(&window, &event)`
    **first**. If `response.repaint`, request a redraw. If
    `response.consumed` (pointer over panel / slider drag), **return** — the
    globe controller never sees it.
-2. Else `controller.handle_event(&event, &mut camera, config.height)`; if
+2. Else `controller.handle_event(&event, &mut camera, gfx.viewport().1)`; if
    it returns `true` (camera changed or animation started), request redraw.
 
-### Frame (`redraw`)
+### Frame (`ApplicationState::redraw`)
 
-1. `controller.tick(&mut camera, config.height)` advances flick inertia
+1. `controller.tick(&mut camera, gfx.viewport().1)` advances flick inertia
    **and** the zoom glide; returns `animating`.
-2. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(), &sky,
-   &satellite, &mut clock))` → `handle_platform_output`. (0.34 deprecated
-   `Context::run` for `run_ui`, whose closure gets a transparent fullscreen
-   `&mut Ui`; the Area panel hangs off `ui.ctx()`.) The closure mutates only
-   `clock` (`sky`/`satellite` are read-only).
-2b. `clock.tick()` (after the UI, so this frame's play/pause + speed apply)
-   advances sim time by the wall-clock delta x multiplier; if it ran, both
-   `satellite.update_to(now)` (SGP4) and `sky = Sky::at(now)` (ephemeris) are
-   recomputed for `now = clock.now()`. `animating |=` clock-running, so a
-   playing clock keeps requesting frames.
+2. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(), &mut
+   simulation))` → `handle_platform_output`. (0.34 deprecated `Context::run`
+   for `run_ui`, whose closure gets a transparent fullscreen `&mut Ui`; the
+   Area panel hangs off `ui.ctx()`.) `control_panel` destructures the
+   `&mut SimulationState` and mutates only `clock` (`sky`/`satellite` read-only).
+2b. `simulation.advance()` (after the UI, so this frame's play/pause + speed
+   apply): `clock.tick()` advances sim time by the wall-clock delta x
+   multiplier; if it ran, both `satellite.update_to(now)` (SGP4) and `sky =
+   Sky::at(now)` (ephemeris) are recomputed for `now = clock.now()`. Returns
+   clock-running, so `animating |=` it and a playing clock keeps requesting
+   frames.
 3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
    resets the cursor every frame; method renamed from `is_pointer_over_area`
    in 0.34).
-4. `get_current_texture()` returns the wgpu-29 `CurrentSurfaceTexture` enum
-   (not `Result`): `Success`/`Suboptimal` carry the frame; `Lost`/
-   `Outdated` → reconfigure + redraw + return; `Timeout` → redraw + return;
-   `Occluded` → hidden-window first-frame guard (reveal + retry); else skip
-   the frame; `Validation` → panic.
-5. `globe.prepare(queue, camera, sky, satellite, viewport)` writes uniforms
-   (`viewport` = surface (width, height) px; aspect is derived inside, and the
-   pixel size feeds the constant-size marker; `sky` supplies `sun_dir` +
-   `star_rot_inv`, and its transpose `celestial_to_world` rotates the inertial
-   camera rig into the world frame). Also runs the CPU marker occlusion test.
-6. egui tessellate → `update_texture` for each `textures_delta.set`
-   **before** the pass → `update_buffers` (returns prep command buffers) →
-   one render pass (clear BLACK → `globe.render` → `egui_renderer.render`)
-   → submit egui commands chained with the frame encoder →
-   `pre_present_notify` → `present` → `free_texture` for each
-   `textures_delta.free` **after** submit.
-7. Reveal the window on first present (`shown` flips true).
+4. **Resolve the camera** (in `application`, since the camera lives here):
+   `c2w = simulation.celestial_to_world()` (= `sky.star_rot_inv.transpose()`),
+   `eye = camera.eye(c2w)`, `view_proj = camera.view_proj(aspect, c2w)` with
+   `aspect` from `gfx.viewport()`. Then `render_state =
+   simulation.render_state(eye, view_proj)` — packs `view_proj`/`camera_pos`/
+   `sun_dir`/`star_rot_inv`/`sat_pos` and the CPU marker-occlusion flag
+   (`marker_occluded`) into a `RenderState`.
+5. Build `UiFrame { primitives: egui_ctx.tessellate(...), textures_delta,
+   pixels_per_point }`.
+6. `gfx.update(&window, &render_state, ui_frame)` does the GPU frame:
+   `get_current_texture()` returns the wgpu-29 `CurrentSurfaceTexture` enum
+   (not `Result`): `Success`/`Suboptimal` carry the frame; `Lost`/`Outdated` →
+   reconfigure + return `FrameOutcome::Reconfigured`; `Timeout` →
+   `Reconfigured`; `Occluded` → `Occluded`; `Validation` → panic. On a frame:
+   `GlobeRenderer::prepare(queue, render, viewport)` writes the uniforms
+   (`viewport` from `config`; pixel size feeds the constant-size marker) →
+   `update_texture` per `textures_delta.set` → `update_buffers` → one render
+   pass (clear BLACK → `globe.render` → `egui_renderer.render`) → submit egui
+   commands chained with the frame encoder → `window.pre_present_notify()` →
+   `present` → `free_texture` per `textures_delta.free`. Returns
+   `FrameOutcome::Presented`.
+7. `application` reacts to the `FrameOutcome`: `Presented`/`Occluded` reveal
+   the window on the first frame (`shown` flips true); `Occluded`/`Reconfigured`
+   re-request a redraw and return. The renderer never touches the window
+   (visibility/redraw stay in `application`); `update` borrows `&Window` only
+   for the `pre_present_notify` latency hint.
 8. Request another redraw iff `animating` or egui reported a zero
    `repaint_delay`.
 
@@ -340,7 +376,7 @@ the clock is paused. (A future sun animation would just be another such
 
 ---
 
-## 4. Camera (`src/globe/camera.rs`)
+## 4. Camera (`src/application/camera.rs`)
 
 Orbital model that lives in the **inertial (star-fixed) frame**: the rig math
 is the usual look-at-a-point-near-the-origin, but the result is interpreted in
@@ -368,8 +404,10 @@ not a geographic point.
 - `world_frame(c2w)` rotates that rig into the world frame by
   `celestial_to_world` (a `Mat3`; the origin-centered rotation transforms eye,
   target, and up alike). `view_proj(aspect, c2w)` and `eye(c2w)` take that
-  rotation; `renderer::prepare` passes `sky.star_rot_inv.transpose()` (the
-  inverse of the world→celestial rotation). This is what makes the camera
+  rotation; `ApplicationState::redraw` passes it `SimulationState::celestial_to_world()`
+  = `sky.star_rot_inv.transpose()` (the inverse of the world→celestial
+  rotation), then hands the resolved `eye`/`view_proj` to
+  `SimulationState::render_state`. This is what makes the camera
   star-fixed: in the celestial frame the rig is constant (modulo user input),
   so `star_rot_inv · relative_world = relative_celestial` stays put while the
   ECEF globe spins.
@@ -388,7 +426,7 @@ not a geographic point.
 
 ---
 
-## 5. Input (`src/globe/input.rs`) — `Controller`
+## 5. Input (`src/application/input.rs`) — `Controller`
 
 Translates winit mouse events into camera motion, mutating `&mut Camera`
 directly; `handle_event` returns `bool` (needs redraw). State: `cursor`,
@@ -456,7 +494,7 @@ whether either still needs frames.
 
 ---
 
-## 6. Sky (`src/globe/sky.rs`) — ephemeris-driven Sun + star orientation
+## 6. Sky (`src/simulation/sky.rs`) — ephemeris-driven Sun + star orientation
 
 Replaces the old slider-driven `Sun`. `Sky::at(time)` computes, for a satkit
 `Instant`, the Sun direction and the star-map orientation in the renderer's
@@ -524,7 +562,7 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
 
 ---
 
-## 6.5. Satellite (`src/globe/satellite.rs`)
+## 6.5. Satellite (`src/simulation/satellite.rs`)
 
 Tracks one object (the ISS) from an embedded TLE, propagated with the
 **satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE and
@@ -561,7 +599,7 @@ math see §16** (this is the module-level summary).
   ~92 min orbit).
 - Malformed embedded data panics (`expect`), like the other baked-in assets.
 
-## 6.6. Clock (`src/globe/clock.rs`)
+## 6.6. Clock (`src/simulation/clock.rs`)
 
 `Clock` is the simulation time source that drives the satellite.
 
@@ -602,7 +640,7 @@ right. `show_value(false)` (value is in the label).
 
 ---
 
-## 8. Mesh (`src/globe/mesh.rs`)
+## 8. Mesh (`src/renderer/mesh.rs`)
 
 `wgs84_ellipsoid(stacks, slices)` — renderer calls it with `(64, 128)` (~8.4k
 verts, u32 indices). `Vertex { position: [f32;3], normal: [f32;3], uv:
@@ -619,9 +657,14 @@ Float32x2` in all three pipelines).
 
 ---
 
-## 9. Renderer (`src/globe/renderer.rs`) — `GlobeRenderer`
+## 9. Renderer (`src/renderer/mod.rs`) — `Gfx` (+ private `GlobeRenderer`)
 
-A plain struct with `new` / `prepare` / `render` (no iced traits). Owns the
+`Gfx` is the public renderer (`init` / `resize` / `viewport` / `update`, plus
+the `FrameOutcome` and `UiFrame` types — see §3 for the per-frame `update`
+flow). It owns the surface/device/queue/config and the `egui_wgpu::Renderer`,
+and wraps a **private** `GlobeRenderer` scene struct (`new` / `prepare` /
+`render`, no iced traits — the camera lives in `application`, not here).
+`GlobeRenderer` owns the
 **four** render pipelines (surface, atmosphere, stars, marker), the shared
 vertex/index buffers, the uniform buffer, and the bind group. `STACKS = 64`,
 `SLICES = 128`. The marker pipeline shares the bind-group layout but has **no
@@ -704,16 +747,17 @@ buffers are simply unused). Draw order does the occlusion (no depth buffer).
 The atmosphere is additive over the whole disc (aerial perspective) and beyond
 the limb; the marker is an alpha-blended screen overlay on top.
 
-### `prepare(queue, camera, sky, satellite, viewport)`
+### `prepare(queue, render, viewport)`
 
-Writes the uniforms. `sun_dir`/`star_rot_inv` come straight from `sky`; the
-camera's `view_proj`/`eye` are evaluated with `celestial_to_world =
-sky.star_rot_inv.transpose()` so the inertial rig renders in the world frame.
-`viewport` is the surface (width, height) px; aspect is derived from it and the
-px size drives the constant-pixel marker. Computes the
-marker's `visible` flag with `marker_occluded(eye, sat_pos)` — a ray-vs-sphere
-test (line of sight vs. a mean-Earth-radius sphere); the marker is hidden when
-the planet sits between the eye and the station. `MARKER_RADIUS_PX = 6`.
+Packs the simulation's `RenderState` into the GPU `Uniforms` and writes them
+(`queue.write_buffer`). All the math is done upstream now (2026-06-19 refactor):
+the camera resolution (`view_proj`/`camera_pos` via `celestial_to_world`) lives
+in `application`, and `sun_dir`/`star_rot_inv`/`sat_pos` plus the
+`marker_visible` flag (`marker_occluded`, a ray-vs-mean-radius-sphere test) come
+from `SimulationState::render_state`. `prepare` only formats them (mat3 column
+padding, vec3 pads, `marker = [w, h, MARKER_RADIUS_PX, visible]`). `viewport` is
+the surface (width, height) px, used solely for the constant-pixel marker.
+`MARKER_RADIUS_PX = 6`.
 
 ---
 
@@ -1112,28 +1156,28 @@ MIE_SCATTERING 3.996e-3   MIE_EXTINCTION 4.40e-3   MIE_SCALE_HEIGHT 1.2
 OZONE_ABSORPTION [0.650, 1.881, 0.085]e-3       (tent peak 25 km, ±15)
 TRANSMITTANCE 256×64 / 40 steps   INSCATTER 256×128 / 32 steps
 ```
-**`src/globe/input.rs`**:
+**`src/application/input.rs`**:
 ```
 FLICK_SPEED 50   STOP_SPEED 15   HALF_LIFE 0.3   FLICK_TIMEOUT 0.1
 ZOOM_HALF_LIFE_MIN 0.01   ZOOM_HALF_LIFE_MAX 0.1   WHEEL_GAP_CAP 0.25
 ZOOM_COAST_HALF_LIFE 0.15   ZOOM_STOP_RATE 0.1
 ```
-**`src/globe/earth.rs`** (WGS84 + dynamics): SEMI_MAJOR_AXIS_KM 6378.137,
+**`src/earth.rs`** (WGS84 + dynamics): SEMI_MAJOR_AXIS_KM 6378.137,
 INVERSE_FLATTENING 298.257223563, SEMI_MINOR_AXIS_KM ~6356.752314,
 ECCENTRICITY_SQ ~0.00669438, MEAN_RADIUS_KM ~6371.0088,
 GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
-**`src/globe/camera.rs`** (km; constants = `<radii>·MEAN_RADIUS_KM`): FOV_Y
+**`src/application/camera.rs`** (km; constants = `<radii>·MEAN_RADIUS_KM`): FOV_Y
 45, MIN_DISTANCE ~63.7, MAX_DISTANCE ~63710, NEAR_PLANE ~63.7, FAR_PLANE
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
-**`renderer.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
-**`src/globe/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440) +
+**`src/renderer/mod.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
+**`src/simulation/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440) +
 embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
-**`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
+**`src/simulation/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
 SGP4; re-propagated each running frame.
-**`src/globe/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
+**`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
 launch).
 
@@ -1494,7 +1538,8 @@ invariant in `CLAUDE.md`).
 
 The camera (§4) is built in the **celestial frame** and rotated into the world
 by **`celestial_to_world = star_rot_inv.transpose()`** (`= P · R_gcrf2itrf ·
-Pᵀ`, the inverse of world→celestial), in `renderer::prepare`, via
+Pᵀ`, the inverse of world→celestial), in `ApplicationState::redraw` (via
+`SimulationState::celestial_to_world`), applied with
 `camera.view_proj(aspect, c2w)` / `camera.eye(c2w)`. Because `star_rot_inv ·
 celestial_to_world = I`, a rig held constant in the celestial frame yields a
 constant star lookup direction — **the stars are locked to the camera while the

@@ -7,8 +7,11 @@ shared **earth** geometry module, with a thin `main.rs`. This is a
 accuracy changes. Every golden rule in `CLAUDE.md` must survive intact (see
 [Invariants](#invariants-that-must-survive)).
 
-> Status: planning only. No code has been changed. This document is the
-> agreed design and the milestone checklist.
+> **Status: COMPLETE (2026-06-19).** All milestones landed; the target layout
+> below is the current layout. Verified end-to-end (`cargo clippy --release`
+> warning-free, smoke run with no panic/validation error, no stray
+> `satkit-data` dir). See [Outcome & deviations](#outcome--deviations) for what
+> changed relative to this plan. This document is kept as the design record.
 
 ---
 
@@ -374,6 +377,48 @@ each is a mostly-mechanical move so regressions are easy to localize.
 - `cargo fmt`, `cargo clippy` (warning-free), smoke test. Owner does the
   native-Windows feel/color pass (WSLg can't validate those). Re-verify the
   [invariants](#invariants-that-must-survive).
+
+---
+
+## 4.5. Outcome & deviations
+
+All milestones landed and the target layout above is the current tree. A few
+things diverged from the plan as written — recorded here so the plan matches
+reality:
+
+- **M6 folded into M4.** Deleting the `globe` module and slimming `main.rs`
+  were listed as M6, but moving `camera.rs` + `input.rs` out in M4 left `globe`
+  empty, so it was removed then, and `main.rs` reached its 18-line target in the
+  same step. M5 (the `ui` signature change) ran next, and M6 had nothing left to
+  do. Net milestone order executed: M1, M2a/b/c, M3, M4 (incl. globe removal +
+  main slimming), M5, M7.
+
+- **`GlobeRenderer` kept as a private struct, not flattened into `Gfx`.** The
+  plan's "single `renderer::Gfx`" is satisfied at the public API
+  (`init`/`resize`/`viewport`/`update`), but the ~480-line scene setup stayed in
+  a private `GlobeRenderer` that `Gfx` owns as a field — lower transcription
+  risk, same external contract. (`Gfx` holds
+  surface/device/queue/config + `egui_wgpu::Renderer` + `globe: GlobeRenderer`.)
+
+- **`Gfx::update` borrows `&Window`.** The plan said the renderer never touches
+  the window, but `window.pre_present_notify()` must sit immediately before
+  `present()` (which happens inside `update`), so `update(&mut self, window:
+  &Window, render, ui)` takes a transient `&Window` *only* for that latency
+  hint. `Gfx` still does not store the window, and all visibility/redraw
+  decisions remain in `application`, driven by the returned `FrameOutcome`.
+
+- **`SimulationState::render_state` takes `(eye, view_proj)`, not the viewport.**
+  Per the camera-in-`application` decision, the application resolves the camera
+  to a world-frame `eye` + `view_proj` (reading `simulation.celestial_to_world()`
+  for the inertial→world rotation) and passes those in; `render_state` adds the
+  astronomical fields + marker visibility. The viewport/aspect never enters
+  `simulation` — it's owned by `application`/`renderer`. (This refined the
+  original "render_state(viewport)" sketch once the camera moved out of
+  `SimulationState`.)
+
+- **`App` → `ApplicationState::new(simulation)` (no derived `Default`).** Built
+  explicitly to avoid constructing a throwaway `SimulationState` (which loads the
+  TLE + runs SGP4) via `..Default::default()`.
 
 ---
 

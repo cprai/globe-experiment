@@ -21,7 +21,7 @@ use satkit::sgp4::sgp4;
 use satkit::tle::TLE;
 use satkit::{Instant, Vector3};
 
-use super::earth;
+use crate::earth;
 
 /// The TLE for the station, embedded like the textures (assets/ is
 /// gitignored, and everything else in the build is baked in too).

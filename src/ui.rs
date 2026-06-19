@@ -1,15 +1,23 @@
-use crate::globe::clock::Clock;
-use crate::globe::satellite::Satellite;
-use crate::globe::sky::Sky;
+use crate::simulation::SimulationState;
+use crate::simulation::clock::Clock;
 
 /// The control/readout panel, pinned to the top-left corner over the globe:
 /// the simulation clock (play/pause + speed), the ephemeris-driven subsolar
-/// point, and the tracked station's datetime and position.
+/// point, and the tracked station's datetime and position. Reads the sky and
+/// satellite for display and mutates the clock (play/pause + speed).
 ///
 /// The Sun's position is no longer user-controlled - it comes from the JPL
 /// ephemeris for the clock's time (see `sky`), so the old latitude/longitude
 /// sliders are gone.
-pub fn control_panel(ctx: &egui::Context, sky: &Sky, satellite: &Satellite, clock: &mut Clock) {
+pub fn control_panel(ctx: &egui::Context, simulation: &mut SimulationState) {
+    // Split the borrow into per-subsystem field references: the clock is
+    // mutated by the controls; the sky and satellite are read for display.
+    let SimulationState {
+        clock,
+        satellite,
+        sky,
+    } = simulation;
+
     egui::Area::new(egui::Id::new("control_panel"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
