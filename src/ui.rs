@@ -18,6 +18,11 @@ pub fn control_panel(ctx: &egui::Context, simulation: &mut SimulationState) {
         sky,
     } = simulation;
 
+    // The satellite stores no position - propagate it on demand at the clock's
+    // current time for this frame's readout (`&mut` only because satkit's
+    // `sgp4` caches its initialization in the TLE).
+    let sat = satellite.state_at(&clock.now());
+
     egui::Area::new(egui::Id::new("control_panel"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
@@ -50,12 +55,12 @@ pub fn control_panel(ctx: &egui::Context, simulation: &mut SimulationState) {
             ui.label(
                 egui::RichText::new(format!(
                     "Lat {:.2} deg   Lon {:.2} deg",
-                    satellite.latitude_deg, satellite.longitude_deg
+                    sat.latitude_deg, sat.longitude_deg
                 ))
                 .color(egui::Color32::WHITE),
             );
             ui.label(
-                egui::RichText::new(format!("Altitude: {:.0} km", satellite.altitude_km))
+                egui::RichText::new(format!("Altitude: {:.0} km", sat.altitude_km))
                     .color(egui::Color32::WHITE),
             );
 

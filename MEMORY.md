@@ -108,7 +108,7 @@ src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState,
 src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
 src/simulation/satellite.rs  TLE parse + satkit SGP4 -> world-space km marker
-                         pos; update_to(time) re-propagates as the clock advances
+                         pos; state_at(time) propagates on demand (no stored pos)
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 assets/                  gitignored; build-downloaded source textures + JPL
@@ -173,8 +173,8 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
 - **Phase 6** (2026-06-18): **simulation clock.** Added `clock.rs` (`Clock`):
   time starts at the TLE epoch and advances by the wall-clock delta between
   redraws x a multiplier (1x real time .. 100x, exponential), with play/pause. Each running
-  frame re-propagates the satellite (`Satellite::update_to`), so the marker
-  moves. UI gained a play/pause button + speed slider (+ live multiplier);
+  frame propagates the satellite on demand (`Satellite::state_at`), so the
+  marker moves. UI gained a play/pause button + speed slider (+ live multiplier);
   the displayed datetime now comes from the clock. A running clock is another
   "animating" redraw source; per the owner it **starts playing**, so the app
   renders continuously from launch and only idles when paused.
@@ -311,8 +311,9 @@ calls `redraw()`. Everything else → `handle_input`:
    `&mut SimulationState` and mutates only `clock` (`sky`/`satellite` read-only).
 2b. `simulation.advance()` (after the UI, so this frame's play/pause + speed
    apply): `clock.tick()` advances sim time by the wall-clock delta x
-   multiplier; if it ran, both `satellite.update_to(now)` (SGP4) and `sky =
-   Sky::at(now)` (ephemeris) are recomputed for `now = clock.now()`. Returns
+   multiplier; if it ran, `sky = Sky::at(now)` (ephemeris) is recomputed for
+   `now = clock.now()`. The satellite position is propagated on demand in
+   `render_state` (and the UI), not here. Returns
    clock-running, so `animating |=` it and a playing clock keeps requesting
    frames.
 3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
@@ -568,11 +569,14 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
 ## 6.5. Satellite (`src/simulation/satellite.rs`)
 
 Tracks one object (the ISS) from an embedded TLE, propagated with the
-**satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE and
-propagates at its epoch; `update_to(time)` **re-propagates** each running
-frame as the `Clock` advances. The parsed `TLE` is **retained** in the struct
-for this (and `sgp4` needs `&mut TLE`). **For the full pipeline, frames, and
-math see §16** (this is the module-level summary).
+**satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE
+only - **no propagation at load**. The position state is **not stored**;
+`state_at(time)` propagates on demand and returns a `SatelliteState` wherever
+the position is needed (the renderer's `render_state` and the UI readout), so
+nothing goes stale as the `Clock` advances. The parsed `TLE` is **retained** in
+the struct, and `state_at` takes `&mut self` because `sgp4` needs `&mut TLE`
+(it caches its propagator init). **For the full pipeline, frames, and math see
+§16** (this is the module-level summary).
 
 - **TLE**: `TLE_TEXT` (3-line: name + two element lines), an inline source
   literal (`concat!` of the three lines; was `include_str!("assets/TLE.txt")`).
@@ -594,9 +598,10 @@ math see §16** (this is the module-level summary).
   with our own helpers: `earth::surface_position(lat, lon) +
   earth::geodetic_normal(lat, lon) * altitude_km`. This guarantees the marker
   lands on the exact WGS84 ellipsoid the mesh uses. Units: meters→km.
-- **Stored**: `tle` (private), `name`, `position_km` (world frame), and
-  `latitude_deg`/`longitude_deg`/`altitude_km` for the UI. (The datetime now
-  lives in the `Clock`, not here.)
+- **Stored**: only `tle` (private) and `name`. The position state
+  (`position_km` in the world frame, plus `latitude_deg`/`longitude_deg`/
+  `altitude_km` for the UI) is returned by `state_at` as a `SatelliteState`,
+  not stored. (The datetime lives in the `Clock`, not here.)
 - **Verified** (2026-06-18, headless probe): ISS at epoch → lat 50.68°, lon
   176.9°, alt 421 km; +60 s → lon crosses the date line (~5.6°/min), +3600 s →
   opposite hemisphere, alt steady ~420 km (consistent with 51.6° inclination,
@@ -1180,7 +1185,7 @@ embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
 **`src/simulation/satellite.rs`**: TLE = inline `TLE_TEXT` literal (ISS), via `satkit` 0.18
-SGP4; re-propagated each running frame.
+SGP4; position propagated on demand (`state_at`), not stored.
 **`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
 launch).
@@ -1429,8 +1434,9 @@ accuracy. Quick references elsewhere: module summaries in §6 (Sky), §6.5
   degrees only at the UI edge.
 - **Time** is a satkit `Instant` (µs since the Unix epoch, UTC). The `Clock`
   (§6.6, §16.4) advances it by wall-dt × speed; **every running frame**
-  re-evaluates both the satellite (`Satellite::update_to`) and the sky
-  (`Sky::at`) at `clock.now()`. Paused ⇒ nothing recomputes, no frames.
+  re-evaluates the sky (`Sky::at`) at `clock.now()` and propagates the
+  satellite on demand (`Satellite::state_at`) where its position is consumed.
+  Paused ⇒ nothing recomputes, no frames.
 
 ### 16.2 Reference frames (the cast)
 
@@ -1475,8 +1481,8 @@ Earth rotation, sub-pixel here — see §16.9).
 
 ### 16.5 Satellites — SGP4 (`satellite.rs`)
 
-Pipeline (TLE → world-space km point), re-run every running frame by
-`update_to(time)`:
+Pipeline (TLE → world-space km point), run on demand by `state_at(time)`
+(returns a `SatelliteState`; nothing is stored on the struct):
 
 1. **TLE** `TLE_TEXT` (3-line: name + 2 element lines), an inline source literal
    (`concat!`; was `include_str!("assets/TLE.txt")`), parsed once with
@@ -1499,9 +1505,10 @@ Pipeline (TLE → world-space km point), re-run every running frame by
    the project's own WGS84 helpers (rather than `P·itrf/1000` directly)
    guarantees the marker sits on the **exact** ellipsoid the mesh uses; the two
    are equivalent.
-6. **Stored**: `position_km` (world, for the marker), `latitude_deg`,
-   `longitude_deg`, `altitude_km` (UI). The marker is drawn by the 4th render
-   pass (§10) and CPU-occluded behind the globe (`marker_occluded`, §9).
+6. **Returned** (in a `SatelliteState`, not stored): `position_km` (world, for
+   the marker), `latitude_deg`, `longitude_deg`, `altitude_km` (UI). The marker
+   is drawn by the 4th render pass (§10) and CPU-occluded behind the globe
+   (`marker_occluded`, §9).
 
 Caveats: SGP4 is only accurate ~days around the TLE epoch (far-future clock
 times still render, but drift physically); `sgp4`/`qteme2itrf`/`ITRFCoord` need

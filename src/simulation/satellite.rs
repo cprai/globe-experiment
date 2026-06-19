@@ -1,7 +1,9 @@
 //! Space-station tracking: parse the embedded TLE and propagate it with the
 //! satkit SGP4 implementation to a given datetime, exposing the result in the
-//! renderer's world frame (km). The TLE is retained so the position can be
-//! re-propagated each tick as the simulation clock advances.
+//! renderer's world frame (km). Only the TLE is retained; the position state is
+//! a pure function of (TLE, datetime), so it is recomputed on demand via
+//! `state_at` rather than stored - nothing in the struct goes stale as the
+//! simulation clock advances.
 //!
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
 //! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
@@ -35,12 +37,54 @@ const TLE_TEXT: &str = concat!(
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
-/// A satellite tracked from its TLE, with its most recently propagated state.
+/// A satellite tracked from its TLE. Holds only the (immutable-meaning) inputs:
+/// the element set and the object name. The position state is derived on demand
+/// from the TLE and a datetime - see [`SatelliteState`] and [`state_at`].
+///
+/// [`state_at`]: Satellite::state_at
 pub struct Satellite {
-    /// The parsed element set, kept for re-propagation as time advances.
+    /// The parsed element set, propagated on demand for any requested time.
+    /// `&mut` is needed to propagate it (satkit's `sgp4` caches its
+    /// initialization in the TLE on the first call), so propagation methods
+    /// take `&mut self`.
     tle: TLE,
     /// Object name from the TLE's first line (e.g. "ISS (ZARYA)").
     pub name: String,
+}
+
+impl Satellite {
+    /// Parses the embedded TLE. Panics on malformed embedded data (the data is
+    /// baked in, so a failure is a build-time bug, handled like the other
+    /// embedded assets). No propagation happens here - the state is computed on
+    /// demand via [`state_at`](Self::state_at).
+    pub fn load() -> Self {
+        let mut lines = TLE_TEXT.lines();
+        let line0 = lines.next().expect("TLE line 0 (name)");
+        let line1 = lines.next().expect("TLE line 1");
+        let line2 = lines.next().expect("TLE line 2");
+
+        let tle = TLE::load_3line(line0, line1, line2).expect("parse embedded TLE");
+        let name = tle.name.clone();
+        Self { tle, name }
+    }
+
+    /// The TLE's epoch - the simulation clock's natural starting time.
+    pub fn epoch(&self) -> Instant {
+        self.tle.epoch
+    }
+
+    /// Propagates the orbit to `time` and returns the resulting state in the
+    /// world frame. Pure with respect to the satellite (nothing is stored);
+    /// takes `&mut self` only because satkit's `sgp4` caches initialization in
+    /// the TLE.
+    pub fn state_at(&mut self, time: &Instant) -> SatelliteState {
+        propagate(&mut self.tle, time)
+    }
+}
+
+/// The satellite's propagated state at a particular time, derived from the TLE.
+/// Recomputed on demand rather than stored on [`Satellite`].
+pub struct SatelliteState {
     /// Position in the renderer's world frame: kilometers, planet center at
     /// the origin, same axes as the globe mesh.
     pub position_km: Vec3,
@@ -52,56 +96,8 @@ pub struct Satellite {
     pub altitude_km: f32,
 }
 
-impl Satellite {
-    /// Parses the embedded TLE and propagates it to its own epoch. Panics on
-    /// malformed embedded data (the data is baked in, so a failure is a
-    /// build-time bug, handled like the other embedded assets).
-    pub fn load() -> Self {
-        let mut lines = TLE_TEXT.lines();
-        let line0 = lines.next().expect("TLE line 0 (name)");
-        let line1 = lines.next().expect("TLE line 1");
-        let line2 = lines.next().expect("TLE line 2");
-
-        let mut tle = TLE::load_3line(line0, line1, line2).expect("parse embedded TLE");
-        let name = tle.name.clone();
-        let epoch = tle.epoch;
-
-        let state = propagate(&mut tle, &epoch);
-        Self {
-            tle,
-            name,
-            position_km: state.position_km,
-            latitude_deg: state.latitude_deg,
-            longitude_deg: state.longitude_deg,
-            altitude_km: state.altitude_km,
-        }
-    }
-
-    /// The TLE's epoch - the simulation clock's natural starting time.
-    pub fn epoch(&self) -> Instant {
-        self.tle.epoch
-    }
-
-    /// Re-propagates the orbit to `time` and updates the stored state.
-    pub fn update_to(&mut self, time: &Instant) {
-        let state = propagate(&mut self.tle, time);
-        self.position_km = state.position_km;
-        self.latitude_deg = state.latitude_deg;
-        self.longitude_deg = state.longitude_deg;
-        self.altitude_km = state.altitude_km;
-    }
-}
-
-/// The fields of `Satellite` that are recomputed on every propagation.
-struct State {
-    position_km: Vec3,
-    latitude_deg: f32,
-    longitude_deg: f32,
-    altitude_km: f32,
-}
-
 /// SGP4-propagates `tle` to `time` and resolves the result to the world frame.
-fn propagate(tle: &mut TLE, time: &Instant) -> State {
+fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
     // SGP4 -> position in the TEME frame, meters (one time sample, so the 3xN
     // position matrix has a single column).
     let sgp4_state = sgp4(tle, &[*time]).expect("sgp4 propagation");
@@ -126,7 +122,7 @@ fn propagate(tle: &mut TLE, time: &Instant) -> State {
     let position_km = earth::surface_position(latitude, longitude)
         + earth::geodetic_normal(latitude, longitude) * altitude_km;
 
-    State {
+    SatelliteState {
         position_km,
         latitude_deg: latitude.to_degrees(),
         longitude_deg: longitude.to_degrees(),

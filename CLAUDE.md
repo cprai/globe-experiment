@@ -361,8 +361,11 @@ section is for the larger, explicitly-deferred ideas.)
   composes clock/satellite/sky; `advance`, `celestial_to_world`, `render_state`;
   `marker_occluded`).
 - **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
-  frame conversion to a world-space km point; `update_to(time)` re-propagates
-  each tick). The TLE (ISS / ZARYA) is an **inline source literal**
+  frame conversion to a world-space km point). The `Satellite` struct stores
+  only the `tle` + `name`; the position is **not** stored - `state_at(time)`
+  propagates it on demand (returning a `SatelliteState`) wherever it's needed,
+  so nothing goes stale as the clock advances. The TLE (ISS / ZARYA) is an
+  **inline source literal**
   (`TLE_TEXT`, a `concat!` of the three TLE lines) - not `include_str!`, so a
   fresh checkout needs no data file. Marker colors live in the marker shader.
 - **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by

@@ -46,7 +46,7 @@ pub fn init() {
 }
 
 /// All simulation state: the clock (datetime + play/paused + speed), the
-/// tracked satellite (TLE + last propagated state), and the ephemeris-driven
+/// tracked satellite (TLE; position propagated on demand), and the ephemeris-driven
 /// sky (Sun direction + star-map orientation). Held by composition so each
 /// subsystem keeps its own tuned logic.
 ///
@@ -75,16 +75,16 @@ impl SimulationState {
     }
 
     /// Advances the simulation by the wall-clock delta since the last call:
-    /// the clock steps, and while it is running the satellite is re-propagated
-    /// and the ephemeris-driven sky re-evaluated at the new time. Returns
-    /// whether the clock is running - an "animating" source that keeps frames
-    /// coming; when paused nothing advances and the app can go idle.
+    /// the clock steps, and while it is running the ephemeris-driven sky is
+    /// re-evaluated at the new time. The satellite carries no stored state - it
+    /// is propagated on demand from the clock's time wherever its position is
+    /// needed (see `render_state`). Returns whether the clock is running - an
+    /// "animating" source that keeps frames coming; when paused nothing
+    /// advances and the app can go idle.
     pub fn advance(&mut self) -> bool {
         let running = self.clock.tick();
         if running {
-            let now = self.clock.now();
-            self.satellite.update_to(&now);
-            self.sky = Sky::at(&now);
+            self.sky = Sky::at(&self.clock.now());
         }
         running
     }
@@ -102,15 +102,19 @@ impl SimulationState {
     /// camera: the world-frame `eye` and `view_proj`. The astronomical fields
     /// (Sun, star rotation, satellite position) come from the current sky and
     /// satellite, and the marker's visibility is the Earth-occlusion test of
-    /// the line of sight from `eye` to the station.
-    pub fn render_state(&self, eye: Vec3, view_proj: Mat4) -> RenderState {
+    /// the line of sight from `eye` to the station. Takes `&mut self` because
+    /// the satellite position is propagated on demand at the clock's current
+    /// time (satkit's `sgp4` needs `&mut` to cache its initialization).
+    pub fn render_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
+        let now = self.clock.now();
+        let sat = self.satellite.state_at(&now);
         RenderState {
             view_proj,
             camera_pos: eye,
             sun_dir: self.sky.sun_dir,
             star_rot_inv: self.sky.star_rot_inv,
-            sat_pos: self.satellite.position_km,
-            marker_visible: !marker_occluded(eye, self.satellite.position_km),
+            sat_pos: sat.position_km,
+            marker_visible: !marker_occluded(eye, sat.position_km),
         }
     }
 }
