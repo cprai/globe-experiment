@@ -247,6 +247,43 @@ the owner. Re-introducing them silently is a regression.
 
 ---
 
+## TODO / backlog (not scheduled — optional, pick up later)
+
+Deliberate "someday, maybe" items. None of these is committed work or a bug;
+they're parked here so we can refer back when looking for extra things to do.
+Adding to this list does **not** authorize doing it — confirm with the owner
+first. (Concrete engineering follow-ups also live in `MEMORY.md` §14; this
+section is for the larger, explicitly-deferred ideas.)
+
+- **Full IERS-2010 Earth orientation for the sky.** Switch the Sun/star
+  backdrop in `src/globe/sky.rs` from the `*_approx` transforms
+  (`qgcrf2itrf_approx` / `qitrf2gcrf_approx`) to the full
+  `qgcrf2itrf` / `qitrf2gcrf`, closing the residual ~1" error (real polar
+  motion + IERS-2010 nutation instead of approximate nutation / neglected
+  polar motion). The satellite path is already full-accuracy; only the
+  backdrop is approximate, and at ~1" it's already sub-pixel, so this is a
+  consistency/correctness nicety, not a visible fix.
+  - **Feasibility (verified against satkit 0.18.1):** the nutation tables can
+    be seeded as singletons from baked-in bytes, exactly like the ephemeris
+    and EOP. satkit exposes `frametransform::init_iers_table_from_bytes(id,
+    bytes)` (re-export of `ierstable::init_from_bytes`) over three
+    `OnceLock<IERSTable>` singletons keyed by `IersTableId::{Tab5A, Tab5B,
+    Tab5D}`. Seed all three in `sky::init_satkit()` *before* the first sky
+    transform — otherwise `table()`'s lazy `get_or_init` wins and
+    `IERSTable::from_file(...).unwrap()` resolves a data dir (recreating the
+    stray `satkit-data` dir), tries to download from
+    `https://storage.googleapis.com/astrokit-astro-data/`, and panics if the
+    file is absent (same failure mode the EOP seed already prevents).
+  - **Real work beyond seeding:** bundle three small text files
+    (`tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` — KB each, negligible binary
+    cost) via `build.rs` (`EMBEDS` table → `assets/` → `OUT_DIR`) and
+    `include_bytes!` them in `sky.rs`; flip the two transform calls to the
+    non-`approx` versions; and update every "sky is `*_approx`" claim in
+    `CLAUDE.md`, `MEMORY.md`, and the `sky.rs` / `init_satkit` doc-comments in
+    the same change.
+
+---
+
 ## Conventions
 
 ### Coordinate & mapping (used consistently everywhere — see `MEMORY.md` for formulas)
