@@ -42,7 +42,10 @@ Runtime:
   transforms). Defaults are off to drop its `download` feature (we download the
   ephemeris ourselves in build.rs) and `omm-xml`. **The ephemeris needs the
   DE440 binary** (`linux_p1550p2650.440`), which we embed via `include_bytes!`
-  and load with `jplephem::init_from_bytes`; everything else is data-free. Pulls
+  and load with `jplephem::init_from_bytes`; everything else is data-free.
+  (Frame transforms still *read* satkit's global EOP table on first use, which
+  would create an empty `satkit-data` dir; `sky::init_satkit` pre-seeds an empty
+  EOP table to keep zeros and suppress the dir — see §16.8.) Pulls
   `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
   transitively.
 
@@ -169,22 +172,31 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   via `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
   relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
   now an inertial look direction, not geography. Owner-requested.
-- **Phase 9** (2026-06-19): **embedded ephemeris.** The DE440 binary is no
-  longer a runtime side file. build.rs downloads it into `assets/` (the cached
-  download, like the textures) and copies it into `OUT_DIR`; `sky.rs` embeds it
-  with `include_bytes!` and loads it into satkit's singleton via
-  `jplephem::init_from_bytes` (satkit 0.18.1 entry point for embedded use).
+- **Phase 9** (2026-06-19): **embedded ephemeris + offline EOP.** The DE440
+  binary is no longer a runtime side file. build.rs downloads it into `assets/`
+  (the cached download, like the textures) and copies it into `OUT_DIR`;
+  `sky.rs` embeds it with `include_bytes!` and loads it into satkit's singleton
+  via `jplephem::init_from_bytes` (satkit 0.18.1 entry point for embedded use).
   `set_datadir` and the `data/` dir are gone, so the binary is self-contained
   (~+98 MB) with no runtime data dependency. `init_data_dir` renamed
-  `init_ephemeris`. Owner-requested.
+  `init_satkit`. **Also** (2026-06-19): running the binary was creating an empty
+  `satkit-data` dir next to it — satkit's global EOP table lazily resolves a
+  data dir on first read (and *creates* it), and that read happens on every
+  frame transform, even the EOP-free `*_approx` ones (`gmst` → UT1 conversion)
+  and `qteme2itrf` (polar motion). Fix: `init_satkit` now also pre-seeds the
+  EOP singleton with an empty table (`earth_orientation_params::init_from_bytes`
+  of a header-only CSV) + `disable_eop_time_warning()`, which consumes satkit's
+  one-shot lazy load so the dir is never created; lookups still return zeros, so
+  the result is numerically identical. Owner-requested.
 
 ---
 
 ## 3. Application shell (`src/main.rs`)
 
-A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_ephemeris()`
-(loads the embedded DE440 ephemeris into satkit before any ephemeris use), then
-builds an `EventLoop`, sets `ControlFlow::Wait`, runs `App::default()`.
+A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_satkit()`
+(seeds satkit's globals - the embedded DE440 ephemeris and an empty EOP table -
+before any ephemeris/frame-transform use), then builds an `EventLoop`, sets
+`ControlFlow::Wait`, runs `App::default()`.
 
 - `App { camera: Camera, sky: Sky, satellite: Satellite, clock: Clock,
   controller: Controller, gfx: Option<Gfx> }`. Camera/sky/satellite/clock
@@ -428,14 +440,26 @@ world frame; recomputed every running frame (cheap: ephemeris interp + a few
 rotations). Geocentric model — Earth stays the globe at the origin. **For the
 full pipeline, frames, and math see §16** (this is the module-level summary).
 
-- `init_ephemeris()` calls `satkit::jplephem::init_from_bytes(EPHEMERIS)` once
-  at the top of `main` (before the first ephemeris use), where `EPHEMERIS` is
-  the DE440 binary embedded via `include_bytes!(concat!(env!("OUT_DIR"),
-  "/linux_p1550p2650.440"))`. `init_from_bytes` sets satkit's `JPL_INSTANCE`
-  `OnceLock` (settable once); it **must** run before any position query, else
-  satkit's lazy disk loader wins and `init_from_bytes` returns
-  `AlreadyInitialized`. No `set_datadir`/`data/` dir and no EOP/space-weather
-  bundle is needed (the `*_approx` transforms are EOP-free).
+- `init_satkit()` seeds two satkit globals once at the top of `main` (before
+  the first ephemeris/frame-transform use):
+  - `satkit::jplephem::init_from_bytes(EPHEMERIS)`, where `EPHEMERIS` is the
+    DE440 binary embedded via `include_bytes!(concat!(env!("OUT_DIR"),
+    "/linux_p1550p2650.440"))`. Sets satkit's `JPL_INSTANCE` `OnceLock`
+    (settable once); **must** run before any position query, else satkit's lazy
+    disk loader wins and this returns `AlreadyInitialized`.
+  - `satkit::earth_orientation_params::init_from_bytes(b"header\n")` +
+    `disable_eop_time_warning()`. This seeds an **empty** EOP table (parse_csv
+    skips the header line → zero entries). Why it's needed: every frame
+    transform reads satkit's global EOP table on first use - including the
+    EOP-free `*_approx` ones, because `gmst` does a UT1 conversion that consults
+    it, and `qteme2itrf` reads polar motion - and satkit's default EOP loader
+    *resolves a data dir and creates an empty `satkit-data` dir next to the
+    binary* as a side effect. Seeding empty consumes the one-shot lazy load
+    (`DEFAULT_LOAD_ONCE`) so that dir is never created; lookups still return
+    zeros (we run EOP-free), so the numbers are unchanged. **Don't remove the
+    seed** - the dir comes back.
+  - Net: no `set_datadir`/`data/` dir, no EOP/space-weather bundle, no
+    `satkit-data` dir - the app is fully offline and data-dir-free.
 - **Sun**: `geocentric_pos(SolarSystem::Sun, time)` → GCRF position (meters);
   `qgcrf2itrf_approx(time) * sun_gcrf` → standard ITRF; then permute to the
   world frame and normalize → `sun_dir`.
@@ -452,6 +476,9 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
   `star_rot_inv` is a proper rotation (det 1, orthonormal to ~6e-8).
 - **Accuracy**: the `*_approx` (IAU-76/FK5) transforms are ~1 arcsec and need
   **no EOP data** — only the ephemeris file. 1 arcsec is well sub-pixel here.
+  (They still *read* satkit's EOP global on first use — see §15 / §16.8 — so we
+  pre-seed it empty in `init_satkit` to keep zeros and avoid the `satkit-data`
+  dir.)
 - `subsolar_lat_deg`/`subsolar_lon_deg` (from `sun_dir`) are shown read-only
   in the panel (the old sliders are gone).
 
@@ -474,9 +501,12 @@ math see §16** (this is the module-level summary).
   &[time]) -> SGP4State`. `state.pos` is a `DMatrix<f64>` shaped **3×N** (one
   column per time), in **meters**, **TEME** frame. Column 0 → a `Vector3`
   (`numeris`, ctor takes `[[f64;1];3]`).
-- **TEME→ITRF**: `qteme2itrf(&time) * teme` — a GMST-only rotation about the
-  polar axis (the returned quaternion has x=y=0), so it needs **no EOP / data
-  files**. Then `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` → (lat, lon,
+- **TEME→ITRF**: `qteme2itrf(&time) * teme` — with our empty EOP table the
+  polar-motion term is zero, so this is effectively a GMST rotation about the
+  polar axis, needing **no EOP/data files** for the result. (It does read
+  satkit's EOP global on first use; `init_satkit` seeds it empty so no
+  `satkit-data` dir is created — see §15 / §16.8.) Then
+  `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` → (lat, lon,
   height-above-ellipsoid).
 - **To world space**: rather than permute ECEF axes, reconstruct the point
   with our own helpers: `earth::surface_position(lat, lon) +
@@ -1128,8 +1158,21 @@ version bump — this crate's API is still moving.
   require downloaded data — fetched by `satkit::utils::update_datafiles(None,
   false)` (needs the `download` feature) into `satkit::utils::datadir()`, and
   they will fail/panic if it's missing. **(verified)** `sgp4`, `qteme2itrf`,
-  `gmst`, and `ITRFCoord` need **no** data files. If you adopt a function that
-  needs EOP, prefer the `*_approx` variants (GMST-only) to stay data-free.
+  `gmst`, and `ITRFCoord` produce correct results with **no** data files. But
+  note `qteme2itrf` and `gmst` (and the `*_approx` transforms) still *read*
+  satkit's global EOP table on first use, which lazily creates an empty
+  `satkit-data` dir (see Frame transforms above); we suppress that by seeding an
+  empty EOP table in `init_satkit`. If you adopt a function that needs real EOP,
+  prefer the `*_approx` variants and pre-seed EOP (`init_from_bytes`) rather
+  than letting the lazy disk loader run.
+- **EOP table — `satkit::earth_orientation_params`**: a global EOP singleton.
+  `init_from_bytes(&[u8])` / `init_from_path(&Path)` seed it (CelesTrak
+  `EOP-All.csv` text; `parse_csv` skips the header line, so a header-only buffer
+  → an empty/all-zeros table) and consume the one-shot lazy default load.
+  `disable_eop_time_warning()` silences the out-of-range warning. `get(tm) ->
+  Option<[f64;6]>` returns `[dut1, xp, yp, lod, dX, dY]` or `None` (→ callers
+  use zeros). We call the two `init_*`-style setters in `init_satkit` to stay
+  fully offline (see §16.8).
 
 ### Time — `satkit::Instant`
 - Microseconds since the Unix epoch; **`Copy`** **(verified)** (so `*instant`
@@ -1177,15 +1220,28 @@ version bump — this crate's API is still moving.
 - ISS TLE at its epoch → |pos| ≈ 6787 km (≈ 420 km altitude). **(verified)**
 
 ### Frame transforms — `satkit::frametransform`
+- **EOP side effect (satkit 0.18.1 — important).** *Every* transform here reads
+  satkit's global EOP table on first use, and that read triggers a lazy default
+  load that **resolves a data dir and creates an empty `satkit-data` dir** next
+  to the binary (`earth_orientation_params::get`/UT1 conversion →
+  `ensure_default_loaded` → `datadir()`). Even the `*_approx` "EOP-free"
+  transforms hit it, because `gmst` converts to UT1 (which reads `dut1` from the
+  table), and `qteme2itrf` reads polar motion. Without data the lookups return
+  zeros (so the math is genuinely EOP-free), but the **dir is still created** as
+  a side effect. We suppress it by pre-seeding an empty EOP table in
+  `init_satkit` (see §3 / §16.8). So "EOP-free" below means "result uses zeros",
+  **not** "never touches the EOP global".
 - `qteme2itrf<T: TimeLike>(tm: &T) -> Quaternion` **(verified)**: TEME →
-  ITRF (Earth-fixed/ECEF). **GMST-only** — the returned quaternion is a pure
-  rotation about the polar axis (`x = y = 0`), i.e. it ignores polar motion, so
-  it needs no EOP. `gmst(...)`/`earth_rotation_angle(...)` are also data-free.
+  ITRF (Earth-fixed/ECEF). With our empty EOP table the polar-motion term is
+  zero, so the result is effectively a pure GMST rotation about the polar axis.
+  `gmst(...)`/`earth_rotation_angle(...)` are pure math but `gmst` reads EOP via
+  its UT1 conversion (see the side-effect note above).
 - **GCRF ↔ ITRF**: full `qgcrf2itrf`/`qitrf2gcrf` (IERS 2010, **needs EOP
-  data**) and **`qgcrf2itrf_approx`/`qitrf2gcrf_approx`** (IAU-76/FK5, ~1
-  arcsec, **EOP-free** — what we use) **(verified data-free)**. Each
-  `<T: TimeLike>(tm: &T) -> Quaternion`. `*_approx` is the conjugate pair.
-  State (pos+vel) variants: `gcrf_to_itrf_state[_approx]` etc.
+  data**, also uses the `ierstable` IERS files) and
+  **`qgcrf2itrf_approx`/`qitrf2gcrf_approx`** (IAU-76/FK5, ~1 arcsec, EOP-free
+  result — what we use). Each `<T: TimeLike>(tm: &T) -> Quaternion`. `*_approx`
+  is the conjugate pair. State (pos+vel) variants: `gcrf_to_itrf_state[_approx]`
+  etc.
 - Apply a quaternion to a vector with `q * v` (numeris `Quaternion: Mul<Vector3>`);
   `Quaternion` is `Copy`, so one `q` can rotate several vectors **(verified)** —
   build a `Mat3` by rotating the three basis vectors.
@@ -1218,9 +1274,14 @@ version bump — this crate's API is still moving.
 - `set_datadir(d: &Path) -> Result<()>` **(verified)**: sets a global
   `OnceCell` (settable **once**; later calls error), validates the dir exists.
 - `datadir() -> Result<PathBuf>`: resolves the `SATKIT_DATA` env var (or the
-  `set_datadir` singleton). `data_found() -> bool` checks the **full** bundle
-  (EOP/space-weather), so it returns **false** even when the ephemeris alone is
-  present **(verified)** — don't gate ephemeris use on it.
+  `set_datadir` singleton). **Side effect (root cause of the `satkit-data`
+  dir):** if no populated/writeable candidate exists it `create_dir_all`s the
+  first writeable candidate — `${binary_dir}/satkit-data` — and returns it. It's
+  called transitively by the EOP lazy load, which is why any frame transform
+  used to spawn that empty dir until we pre-seeded EOP (§16.8). `data_found() ->
+  bool` checks the **full** bundle (EOP/space-weather), so it returns **false**
+  even when the ephemeris alone is present **(verified)** — don't gate ephemeris
+  use on it.
 - `download_file`/`download_if_not_exist`/`update_datafiles` (the last gated on
   the `download` feature) fetch satkit's data bundle; we don't use them — the
   ephemeris is downloaded directly in build.rs.
@@ -1326,9 +1387,11 @@ Pipeline (TLE → world-space km point), re-run every running frame by
    DMatrix<f64>, errcode }`. `pos` is **3×N** (one column per input time) in
    **meters**, **TEME** frame. We pass one time, take column 0 →
    `Vector3([[x],[y],[z]])`.
-3. **TEME → ITRF**: `qteme2itrf(&time) * teme`. This is a **GMST-only**
-   rotation about the polar axis (the returned quaternion has `x=y=0`); it
-   ignores polar motion, so it needs **no EOP data**. Result is standard ECEF,
+3. **TEME → ITRF**: `qteme2itrf(&time) * teme`. With our empty EOP table the
+   polar-motion term is zero, so this is effectively a **GMST** rotation about
+   the polar axis (`x=y=0` in the quaternion); it needs **no EOP data** for the
+   result (it does read satkit's EOP global — seeded empty in `init_satkit`, §15
+   / §16.8). Result is standard ECEF,
    meters.
 4. **ITRF → geodetic**: `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` →
    `(lat, lon, hae)` (WGS84; radians, meters).
@@ -1404,8 +1467,9 @@ Sun consistency) is physically correct.
 - **Data files**: only the **JPL DE440 ephemeris** is needed —
   `linux_p1550p2650.440` (~98 MiB), and it is **embedded** in the binary.
   `build.rs` downloads it into the gitignored `assets/` and copies it into
-  `OUT_DIR`; `sky.rs` `include_bytes!`-es it and `sky::init_ephemeris()`
-  (called once at the top of `main`) loads it via `jplephem::init_from_bytes`.
+  `OUT_DIR`; `sky.rs` `include_bytes!`-es it and `sky::init_satkit()` (called
+  once at the top of `main`) loads it via `jplephem::init_from_bytes` and also
+  seeds an empty EOP table (so satkit never creates a `satkit-data` dir — §16.8).
   Everything else is data-free because we use the EOP-free `*_approx`
   Earth-orientation transforms. No runtime data file, so the binary is
   self-contained — nothing has to stay on disk between build and run.

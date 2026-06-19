@@ -119,6 +119,20 @@ cargo run --release
   2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
   uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
   → world-frame permutation); do not replace it with a sun-attached rotation.
+- **`init_satkit()` must seed an empty EOP table, not just the ephemeris.**
+  Every satkit frame transform reads its global Earth-orientation-parameter
+  (EOP) table on first use — even the EOP-free `*_approx` ones, because `gmst`
+  does a UT1 conversion that consults it, and `qteme2itrf` reads polar motion.
+  satkit's default EOP loader *resolves a data directory and creates an empty
+  `satkit-data` dir next to the binary* as a side effect (then, with our
+  `download` feature off, leaves it empty and falls back to zeros). We run
+  EOP-free by design, so `init_satkit` pre-seeds the EOP singleton with an
+  empty table via `earth_orientation_params::init_from_bytes(b"header\n")` (a
+  header-only CSV → zero entries) plus `disable_eop_time_warning()`. This
+  consumes satkit's one-shot lazy load so the dir is never created, while every
+  EOP lookup still returns the zeros we already relied on (numerically
+  identical). **Do not drop the EOP seed** — the empty `satkit-data` dir comes
+  back. (Run from a clean dir to verify none appears.)
 - **The camera is in the inertial (star-fixed) frame** (owner-requested
   2026-06-18). `Camera`'s orbital rig is built around the origin as before but
   interpreted in the celestial frame, then rotated into the Earth-fixed world
@@ -264,9 +278,10 @@ the owner. Re-introducing them silently is a regression.
   the TLE epoch.
 - **Sun / Earth orientation / star map**: `src/globe/sky.rs` (`Sky::at(time)`
   → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
-  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_ephemeris()` (called once
-  at the top of `main`, before any `Sky` is built) loads the embedded ephemeris
-  into satkit via `jplephem::init_from_bytes`.
+  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()` (called once at
+  the top of `main`, before any `Sky` is built) seeds satkit's global state:
+  the embedded ephemeris (`jplephem::init_from_bytes`) **and** an empty EOP
+  table (`earth_orientation_params::init_from_bytes`) — see the next rule.
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
   **including** the JPL ephemeris (`linux_p1550p2650.440`, ~98 MB): `build.rs`
   downloads it into the gitignored `assets/` and copies it into `OUT_DIR`, and
@@ -293,7 +308,9 @@ the owner. Re-introducing them silently is a regression.
   the binary is self-contained - but a fresh checkout still needs network for
   the first build. Earth orientation uses the EOP-free `*_approx` transforms
   (~1 arcsec, sub-pixel), so **no EOP/space-weather data is needed** — only the
-  ephemeris.
+  ephemeris. (satkit would still try to *resolve* an EOP data dir on first use
+  and create an empty `satkit-data` dir; `init_satkit` seeds an empty EOP table
+  up front to suppress that — see the EOP-seed golden rule above.)
 - **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
   **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
   personality. MSVC on Windows is unaffected; do not make it

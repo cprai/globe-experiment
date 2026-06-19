@@ -17,9 +17,10 @@ use globe::satellite::Satellite;
 use globe::sky::Sky;
 
 fn main() {
-    // Load the embedded JPL ephemeris into satkit before anything else
-    // (App::default below builds the Sky, which reads the ephemeris).
-    globe::sky::init_ephemeris();
+    // Seed satkit's global state (embedded ephemeris + empty EOP table) before
+    // anything else (App::default below builds the Sky, which reads the
+    // ephemeris). Doing it here keeps satkit fully offline and data-dir-free.
+    globe::sky::init_satkit();
 
     let event_loop = EventLoop::new().expect("create event loop");
     // Frames are driven by explicit redraw requests (input, inertia,

@@ -24,13 +24,36 @@ use satkit::{Instant, SolarSystem, Vector3};
 /// `include_bytes!` can pick it up - no runtime data file.
 const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2650.440"));
 
-/// Loads the embedded JPL ephemeris into satkit's global singleton. Must be
-/// called once at startup, before any ephemeris use: satkit lazily loads from
-/// disk on the first position query otherwise, and then this would fail with
-/// `AlreadyInitialized`. Panics if the embedded bytes fail to parse (a broken
-/// build).
-pub fn init_ephemeris() {
+/// Initializes satkit's global state for fully offline, data-dir-free use.
+/// Must be called once at startup, before any ephemeris/frame-transform use.
+///
+/// Two pieces of satkit global state are seeded here:
+///
+/// 1. The JPL ephemeris singleton, from the embedded bytes. satkit lazily
+///    loads it from disk on the first position query otherwise, after which
+///    this would fail with `AlreadyInitialized`.
+///
+/// 2. The Earth-orientation-parameter (EOP) table, seeded empty. This is the
+///    subtle one: on its first read, satkit's EOP table lazily *resolves a
+///    data directory* and creates an empty `satkit-data` dir next to the
+///    binary as a side effect (then, with our `download` feature off, fails to
+///    populate it and falls back to zeros). EOP is read by every frame
+///    transform - including the EOP-free `*_approx` ones, because `gmst` does
+///    a UT1 conversion that consults it. We deliberately run EOP-free (zeros,
+///    ~1 arcsec), so we pre-seed the EOP singleton with an empty table (a
+///    header-only CSV parses to zero entries): this consumes satkit's one-shot
+///    default load so the directory is never created, while every EOP lookup
+///    still returns the same zeros we already relied on. The warning that an
+///    empty table would print on each out-of-range lookup is silenced too.
+///
+/// Panics if the embedded ephemeris bytes fail to parse (a broken build).
+pub fn init_satkit() {
     satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
+
+    // A header-only CSV: parse_csv skips the first line, so this yields an
+    // empty (all-zeros) EOP table without touching the filesystem.
+    satkit::earth_orientation_params::init_from_bytes(b"header\n").expect("seed empty EOP table");
+    satkit::earth_orientation_params::disable_eop_time_warning();
 }
 
 /// Sun direction and star-map orientation for one instant, in the renderer's

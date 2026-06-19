@@ -4,10 +4,15 @@
 //! re-propagated each tick as the simulation clock advances.
 //!
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
-//! (`qteme2itrf`, a GMST-only rotation that needs no downloaded data files)
-//! -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a world-space
-//! point via the project's WGS84 helpers (`earth`), so the marker lands on
-//! exactly the same ellipsoid the globe mesh is built from.
+//! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
+//! world-space point via the project's WGS84 helpers (`earth`), so the marker
+//! lands on exactly the same ellipsoid the globe mesh is built from.
+//!
+//! `qteme2itrf` needs no data *file* (we run EOP-free, with zero polar motion),
+//! but it - like every satkit frame transform - reads satkit's global EOP
+//! table on first use, which lazily resolves a data dir and creates an empty
+//! `satkit-data` dir as a side effect. `sky::init_satkit` pre-seeds that table
+//! empty at startup to suppress the dir; see its docs.
 
 use glam::Vec3;
 use satkit::frametransform::qteme2itrf;
