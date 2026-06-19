@@ -41,9 +41,10 @@ struct Asset {
 const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
 
 /// JPL Development Ephemeris (DE440) binary, downloaded into the gitignored
-/// `data/` dir at build time and read at runtime by satkit's `jplephem` (the
-/// app points `SATKIT_DATA` there). At ~98 MiB it is far too large to embed
-/// in the binary like the textures, so it stays a side file the app loads.
+/// `assets/` dir at build time and copied into `OUT_DIR` so the runtime can
+/// `include_bytes!` it. At ~98 MiB it is large, but embedding it (like the
+/// textures) gives a self-contained binary with no runtime data file - satkit
+/// loads it via `jplephem::init_from_bytes`.
 const EPHEMERIS_URL: &str =
     "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440";
 
@@ -53,7 +54,7 @@ const EPHEMERIS_LIMIT: u64 = 256 * 1024 * 1024;
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
 
-    download_ephemeris();
+    embed_ephemeris(&out_dir);
 
     for asset in ASSETS {
         let source = download_if_missing(asset.url);
@@ -63,37 +64,41 @@ fn main() {
     bake_luts(&out_dir);
 }
 
-/// Downloads the JPL ephemeris into `data/` unless it is already there, and
-/// registers it with cargo so deleting it re-downloads on the next build. The
-/// file is read at runtime (not embedded), so it lands in the project's
-/// `data/` dir rather than `OUT_DIR`.
-fn download_ephemeris() {
+/// Downloads the JPL ephemeris into `assets/` unless it is already there, then
+/// copies it into `OUT_DIR` so the runtime can `include_bytes!` it. Registers
+/// the cached source with cargo so deleting it re-downloads on the next build.
+/// The cached download lives in `assets/` (like the textures) while the copy
+/// in `OUT_DIR` is what gets embedded.
+fn embed_ephemeris(out_dir: &Path) {
     let name = EPHEMERIS_URL
         .rsplit('/')
         .next()
         .expect("ephemeris url has a file name");
-    let path = PathBuf::from(format!("data/{name}"));
+    let source = PathBuf::from(format!("assets/{name}"));
 
-    println!("cargo::rerun-if-changed={}", path.display());
+    println!("cargo::rerun-if-changed={}", source.display());
 
-    if path.exists() {
-        return;
+    if !source.exists() {
+        fs::create_dir_all("assets")
+            .unwrap_or_else(|error| panic!("failed to create assets directory: {error}"));
+
+        let mut response = ureq::get(EPHEMERIS_URL)
+            .call()
+            .unwrap_or_else(|error| panic!("failed to download {EPHEMERIS_URL}: {error}"));
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(EPHEMERIS_LIMIT)
+            .read_to_vec()
+            .unwrap_or_else(|error| panic!("failed to read response of {EPHEMERIS_URL}: {error}"));
+
+        fs::write(&source, bytes)
+            .unwrap_or_else(|error| panic!("failed to write {source:?}: {error}"));
     }
 
-    fs::create_dir_all("data")
-        .unwrap_or_else(|error| panic!("failed to create data directory: {error}"));
-
-    let mut response = ureq::get(EPHEMERIS_URL)
-        .call()
-        .unwrap_or_else(|error| panic!("failed to download {EPHEMERIS_URL}: {error}"));
-    let bytes = response
-        .body_mut()
-        .with_config()
-        .limit(EPHEMERIS_LIMIT)
-        .read_to_vec()
-        .unwrap_or_else(|error| panic!("failed to read response of {EPHEMERIS_URL}: {error}"));
-
-    fs::write(&path, bytes).unwrap_or_else(|error| panic!("failed to write {path:?}: {error}"));
+    let dest = out_dir.join(name);
+    fs::copy(&source, &dest)
+        .unwrap_or_else(|error| panic!("failed to copy {source:?} to {dest:?}: {error}"));
 }
 
 /// Bakes the atmosphere LUTs and writes them as uncompressed

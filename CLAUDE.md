@@ -42,8 +42,10 @@ cargo run --release
 ```
 
 - **First build needs a network connection** and is slow (~1.5 min extra):
-  `build.rs` downloads five textures into the gitignored `assets/` and
-  BC7-encodes them once. Subsequent builds reuse the cached `OUT_DIR/*.ktx2`.
+  `build.rs` downloads five textures plus the ~98 MB JPL ephemeris into the
+  gitignored `assets/`, BC7-encodes the textures, and copies the ephemeris
+  into `OUT_DIR`. Subsequent builds reuse the cached `OUT_DIR/*.ktx2` and the
+  cached `assets/` downloads.
 - Smoke test: `timeout <n> cargo run 2>&1 | head` (or redirect to a file —
   pipe buffering can swallow output). wgpu validation errors panic in the
   first frames, so a clean 15-25 s run means pipelines/bindings are valid.
@@ -262,12 +264,13 @@ the owner. Re-introducing them silently is a regression.
   the TLE epoch.
 - **Sun / Earth orientation / star map**: `src/globe/sky.rs` (`Sky::at(time)`
   → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's JPL ephemeris +
-  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_data_dir()` (called once
-  at the top of `main`) points satkit at the data dir.
-- All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
-  **Exception:** the JPL ephemeris (`data/linux_p1550p2650.440`, ~98 MB) is
-  **not** embedded — `build.rs` downloads it into the gitignored `data/` dir
-  and the app reads it at runtime via `SATKIT_DATA` (`set_datadir`).
+  `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_ephemeris()` (called once
+  at the top of `main`, before any `Sky` is built) loads the embedded ephemeris
+  into satkit via `jplephem::init_from_bytes`.
+- All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
+  **including** the JPL ephemeris (`linux_p1550p2650.440`, ~98 MB): `build.rs`
+  downloads it into the gitignored `assets/` and copies it into `OUT_DIR`, and
+  `sky.rs` embeds it with `include_bytes!`. No runtime data file.
 
 ---
 
@@ -279,17 +282,18 @@ the owner. Re-introducing them silently is a regression.
   far zoom; the city-light dither can twinkle/alias when blobs shrink
   sub-pixel at low zoom (no MSAA either). Mitigations are documented but
   not implemented.
-- **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs are embedded via
-  `include_bytes!`, so the binary is large and links slowly. Runtime file
-  loading is a known, unimplemented follow-up.
-- **JPL ephemeris data file required at runtime.** `build.rs` downloads
-  `data/linux_p1550p2650.440` (DE440, ~98 MB) from JPL on the first build
-  (adds to the already-network-dependent first build), and the app reads it at
-  runtime from the project's `data/` dir (resolved via `set_datadir` to
-  `CARGO_MANIFEST_DIR/data`). So the **project dir must stay put between build
-  and run**, and a fresh checkout needs network for the first build. Earth
-  orientation uses the EOP-free `*_approx` transforms (~1 arcsec, sub-pixel),
-  so **no EOP/space-weather data is needed** — only the ephemeris.
+- **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs + the ~98 MB JPL ephemeris
+  are embedded via `include_bytes!`, so the binary is large (~260 MB) and links
+  slowly. Runtime file loading is a known, unimplemented follow-up.
+- **JPL ephemeris is embedded, not a runtime file.** `build.rs` downloads
+  `linux_p1550p2650.440` (DE440, ~98 MB) from JPL on the first build into the
+  gitignored `assets/` (adds to the already-network-dependent first build) and
+  copies it into `OUT_DIR`; `sky.rs` embeds it with `include_bytes!` and loads
+  it via `jplephem::init_from_bytes`. So there is **no runtime data file** -
+  the binary is self-contained - but a fresh checkout still needs network for
+  the first build. Earth orientation uses the EOP-free `*_approx` transforms
+  (~1 arcsec, sub-pixel), so **no EOP/space-weather data is needed** — only the
+  ephemeris.
 - **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
   **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
   personality. MSVC on Windows is unaffected; do not make it

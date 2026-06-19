@@ -14,8 +14,10 @@ cargo run --release
 That's it - the required textures (NASA-derived earth maps and a star
 field from [Solar System Scope](https://www.solarsystemscope.com/textures/))
 and the JPL DE440 planetary ephemeris are downloaded automatically (into
-`assets/` and `data/`) on the first build, so the first build needs a network
-connection and takes a little longer (the ephemeris is ~98 MB).
+`assets/`) on the first build, so the first build needs a network connection
+and takes a little longer (the ephemeris is ~98 MB). Both the textures and the
+ephemeris are embedded into the binary, so the build is self-contained and
+needs no data files at runtime.
 
 ## Controls
 

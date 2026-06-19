@@ -14,21 +14,23 @@
 //! permutation `p` maps (x,y,z) -> (y,z,x) - the same permutation the
 //! satellite path expresses via `earth::surface_position`/`geodetic_normal`.
 
-use std::path::Path;
-
 use glam::{Mat3, Vec3};
 use satkit::frametransform::{qgcrf2itrf_approx, qitrf2gcrf_approx};
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, Vector3};
 
-/// The build-downloaded ephemeris data directory (see build.rs).
-const DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/data");
+/// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it into
+/// the gitignored `assets/` dir and copies it into `OUT_DIR` so this
+/// `include_bytes!` can pick it up - no runtime data file.
+const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2650.440"));
 
-/// Points satkit at the build-downloaded ephemeris data. Must be called once
-/// at startup, before any ephemeris use. Panics if the data dir is missing
-/// (build.rs downloads it, so a missing dir is a broken build).
-pub fn init_data_dir() {
-    satkit::utils::set_datadir(Path::new(DATA_DIR)).expect("set satkit data dir");
+/// Loads the embedded JPL ephemeris into satkit's global singleton. Must be
+/// called once at startup, before any ephemeris use: satkit lazily loads from
+/// disk on the first position query otherwise, and then this would fail with
+/// `AlreadyInitialized`. Panics if the embedded bytes fail to parse (a broken
+/// build).
+pub fn init_ephemeris() {
+    satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
 }
 
 /// Sun direction and star-map orientation for one instant, in the renderer's

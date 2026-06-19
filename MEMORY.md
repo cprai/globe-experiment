@@ -40,8 +40,9 @@ Runtime:
   JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
   orientation (`qgcrf2itrf_approx`/`qitrf2gcrf_approx`, the EOP-free ~1 arcsec
   transforms). Defaults are off to drop its `download` feature (we download the
-  ephemeris ourselves in build.rs) and `omm-xml`. **The ephemeris needs a data
-  file** (`data/linux_p1550p2650.440`); everything else is data-free. Pulls
+  ephemeris ourselves in build.rs) and `omm-xml`. **The ephemeris needs the
+  DE440 binary** (`linux_p1550p2650.440`), which we embed via `include_bytes!`
+  and load with `jplephem::init_from_bytes`; everything else is data-free. Pulls
   `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
   transitively.
 
@@ -84,18 +85,18 @@ src/globe/input.rs       Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
 src/globe/camera.rs      orbital camera (km world space)
 src/globe/sky.rs         ephemeris-driven Sun dir + star-map orientation
-                         (JPL DE440 + GCRF<->ITRF); sets satkit's data dir
+                         (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
 src/globe/satellite.rs   TLE parse + satkit SGP4 -> world-space km marker pos;
                          update_to(time) re-propagates as the clock advances
 src/globe/clock.rs       simulation Clock: wall-dt x speed, play/pause
 src/globe/mesh.rs        WGS84-ellipsoid generator (km, with geodetic normals)
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
-assets/                  gitignored; downloaded source textures (build input)
-data/                    gitignored; build-downloaded JPL DE440 ephemeris,
-                         read at runtime via SATKIT_DATA
+assets/                  gitignored; build-downloaded source textures + JPL
+                         DE440 ephemeris (build inputs, cached downloads)
                          + TLE.txt (station TLE, embedded via include_str!)
-OUT_DIR/*.ktx2           gitignored build artifacts, include_bytes!'d:
-                         5 BC7 textures + 3 f16 LUTs
+OUT_DIR/                 gitignored build artifacts, include_bytes!'d:
+                         5 BC7 textures + 3 f16 LUTs (*.ktx2) + the copied
+                         JPL DE440 ephemeris (linux_p1550p2650.440)
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
@@ -157,8 +158,9 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   by Earth's real GCRF↔ITRF attitude (`q*_approx`, EOP-free), both for the
   clock's time and updated every running frame alongside the satellite. This
   **reverses** the earlier deliberately-non-physical "sky attached to the sun"
-  rule (owner-requested). build.rs now downloads the DE440 file into `data/`;
-  the app points satkit there via `set_datadir`. The Sun lat/lon sliders are
+  rule (owner-requested). build.rs downloaded the DE440 file into `data/` and
+  the app pointed satkit there via `set_datadir` (**superseded in Phase 9** -
+  the ephemeris is now embedded). The Sun lat/lon sliders are
   gone; the panel shows the computed subsolar point read-only. The shader and
   its uniforms are unchanged - only the values of `sun_dir`/`star_rot_inv`.
 - **Phase 8** (2026-06-18): **inertial camera.** The camera's orbital rig is
@@ -167,14 +169,22 @@ inlined into `build.rs` as `mod atmosphere` (2026-06-13).
   via `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
   relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
   now an inertial look direction, not geography. Owner-requested.
+- **Phase 9** (2026-06-19): **embedded ephemeris.** The DE440 binary is no
+  longer a runtime side file. build.rs downloads it into `assets/` (the cached
+  download, like the textures) and copies it into `OUT_DIR`; `sky.rs` embeds it
+  with `include_bytes!` and loads it into satkit's singleton via
+  `jplephem::init_from_bytes` (satkit 0.18.1 entry point for embedded use).
+  `set_datadir` and the `data/` dir are gone, so the binary is self-contained
+  (~+98 MB) with no runtime data dependency. `init_data_dir` renamed
+  `init_ephemeris`. Owner-requested.
 
 ---
 
 ## 3. Application shell (`src/main.rs`)
 
-A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_data_dir()`
-(points satkit at `data/` before any ephemeris use), then builds an
-`EventLoop`, sets `ControlFlow::Wait`, runs `App::default()`.
+A winit `ApplicationHandler`. `main()` first calls `globe::sky::init_ephemeris()`
+(loads the embedded DE440 ephemeris into satkit before any ephemeris use), then
+builds an `EventLoop`, sets `ControlFlow::Wait`, runs `App::default()`.
 
 - `App { camera: Camera, sky: Sky, satellite: Satellite, clock: Clock,
   controller: Controller, gfx: Option<Gfx> }`. Camera/sky/satellite/clock
@@ -418,11 +428,14 @@ world frame; recomputed every running frame (cheap: ephemeris interp + a few
 rotations). Geocentric model — Earth stays the globe at the origin. **For the
 full pipeline, frames, and math see §16** (this is the module-level summary).
 
-- `init_data_dir()` calls `satkit::utils::set_datadir(CARGO_MANIFEST_DIR/data)`
-  once at the top of `main` (before the first ephemeris use). `set_datadir`
-  sets a global `OnceCell` (settable once). NB: `data_found()` returns false
-  here (it checks for the full EOP/space-weather bundle), but the ephemeris
-  resolves fine via autodetect, so we don't gate on it.
+- `init_ephemeris()` calls `satkit::jplephem::init_from_bytes(EPHEMERIS)` once
+  at the top of `main` (before the first ephemeris use), where `EPHEMERIS` is
+  the DE440 binary embedded via `include_bytes!(concat!(env!("OUT_DIR"),
+  "/linux_p1550p2650.440"))`. `init_from_bytes` sets satkit's `JPL_INSTANCE`
+  `OnceLock` (settable once); it **must** run before any position query, else
+  satkit's lazy disk loader wins and `init_from_bytes` returns
+  `AlreadyInitialized`. No `set_datadir`/`data/` dir and no EOP/space-weather
+  bundle is needed (the `*_approx` transforms are EOP-free).
 - **Sun**: `geocentric_pos(SolarSystem::Sun, time)` → GCRF position (meters);
   `qgcrf2itrf_approx(time) * sun_gcrf` → standard ITRF; then permute to the
   world frame and normalize → `sun_dir`.
@@ -937,17 +950,18 @@ tables. The whole bake is sub-second.
 
 ## 12. Build pipeline (`build.rs`)
 
-Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es), plus the
-ephemeris into `data/` (read at runtime, not embedded). `assets/` holds only
-the downloaded source images (gitignored build input).
+Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es). `assets/`
+holds the cached downloads (source images + the ephemeris) as gitignored build
+input.
 
-### 0. Ephemeris download
-`download_ephemeris()` fetches the JPL DE440 binary `linux_p1550p2650.440`
-(~98 MiB) from `ssd.jpl.nasa.gov` into `data/` via ureq (256 MiB cap), unless
-already present; emits `cargo::rerun-if-changed=data/<name>` so deleting it
-re-downloads. It is **not** transcoded or embedded — the app reads it at
-runtime (satkit `jplephem`) via `SATKIT_DATA`. Adds ~98 MB to the
-network-dependent first build.
+### 0. Ephemeris embed
+`embed_ephemeris(out_dir)` fetches the JPL DE440 binary `linux_p1550p2650.440`
+(~98 MiB) from `ssd.jpl.nasa.gov` into `assets/` via ureq (256 MiB cap), unless
+already present; emits `cargo::rerun-if-changed=assets/<name>` so deleting it
+re-downloads. It then **copies** the file into `OUT_DIR` so `sky.rs` can
+`include_bytes!` it — the ephemeris is embedded in the binary (loaded via
+satkit `jplephem::init_from_bytes`), so there is no runtime data file. Adds
+~98 MB to the network-dependent first build and to the binary.
 
 ### 1. Download
 `ASSETS`: five solarsystemscope.com textures, each tagged `srgb: bool` —
@@ -1037,7 +1051,8 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
 **`renderer.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
-**`src/globe/sky.rs`**: ephemeris `data/linux_p1550p2650.440` (DE440); Sun via
+**`src/globe/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440, loaded
+via `jplephem::init_from_bytes`); Sun via
 `jplephem::geocentric_pos(SolarSystem::Sun)`, Earth orientation via
 `q*2*_approx` (EOP-free ~1 arcsec); re-evaluated each running frame.
 **`src/globe/satellite.rs`**: TLE = `assets/TLE.txt` (ISS), via `satkit` 0.18
@@ -1183,13 +1198,23 @@ version bump — this crate's API is still moving.
   `satkit::jplephem::SolarSystem` which is private) variants: Mercury, Venus,
   EMB, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Moon, **Sun** (no Earth
   variant — it's the geocentric origin) **(verified)**.
-- **Needs a JPL DE data file.** Resolution order: env `SATKIT_JPLEPHEM_FILE`,
-  else autodetect `linux_p*.4XX`/`lnxp*.4XX` in the data dir, else fallback
-  `linux_p1550p2650.440` (DE440, ~98 MiB; JPL hosts it at
-  `ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440`). We
-  download it in build.rs into `data/` and point satkit there.
+- **Needs the JPL DE binary.** Two ways to provide it, both populating a
+  module-global `OnceLock` singleton:
+  - **`jplephem::init_from_bytes(&[u8]) -> Result<()>`** **(verified, what we
+    use)**: parse the DE binary from an in-memory buffer — the entry point for
+    embedded/bundled use. We `include_bytes!` the DE440 file and call this.
+    There is also `init_from_path(&Path)`. Both must run **before** any
+    position query, else the lazy disk loader has already initialized the
+    singleton and they return `Error::AlreadyInitialized`.
+  - **Lazy disk load** (if neither `init_*` is called): resolution order is env
+    `SATKIT_JPLEPHEM_FILE`, else autodetect `linux_p*.4XX`/`lnxp*.4XX` in the
+    data dir, else fallback `linux_p1550p2650.440` (DE440, ~98 MiB; JPL hosts it
+    at `ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440`). We
+    no longer use this path — we embed the file and `init_from_bytes` it.
 
 ### Data directory — `satkit::utils`
+(We no longer use any of these — the ephemeris is embedded and loaded via
+`jplephem::init_from_bytes`. Kept as reference for the lazy disk-load path.)
 - `set_datadir(d: &Path) -> Result<()>` **(verified)**: sets a global
   `OnceCell` (settable **once**; later calls error), validates the dir exists.
 - `datadir() -> Result<PathBuf>`: resolves the `SATKIT_DATA` env var (or the
@@ -1373,18 +1398,17 @@ Sun consistency) is physically correct.
   `omm-xml`); linear algebra is `numeris` (`Vector3`/`Quaternion`/`DMatrix`).
 - **Functions used**: `tle::TLE::load_3line`; `sgp4::sgp4`;
   `frametransform::{qteme2itrf, qgcrf2itrf_approx, qitrf2gcrf_approx}`;
-  `jplephem::geocentric_pos`; `itrfcoord::ITRFCoord::{from_vector,
-  to_geodetic_rad/deg}`; `utils::set_datadir`; types `Instant`, `Duration`,
-  `Vector3`, `SolarSystem`. Full signatures: §15.
+  `jplephem::{geocentric_pos, init_from_bytes}`;
+  `itrfcoord::ITRFCoord::{from_vector, to_geodetic_rad/deg}`; types `Instant`,
+  `Duration`, `Vector3`, `SolarSystem`. Full signatures: §15.
 - **Data files**: only the **JPL DE440 ephemeris** is needed —
-  `data/linux_p1550p2650.440` (~98 MiB). `build.rs` downloads it into the
-  gitignored `data/` dir; `sky::init_data_dir()` (called once at the top of
-  `main`) does `set_datadir(CARGO_MANIFEST_DIR/data)`. Everything else is
-  data-free because we use the EOP-free `*_approx` Earth-orientation
-  transforms. `data_found()` returns **false** (it checks the full EOP/space-
-  weather bundle) even though the ephemeris alone resolves fine — do not gate
-  on it. The project dir must stay put between build and run (the data path is
-  compiled in via `CARGO_MANIFEST_DIR`).
+  `linux_p1550p2650.440` (~98 MiB), and it is **embedded** in the binary.
+  `build.rs` downloads it into the gitignored `assets/` and copies it into
+  `OUT_DIR`; `sky.rs` `include_bytes!`-es it and `sky::init_ephemeris()`
+  (called once at the top of `main`) loads it via `jplephem::init_from_bytes`.
+  Everything else is data-free because we use the EOP-free `*_approx`
+  Earth-orientation transforms. No runtime data file, so the binary is
+  self-contained — nothing has to stay on disk between build and run.
 
 ### 16.9 Accuracy & limitations
 
@@ -1407,5 +1431,5 @@ Sun consistency) is physically correct.
   `0.9833 AU` (near the Jan-3 perihelion); 2024-07-01 → `+23.05°`, `1.0167 AU`
   (aphelion); +6 h → `lon −89°` (Sun moved ~90° west).
 - **star_rot_inv**: `det = 1.0`, orthonormal to ~6e-8 (a proper rotation).
-- **Data**: `set_datadir` resolves the build-downloaded ephemeris and
+- **Data**: `init_from_bytes` loads the embedded ephemeris and
   `geocentric_pos` succeeds offline.
