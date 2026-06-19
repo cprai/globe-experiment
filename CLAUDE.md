@@ -171,7 +171,7 @@ cargo run --release
   That rotation is produced by `SimulationState::celestial_to_world()` and applied
   in `ApplicationState::redraw` (the camera lives in `application`, so it resolves
   `camera.eye`/`camera.view_proj` there and passes the finished `eye`/`view_proj`
-  into `SimulationState::render_state`). Net effect: the camera does not rotate
+  into `SimulationState::frame_state`). Net effect: the camera does not rotate
   with the Earth — the globe spins under a star-locked view, so
   `Camera.longitude/latitude` are an **inertial** look direction, not geography.
   Don't move the camera back into the ECEF/world frame.
@@ -353,12 +353,15 @@ section is for the larger, explicitly-deferred ideas.)
   (in km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
 - **Render orchestration / windowing**: `src/application/mod.rs`
   (`ApplicationState` + the winit `ApplicationHandler` + `run`). It resolves the
-  camera and calls `SimulationState::render_state` → `Gfx::update`.
+  camera, calls `SimulationState::frame_state` (which returns the frame's
+  `RenderState` + `TelemetryState` together), runs the egui panel from that
+  telemetry, then calls `Gfx::update`.
 - **Renderer**: `src/renderer/mod.rs` (`Gfx`: `init`/`resize`/`viewport`/
   `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
   `Uniforms` packing; `MARKER_RADIUS_PX`). Mesh in `src/renderer/mesh.rs`.
-- **Simulation state / RenderState**: `src/simulation/mod.rs` (`SimulationState`
-  composes clock/satellite/sky; `advance`, `celestial_to_world`, `render_state`;
+- **Simulation state / RenderState / TelemetryState**: `src/simulation/mod.rs`
+  (`SimulationState` composes clock/satellite/sky; `advance`,
+  `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)`;
   `marker_occluded`).
 - **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
   frame conversion to a world-space km point). The `Satellite` struct stores

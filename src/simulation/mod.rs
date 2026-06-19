@@ -17,8 +17,9 @@ use satellite::Satellite;
 use sky::Sky;
 
 /// The finished, render-ready positions/matrices for one frame: everything the
-/// renderer needs, as plain `glam` data (no GPU types). Produced by
-/// [`SimulationState::render_state`] from the application-resolved camera.
+/// renderer needs, as plain `glam` data (no GPU types). Produced together with
+/// [`TelemetryState`] by [`SimulationState::frame_state`] from the
+/// application-resolved camera.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderState {
     /// World-frame view-projection matrix (built by the application from the
@@ -35,6 +36,31 @@ pub struct RenderState {
     pub sat_pos: Vec3,
     /// Whether the marker is visible (false when the solid Earth occludes it).
     pub marker_visible: bool,
+}
+
+/// Everything the UI readout displays for one frame, as a plain owned snapshot
+/// (no GPU/winit/egui types). Produced together with [`RenderState`] by
+/// [`SimulationState::frame_state`] so the on-screen lat/lon/altitude come from
+/// the *same* satellite propagation the marker uses - they can never disagree,
+/// and the orbit is propagated only once per frame. The clock's own controls
+/// (play/pause + speed) are *not* here: the UI mutates the `Clock` directly, so
+/// it reads those from the live clock rather than a snapshot.
+#[derive(Clone, Debug)]
+pub struct TelemetryState {
+    /// Subsolar geodetic latitude, degrees (ephemeris-derived).
+    pub subsolar_lat_deg: f32,
+    /// Subsolar geodetic longitude, degrees (ephemeris-derived).
+    pub subsolar_lon_deg: f32,
+    /// Tracked satellite name (e.g. "ISS (ZARYA)").
+    pub satellite_name: String,
+    /// Current simulation datetime, formatted for display (UTC).
+    pub datetime_label: String,
+    /// Sub-satellite geodetic latitude, degrees.
+    pub latitude_deg: f32,
+    /// Sub-satellite geodetic longitude, degrees.
+    pub longitude_deg: f32,
+    /// Height above the WGS84 ellipsoid, kilometers.
+    pub altitude_km: f32,
 }
 
 /// Seeds satkit's global state (embedded ephemeris + EOP table) for fully
@@ -77,8 +103,9 @@ impl SimulationState {
     /// Advances the simulation by the wall-clock delta since the last call:
     /// the clock steps, and while it is running the ephemeris-driven sky is
     /// re-evaluated at the new time. The satellite carries no stored state - it
-    /// is propagated on demand from the clock's time wherever its position is
-    /// needed (see `render_state`). Returns whether the clock is running - an
+    /// is propagated on demand from the clock's time in `frame_state`, which
+    /// feeds the result to both the renderer and the UI. Returns whether the
+    /// clock is running - an
     /// "animating" source that keeps frames coming; when paused nothing
     /// advances and the app can go idle.
     pub fn advance(&mut self) -> bool {
@@ -98,24 +125,38 @@ impl SimulationState {
         self.sky.star_rot_inv.transpose()
     }
 
-    /// Produces the frame's [`RenderState`] from the application-resolved
-    /// camera: the world-frame `eye` and `view_proj`. The astronomical fields
-    /// (Sun, star rotation, satellite position) come from the current sky and
-    /// satellite, and the marker's visibility is the Earth-occlusion test of
-    /// the line of sight from `eye` to the station. Takes `&mut self` because
-    /// the satellite position is propagated on demand at the clock's current
-    /// time (satkit's `sgp4` needs `&mut` to cache its initialization).
-    pub fn render_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
+    /// Produces this frame's [`RenderState`] (for the renderer) and
+    /// [`TelemetryState`] (for the UI readout) together, from the
+    /// application-resolved camera (world-frame `eye` and `view_proj`). Both
+    /// are derived from a *single* satellite propagation at the clock's current
+    /// time, so the marker position and the on-screen lat/lon/altitude always
+    /// agree and the orbit is propagated only once per frame. The astronomical
+    /// fields come from the current sky and satellite; the marker's visibility
+    /// is the Earth-occlusion test of the line of sight from `eye` to the
+    /// station. Takes `&mut self` because the satellite is propagated on demand
+    /// (satkit's `sgp4` needs `&mut` to cache its initialization).
+    pub fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState) {
         let now = self.clock.now();
         let sat = self.satellite.state_at(&now);
-        RenderState {
+
+        let render = RenderState {
             view_proj,
             camera_pos: eye,
             sun_dir: self.sky.sun_dir,
             star_rot_inv: self.sky.star_rot_inv,
             sat_pos: sat.position_km,
             marker_visible: !marker_occluded(eye, sat.position_km),
-        }
+        };
+        let telemetry = TelemetryState {
+            subsolar_lat_deg: self.sky.subsolar_lat_deg,
+            subsolar_lon_deg: self.sky.subsolar_lon_deg,
+            satellite_name: self.satellite.name.clone(),
+            datetime_label: self.clock.datetime_label(),
+            latitude_deg: sat.latitude_deg,
+            longitude_deg: sat.longitude_deg,
+            altitude_km: sat.altitude_km,
+        };
+        (render, telemetry)
     }
 }
 

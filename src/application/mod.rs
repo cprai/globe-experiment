@@ -180,38 +180,42 @@ impl ApplicationState {
         // each frame requests the next one.
         let mut animating = self.controller.tick(&mut self.camera, gfx.viewport().1);
 
-        // Run the egui UI: the logic and tessellation live here (the renderer
-        // only draws the resulting primitives).
+        // Advance the simulation: the clock steps and, while it runs, the
+        // ephemeris-driven sky is re-evaluated at the new time. (This frame's
+        // play/pause and speed edits come from the previous frame's UI, applied
+        // here - a one-frame, ~16 ms delay, imperceptible.) A running clock is
+        // another "animating" source - it keeps requesting frames; when paused
+        // nothing advances and the app can go idle.
+        animating |= self.simulation.advance();
+
+        // Resolve the inertial-frame camera into the Earth-fixed world frame
+        // using the sky's current orientation, then hand the finished view to
+        // the simulation to produce this frame's RenderState *and* the UI's
+        // TelemetryState in one shot (a single satellite propagation feeds
+        // both). All the camera math lives here (with the camera); the
+        // simulation only consumes the resolved eye/view and fills in the
+        // astronomical positions.
+        let (width, height) = gfx.viewport();
+        let aspect = width / height.max(1.0);
+        let celestial_to_world = self.simulation.celestial_to_world();
+        let eye = self.camera.eye(celestial_to_world);
+        let view_proj = self.camera.view_proj(aspect, celestial_to_world);
+        let (render_state, telemetry) = self.simulation.frame_state(eye, view_proj);
+
+        // Run the egui UI from that telemetry snapshot (so the readout matches
+        // the rendered marker exactly); it mutates only the Clock. The logic
+        // and tessellation live here (the renderer only draws the primitives).
         let raw_input = egui_state.take_egui_input(&window);
         let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
-            ui::control_panel(ui.ctx(), &mut self.simulation)
+            ui::control_panel(ui.ctx(), &telemetry, &mut self.simulation.clock)
         });
         egui_state.handle_platform_output(&window, full_output.platform_output);
-
-        // Advance the simulation (after the UI, so this frame's play/pause and
-        // speed changes apply): the clock steps, and while it runs the
-        // satellite and ephemeris-driven sky are re-evaluated at the new time.
-        // A running clock is another "animating" source - it keeps requesting
-        // frames; when paused it advances nothing and the app can go idle.
-        animating |= self.simulation.advance();
 
         // egui resets the cursor icon every frame; restore the globe's
         // grab cursor whenever the pointer isn't on the panel.
         if !self.egui_ctx.is_pointer_over_egui() {
             window.set_cursor(self.controller.cursor_icon());
         }
-
-        // Resolve the inertial-frame camera into the Earth-fixed world frame
-        // using the sky's current orientation, then hand the finished view to
-        // the simulation to produce this frame's RenderState. All the camera
-        // math lives here (with the camera); the simulation only consumes the
-        // resolved eye/view and fills in the astronomical positions.
-        let (width, height) = gfx.viewport();
-        let aspect = width / height.max(1.0);
-        let celestial_to_world = self.simulation.celestial_to_world();
-        let eye = self.camera.eye(celestial_to_world);
-        let view_proj = self.camera.view_proj(aspect, celestial_to_world);
-        let render_state = self.simulation.render_state(eye, view_proj);
 
         // Tessellate egui into render-ready primitives for the renderer.
         let ui_frame = UiFrame {

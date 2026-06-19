@@ -93,7 +93,7 @@ src/application/camera.rs  orbital camera (km world space, inertial-frame rig)
 src/application/input.rs   Controller: drag/tilt/wheel, flick inertia,
                          smoothed zoom
 src/ui.rs                egui control panel (clock + readouts, no sliders);
-                         control_panel(ctx, &mut SimulationState)
+                         control_panel(ctx, &TelemetryState, &mut Clock)
 src/earth.rs             WGS84 + Earth physical constants (axes, eccentricity,
                          mean radius, GM, rotation) + surface_position /
                          geodetic_normal helpers. Top-level shared module, the
@@ -102,8 +102,9 @@ src/renderer/mod.rs      Gfx: surface/device/queue/config + egui_wgpu +
                          private GlobeRenderer scene; init/resize/viewport/
                          update; FrameOutcome, UiFrame
 src/renderer/mesh.rs     WGS84-ellipsoid generator (km, with geodetic normals)
-src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState,
-                         advance / celestial_to_world / render_state;
+src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState +
+                         TelemetryState, advance / celestial_to_world /
+                         frame_state -> (RenderState, TelemetryState);
                          marker_occluded; init() wrapper for satkit seeding
 src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
@@ -304,28 +305,34 @@ calls `redraw()`. Everything else → `handle_input`:
 
 1. `controller.tick(&mut camera, gfx.viewport().1)` advances flick inertia
    **and** the zoom glide; returns `animating`.
-2. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(), &mut
-   simulation))` → `handle_platform_output`. (0.34 deprecated `Context::run`
-   for `run_ui`, whose closure gets a transparent fullscreen `&mut Ui`; the
-   Area panel hangs off `ui.ctx()`.) `control_panel` destructures the
-   `&mut SimulationState` and mutates only `clock` (`sky`/`satellite` read-only).
-2b. `simulation.advance()` (after the UI, so this frame's play/pause + speed
-   apply): `clock.tick()` advances sim time by the wall-clock delta x
-   multiplier; if it ran, `sky = Sky::at(now)` (ephemeris) is recomputed for
-   `now = clock.now()`. The satellite position is propagated on demand in
-   `render_state` (and the UI), not here. Returns
-   clock-running, so `animating |=` it and a playing clock keeps requesting
-   frames.
-3. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
-   resets the cursor every frame; method renamed from `is_pointer_over_area`
-   in 0.34).
-4. **Resolve the camera** (in `application`, since the camera lives here):
+2. `simulation.advance()`: `clock.tick()` advances sim time by the wall-clock
+   delta x multiplier; if it ran, `sky = Sky::at(now)` (ephemeris) is recomputed
+   for `now = clock.now()`. The satellite position is **not** propagated here -
+   that happens once in `frame_state` (step 3). Returns clock-running, so
+   `animating |=` it and a playing clock keeps requesting frames. (Runs
+   *before* the UI now, so this frame applies the **previous** frame's
+   play/pause + speed edits - a one-frame, ~16 ms delay, imperceptible. This
+   ordering is what lets one satellite propagation feed both the marker and the
+   readout; see step 3.)
+3. **Resolve the camera** (in `application`, since the camera lives here):
    `c2w = simulation.celestial_to_world()` (= `sky.star_rot_inv.transpose()`),
    `eye = camera.eye(c2w)`, `view_proj = camera.view_proj(aspect, c2w)` with
-   `aspect` from `gfx.viewport()`. Then `render_state =
-   simulation.render_state(eye, view_proj)` — packs `view_proj`/`camera_pos`/
-   `sun_dir`/`star_rot_inv`/`sat_pos` and the CPU marker-occlusion flag
-   (`marker_occluded`) into a `RenderState`.
+   `aspect` from `gfx.viewport()`. Then `(render_state, telemetry) =
+   simulation.frame_state(eye, view_proj)`: **one** `satellite.state_at(now)`
+   call feeds both - `render_state` packs `view_proj`/`camera_pos`/`sun_dir`/
+   `star_rot_inv`/`sat_pos` + the CPU marker-occlusion flag (`marker_occluded`)
+   into a `RenderState`; `telemetry` packs the subsolar lat/lon, satellite name,
+   datetime label, and sub-satellite lat/lon/alt into a `TelemetryState` for the
+   UI.
+4. egui: `take_egui_input` → `run_ui(|ui| ui::control_panel(ui.ctx(),
+   &telemetry, &mut simulation.clock))` → `handle_platform_output`. (0.34
+   deprecated `Context::run` for `run_ui`, whose closure gets a transparent
+   fullscreen `&mut Ui`; the Area panel hangs off `ui.ctx()`.) `control_panel`
+   *reads* the `&TelemetryState` snapshot for its readout and mutates only the
+   `&mut Clock` (play/pause + speed).
+4b. Reassert the grab cursor unless `egui_ctx.is_pointer_over_egui()` (egui
+   resets the cursor every frame; method renamed from `is_pointer_over_area`
+   in 0.34).
 5. Build `UiFrame { primitives: egui_ctx.tessellate(...), textures_delta,
    pixels_per_point }`.
 6. `gfx.update(&window, &render_state, ui_frame)` does the GPU frame:
@@ -411,7 +418,7 @@ not a geographic point.
   rotation; `ApplicationState::redraw` passes it `SimulationState::celestial_to_world()`
   = `sky.star_rot_inv.transpose()` (the inverse of the world→celestial
   rotation), then hands the resolved `eye`/`view_proj` to
-  `SimulationState::render_state`. This is what makes the camera
+  `SimulationState::frame_state`. This is what makes the camera
   star-fixed: in the celestial frame the rig is constant (modulo user input),
   so `star_rot_inv · relative_world = relative_celestial` stays put while the
   ECEF globe spins.
@@ -571,9 +578,11 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
 Tracks one object (the ISS) from an embedded TLE, propagated with the
 **satkit** crate's SGP4. `Satellite::load` (also `Default`) parses the TLE
 only - **no propagation at load**. The position state is **not stored**;
-`state_at(time)` propagates on demand and returns a `SatelliteState` wherever
-the position is needed (the renderer's `render_state` and the UI readout), so
-nothing goes stale as the `Clock` advances. The parsed `TLE` is **retained** in
+`state_at(time)` propagates on demand and returns a `SatelliteState`. It is
+called once per frame in `SimulationState::frame_state`, which feeds that single
+propagation into **both** the renderer's `RenderState` (marker) and the UI's
+`TelemetryState` (readout), so the two never disagree and nothing goes stale as
+the `Clock` advances. The parsed `TLE` is **retained** in
 the struct, and `state_at` takes `&mut self` because `sgp4` needs `&mut TLE`
 (it caches its propagator init). **For the full pipeline, frames, and math see
 §16** (this is the module-level summary).
@@ -630,15 +639,17 @@ the struct, and `state_at` takes `&mut self` because `sgp4` needs `&mut TLE`
 
 ## 7. UI (`src/ui.rs`) — egui panel
 
-`control_panel(ctx, &Sky, &Satellite, &mut Clock)` draws an `egui::Area`
-anchored top-left (`[10,10]`, width 260). The **Sun sliders are gone** (the
-Sun is ephemeris-driven now); instead a read-only line shows the computed
-**subsolar point** (`sky.subsolar_lat_deg`/`lon_deg`). egui claims its own
-events first (see event routing), so interacting with the panel never pans the
-globe. Below a separator it shows the station readout: name, the **clock's**
-datetime (UTC,
-`clock.datetime_label()`), and sub-satellite lat/lon + altitude (from
-`Satellite`). Then the **clock controls**: a `Play`/`Pause` button (toggles
+`control_panel(ctx, &TelemetryState, &mut Clock)` draws an `egui::Area`
+anchored top-left (`[10,10]`, width 260). Its readout comes entirely from the
+`TelemetryState` snapshot `frame_state` built for this frame (so it matches the
+rendered marker exactly); the only thing it mutates is the `&mut Clock`. The
+**Sun sliders are gone** (the Sun is ephemeris-driven now); instead a read-only
+line shows the computed **subsolar point** (`telemetry.subsolar_lat_deg`/
+`lon_deg`). egui claims its own events first (see event routing), so interacting
+with the panel never pans the globe. Below a separator it shows the station
+readout: name (`telemetry.satellite_name`), the **clock's** datetime (UTC,
+`telemetry.datetime_label`), and sub-satellite lat/lon + altitude (from
+`telemetry`). Then the **clock controls**: a `Play`/`Pause` button (toggles
 `clock.paused`; ASCII labels per the source rule) with a live `Speed: N.Nx`
 label, and an **exponential (base e) speed slider**: it edits a local
 `speed_exp` over `MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln()` (= `0..=ln100`),
@@ -763,7 +774,7 @@ Packs the simulation's `RenderState` into the GPU `Uniforms` and writes them
 the camera resolution (`view_proj`/`camera_pos` via `celestial_to_world`) lives
 in `application`, and `sun_dir`/`star_rot_inv`/`sat_pos` plus the
 `marker_visible` flag (`marker_occluded`, a ray-vs-mean-radius-sphere test) come
-from `SimulationState::render_state`. `prepare` only formats them (mat3 column
+from `SimulationState::frame_state`. `prepare` only formats them (mat3 column
 padding, vec3 pads, `marker = [w, h, MARKER_RADIUS_PX, visible]`). `viewport` is
 the surface (width, height) px, used solely for the constant-pixel marker.
 `MARKER_RADIUS_PX = 6`.
