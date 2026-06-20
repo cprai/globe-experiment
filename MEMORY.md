@@ -1086,8 +1086,8 @@ on the CPU in `build.rs`'s `mod atmosphere` and uploaded as f16 KTX2.
 
 At altitude `h` (km):
 - **Rayleigh**: `σs_R(h) = (5.802, 13.558, 33.1)e-3 · exp(−h/8)` (scattering
-  = extinction; no absorption). The 1 : 2.3 : 5.7 blue bias makes the sky
-  blue and the transmitted light orange.
+  = extinction; no absorption). The 1 : 2.3 : 5.7 blue bias makes the
+  atmosphere blue and the transmitted light orange.
 - **Mie**: `σs_M(h) = 3.996e-3 · exp(−h/1.2)`, extinction
   `4.40e-3 · exp(−h/1.2)` (the difference is absorption). Phase asymmetry
   `g = 0.8` (Cornette-Shanks). Both `extinction()` and `scattering()` exist

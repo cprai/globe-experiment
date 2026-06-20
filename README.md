@@ -37,7 +37,7 @@ files at runtime.
 
 - A fully lit Earth: day and night sides with city lights, terrain
   relief, and a sun glint on the oceans.
-- A physically based atmosphere with realistic sky colors - watch the
+- A physically based atmosphere with realistic colors - watch the
   terminator band glow orange at sunset, and the blue halo hug the
   planet's edge.
 - Astronomically accurate Sun and celestial sphere: the Sun's position, Earth's
