@@ -522,6 +522,28 @@ section is for the larger, explicitly-deferred ideas.)
   and footguns the bare compiler misses. Caveat: neither command validates
   `shaders/globe.wgsl` — naga compiles WGSL only at runtime, so a clean
   build/clippy says nothing about the shader; you must run the app.
+- **`wgsl-analyzer` can statically validate `globe.wgsl`, but only via its
+  LSP server** — useful as a quick syntax/spec check *before* the run-the-app
+  test, not a replacement for it (naga is still the actual compiler).
+  Gotchas, all verified here (2026-06-20):
+  - **The CLI subcommands are stubs.** `wgsl-analyzer parse` / `diagnostics`
+    / `unresolved-references` panic with "subcommand not implemented", and
+    `--print-config-schema` prints nothing. Don't reach for them.
+  - **The only working path is the LSP server** (`wgsl-analyzer` with no
+    subcommand, JSON-RPC over stdio), and it uses **pull** diagnostics
+    (`textDocument/diagnostic`), *not* push (`publishDiagnostics` is never
+    sent). So: `initialize` -> `initialized` -> `textDocument/didOpen` ->
+    request `textDocument/diagnostic` and read the `items` from the response.
+    A `didOpen`-and-wait-for-push client sees nothing (a dead end already
+    hit). The editor `LSP` tooling here is **not** wired for `.wgsl` either,
+    so this is a hand-driven-client task.
+  - **It is spec-stricter than naga**, so expect false positives relative to
+    what actually compiles. Concretely, it enforces WGSL's rule that the
+    operands of `&`/`|`/`^` be unary or parenthesized: the `hash3` bit-mix
+    (`a*b ^ c*d ^ e*f`) was flagged until the multiplications were wrapped in
+    `()` (naga had accepted it unparenthesized). Treat its errors as worth
+    investigating, but confirm against an actual run before assuming the
+    shader is broken.
 - Manual pass to run after risky changes: pan, flick (inertia), zoom to
   min/max, tilt to clamp, play/pause + speed slider (watch the Sun, stars,
   and satellite advance together), window resize, minimize/restore. Confirm
