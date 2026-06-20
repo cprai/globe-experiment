@@ -91,6 +91,8 @@ src/scenarios/iss_and_hubble.rs  ISS+HST scenario: owns the ISS_TLE/HST_TLE
                          consts; run() seeds satkit (simulation::init), assembles
                          the Satellite array from them, builds SimulationState +
                          ApplicationState, application::run
+src/scenarios/iss.rs     ISS-only scenario: same as iss_and_hubble minus HST;
+                         owns its own ISS_TLE const (duplicated on purpose)
 src/application/mod.rs   ApplicationState + winit ApplicationHandler + run():
                          window, egui logic side (Context + egui_winit::State),
                          camera, controller, frame orchestration
@@ -276,7 +278,10 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   `ScenarioName` `ValueEnum` (`#[value(name = "iss_and_hubble")]` keeps the token
   snake_case), dispatching to the matching `run`. So
   `globe-experiment scenario iss_and_hubble` runs the scene; an unknown name is a
-  clap usage error. New dep: `clap` (derive). Owner-requested.
+  clap usage error. New dep: `clap` (derive). A second scenario `scenarios::iss`
+  (CLI token `iss`, ISS only) was then added as a clone of `iss_and_hubble` minus
+  HST; its `ISS_TLE` const is **deliberately duplicated** rather than shared
+  (owner's call - each scenario owns its TLE data). Owner-requested.
 
 ---
 
@@ -647,10 +652,10 @@ frames, and math see §16** (this is the module-level summary).
 - **TLEs**: `ISS_TLE` (real) and `HST_TLE` (orbit shape real, phase
   approximate - flagged in-source), each a 3-line (name + two element lines)
   inline source literal (`concat!`; was `include_str!("assets/TLE.txt")`). These
-  `const`s live in the **scenario** that uses them
-  (`scenarios/iss_and_hubble.rs`), not in this module - `satellite.rs` is
-  element-set agnostic. `Satellite::from_tle(text)` splits the lines and parses
-  with
+  `const`s live in the **scenario(s)** that use them, not in this module -
+  `satellite.rs` is element-set agnostic. `iss_and_hubble.rs` has both;
+  `iss.rs` has its own copy of `ISS_TLE` (duplicated on purpose, per owner).
+  `Satellite::from_tle(text)` splits the lines and parses with
   `TLE::load_3line(line0, line1, line2)` (parses by column; trailing checksum
   **not** verified). `tle.epoch` is an `Instant`; `Satellite::epoch()` exposes
   it, and `SimulationState::new` starts the clock at the **first** satellite's
@@ -1281,8 +1286,9 @@ via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
 **`src/simulation/satellite.rs`**: element-set agnostic - `from_tle` ctor parses
 any 3-line TLE, propagated via `satkit` 0.18 SGP4; position computed on demand
-(`state_at`), not stored. The `ISS_TLE`/`HST_TLE` consts and the `Satellite`
-array both live in the scenario (`scenarios/iss_and_hubble.rs`).
+(`state_at`), not stored. The TLE consts and the `Satellite` array both live in
+the scenarios (`scenarios/iss_and_hubble.rs`: ISS+HST; `scenarios/iss.rs`: ISS
+only, with its own duplicated `ISS_TLE`).
 **`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
 launch).
@@ -1585,7 +1591,7 @@ runs it once per satellite per frame:
 
 1. **TLE** `ISS_TLE`/`HST_TLE` (3-line: name + 2 element lines), inline source
    literals (`concat!`; was `include_str!("assets/TLE.txt")`) that live in the
-   scenario `scenarios/iss_and_hubble.rs`, parsed by
+   scenarios (`scenarios/iss_and_hubble.rs`, `scenarios/iss.rs`), parsed by
    `Satellite::from_tle(text)` → `TLE::load_3line(l0,l1,l2) -> TLE` (by column;
    checksum not verified). The parsed `TLE` is **retained** (sgp4 needs
    `&mut TLE` — it caches its propagator) and `tle.epoch` (an `Instant`) of the

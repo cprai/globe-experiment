@@ -32,6 +32,8 @@ enum Command {
 /// command reads `scenario iss_and_hubble`.
 #[derive(Clone, ValueEnum)]
 enum ScenarioName {
+    #[value(name = "iss")]
+    Iss,
     #[value(name = "iss_and_hubble")]
     IssAndHubble,
 }
@@ -40,6 +42,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Scenario { name } => match name {
+            ScenarioName::Iss => scenarios::iss::run(),
             ScenarioName::IssAndHubble => scenarios::iss_and_hubble::run(),
         },
     }

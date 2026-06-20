@@ -9,4 +9,5 @@
 //! (1962-01-01 .. build date) so the astronomical-accuracy goal holds - see the
 //! "Scenarios & valid time range" rules in `CLAUDE.md`.
 
+pub mod iss;
 pub mod iss_and_hubble;
