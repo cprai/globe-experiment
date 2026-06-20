@@ -357,6 +357,17 @@ section is for the larger, explicitly-deferred ideas.)
   nightly requirement is formatting-only — the build/run toolchain stays
   stable (`cargo run --release`). (`cargo +nightly fmt` does not touch
   `shaders/globe.wgsl`; format WGSL by hand to match the surrounding code.)
+- **Watch reflow on math.** `wrap_comments` re-wraps purely on width and is
+  blind to meaning, so it will happily insert a line break in the middle of a
+  mathematical formula or equation (e.g. splitting `cos_sun = dot(n_geo,
+  sun)`, an integral, or a chain of terms across lines), which hurts
+  readability and can make an expression ambiguous. After every reflow, **scan
+  the diff for any line break that lands inside a formula/equation and flag
+  it.** Whenever possible, **reword the surrounding comment so the formula
+  stays on a single line** (move it to its own short line, shorten the prose
+  around it, or split the sentence) rather than letting the wrap fall in the
+  middle of the math. Treat a formula split across a wrap as something to fix,
+  not accept.
 
 ### Where things live
 - **Shader look knobs**: top of `shaders/globe.wgsl` (`const` block).
