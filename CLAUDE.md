@@ -345,7 +345,7 @@ section is for the larger, explicitly-deferred ideas.)
   `SimulationState`/`ApplicationState`, and hands off to `application::run`).
   `main.rs` is tiny: it uses **clap** to parse the CLI (`scenario <name>`
   subcommand) and dispatches to the matching `scenarios::*::run`; it does no
-  setup itself. See `REFACTOR_PLAN.md` for the module-boundary rationale.
+  setup itself.
 - **Run `cargo fmt` after every code change** (`.rs` edits). rustfmt with
   the default config is the sole formatting authority — don't hand-format,
   and keep diffs limited to real changes. (`cargo fmt` does not touch

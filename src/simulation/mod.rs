@@ -3,7 +3,7 @@
 //! everything about *what is being simulated* and computes the positions of the
 //! rendered objects; it is deliberately free of any windowing (winit), GPU
 //! (wgpu), or UI (egui) dependency, and never references the camera type (the
-//! camera lives in `application`). See `REFACTOR_PLAN.md`.
+//! camera lives in `application`).
 
 pub mod celestial_sphere;
 pub mod clock;
@@ -146,7 +146,7 @@ impl SimulationState {
     /// to the Earth-fixed world frame the scene is drawn in - the inverse of
     /// the celestial sphere's world -> celestial rotation. The application
     /// applies this to resolve the camera into the world frame before building
-    /// its view; see `REFACTOR_PLAN.md`. (Orthonormal, so transpose = inverse.)
+    /// its view. (Orthonormal, so transpose = inverse.)
     pub fn celestial_to_world(&self) -> Mat3 {
         self.celestial_sphere.star_rot_inv.transpose()
     }

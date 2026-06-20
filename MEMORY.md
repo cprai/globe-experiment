@@ -135,8 +135,7 @@ CLAUDE.md, MEMORY.md     the docs (this consolidation)
 Note: `src/globe/atmosphere.rs` **no longer exists** — the bake source was
 inlined into `build.rs` as `mod atmosphere` (2026-06-13). The whole `src/globe/`
 tree is also gone: a 2026-06-19 refactor split it into the top-level
-`application` / `simulation` / `renderer` / `ui` / `earth` modules (see
-`REFACTOR_PLAN.md`).
+`application` / `simulation` / `renderer` / `ui` / `earth` modules.
 
 ---
 
@@ -305,7 +304,7 @@ assembles the tracked `Vec<Satellite>` from the inline TLE consts
 `EventLoop`, sets `ControlFlow::Wait`, and runs the `ApplicationState` (a winit
 `ApplicationHandler`).
 
-The 2026-06-19 refactor (see `REFACTOR_PLAN.md`) split the old monolithic
+The 2026-06-19 refactor split the old monolithic
 `main.rs`/`globe` into modules:
 
 - **`application`** (`src/application/mod.rs`) owns the window, the egui *logic*
@@ -327,6 +326,28 @@ The 2026-06-19 refactor (see `REFACTOR_PLAN.md`) split the old monolithic
 - **`renderer`** (`src/renderer/mod.rs`) owns `Gfx` (surface/device/queue/config
   + `egui_wgpu::Renderer` + a private `GlobeRenderer` scene). The camera is *not*
   here.
+
+The dependency direction is **acyclic** (arrows = "depends on"; `()` =
+external crates):
+
+```
+main        -> application, simulation, renderer
+application -> simulation, renderer, ui, earth, (winit, egui, egui_winit, glam)
+ui          -> simulation, (egui)
+renderer    -> simulation (RenderState), earth, (wgpu, egui_wgpu, ktx2, glam)
+simulation  -> earth, (satkit, glam)        # NO winit / wgpu / egui / Camera
+earth       -> (glam)
+```
+
+Two purity rules the compiler enforces once imports are clean: (1)
+**`simulation` imports neither winit/wgpu/egui nor the `Camera` type** - it
+deals in `glam`/`satkit` values only and takes a resolved `Vec3`/`Mat4` for the
+camera, which is what makes `frame_state` testable and the touch-controls swap
+local to `application`; (2) the **`Camera` type lives in `application`** and
+nothing outside it references the type (other modules only ever see a resolved
+`eye`/`view_proj`). Note `RenderState` is *defined in* `simulation` but
+*consumed by* `renderer`, so for that POD type the edge runs renderer ->
+simulation.
 
 ### `Gfx::init` — device + surface setup (easy to get wrong)
 
