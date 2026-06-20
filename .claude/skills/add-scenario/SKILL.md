@@ -1,12 +1,16 @@
-# Skill: Add a new past scenario
+---
+name: add-scenario
+description: Add a new past scenario under src/scenarios/ with a run() and clap CLI wiring, including the mandatory EOP valid-time-range check (1962 to build date). Use when adding a tracked satellite event/time window.
+---
+
+# Add a new past scenario
 
 Add one module per past scenario under `src/scenarios/`, each with a `run()`
 that pins the simulation to a specific **past** event (a satellite/TLE + a
 time window) and wires it into the clap CLI.
 
 ## Tools
-- `cargo` (build/run), the formatting + lint skills (`format-rust`,
-  `clippy-lint`)
+- `cargo` (build/run), plus the `format-rust` and `clippy-lint` skills
 
 ## Steps
 1. **Add a module** `src/scenarios/<name>.rs` with a `run()` that:
@@ -24,7 +28,7 @@ time window) and wires it into the clap CLI.
    variant (use `#[value(name = "<token>")]` to keep the token snake_case)
    and dispatch to the new `run`. `list_scenarios` iterates
    `ScenarioName::value_variants`, so it can't drift.
-3. **Format + lint:** `format-rust`, `clippy-lint`.
+3. **Format + lint:** run the `format-rust` and `clippy-lint` skills.
 4. **Run it:** `cargo run --release -- scenario <token>`.
 
 ## Valid time range — check this or the accuracy goal silently breaks

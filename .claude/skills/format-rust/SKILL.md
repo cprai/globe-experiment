@@ -1,4 +1,9 @@
-# Skill: Format Rust code
+---
+name: format-rust
+description: Format all .rs files with nightly rustfmt (cargo +nightly fmt), the sole formatting authority. Use after every Rust edit. Nightly is required for the unstable wrap_comments option; watch for formula reflow in comments.
+---
+
+# Format Rust code
 
 Format all `.rs` files. rustfmt (with the checked-in `rustfmt.toml`) is the
 **sole** formatting authority — don't hand-format, and keep diffs limited to
@@ -33,6 +38,6 @@ reword the surrounding comment so the formula stays on one line. Treat a
 formula split across a wrap as a bug to fix, not accept.
 
 ## Scope
-- Runs on `.rs` only. It does **not** touch `shaders/globe.wgsl` — use
-  `format-wgsl` for that.
+- Runs on `.rs` only. It does **not** touch `shaders/globe.wgsl` — use the
+  `format-wgsl` skill for that.
 - Keep all source ASCII-only (golden rule); rustfmt won't fix non-ASCII.

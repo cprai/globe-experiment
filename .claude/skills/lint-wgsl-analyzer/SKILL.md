@@ -1,11 +1,16 @@
-# Skill: Lint WGSL with wgsl-analyzer (secondary)
+---
+name: lint-wgsl-analyzer
+description: Get a secondary, spec-strict second opinion on shaders/globe.wgsl via the wgsl-analyzer LSP server (pull diagnostics). Use when you want an editor-grade recheck; it is stricter than naga so expect false positives. The naga CLI remains authoritative.
+---
+
+# Lint WGSL with wgsl-analyzer (secondary)
 
 A **secondary**, spec-strict second opinion on `shaders/globe.wgsl`. The
-naga CLI (`validate-wgsl-naga`) is the authoritative check (it's the real
-compiler); reach for wgsl-analyzer only when you want an editor-grade
-recheck. It is **spec-stricter than naga**, so expect false positives
-relative to what actually compiles — confirm any error against an actual
-run before assuming the shader is broken.
+naga CLI (the `validate-wgsl-naga` skill) is the authoritative check (it's
+the real compiler); reach for wgsl-analyzer only when you want an
+editor-grade recheck. It is **spec-stricter than naga**, so expect false
+positives relative to what actually compiles — confirm any error against an
+actual run before assuming the shader is broken.
 
 ## Tools
 - `wgsl-analyzer` (driven via its **LSP server** only)

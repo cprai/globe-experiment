@@ -1,4 +1,9 @@
-# Skill: Edit atmosphere constants (keep both sides in sync)
+---
+name: edit-atmosphere-constants
+description: Change atmosphere medium/geometry constants or the inscatter LUT parameterization while keeping the duplicated build.rs bake side and shaders/globe.wgsl shader side in sync. Use when touching atmosphere math; a change on one side silently corrupts the atmosphere.
+---
+
+# Edit atmosphere constants (keep both sides in sync)
 
 The atmosphere medium + geometry constants and the inscatter LUT
 parameterization exist **twice** and must stay identical, or the baked LUTs
@@ -6,8 +11,9 @@ and the shader that samples them diverge. This skill is the checklist for
 changing them safely.
 
 ## Tools
-- `cargo` (rebuild triggers the LUT bake in `build.rs`), `format-wgsl`,
-  `validate-wgsl-naga`, `build-and-run`
+- `cargo` (rebuild triggers the LUT bake in `build.rs`), plus the
+  `format-wgsl`, `validate-wgsl-naga`, `build-and-run`, and
+  `refresh-embedded-assets` skills
 
 ## What is duplicated (change one, change the other)
 1. **Atmosphere medium + geometry constants:** in `build.rs`'s inline
@@ -27,10 +33,10 @@ changing them safely.
 1. Edit the constant/mapping on **both** the bake side (`build.rs`) and the
    shader side (`shaders/globe.wgsl`).
 2. **Force a LUT rebake** if you changed the bake: delete the stale LUT
-   outputs so `build.rs` regenerates them (see `refresh-embedded-assets`),
-   then rebuild.
-3. `format-wgsl` + `validate-wgsl-naga` on the shader.
-4. `build-and-run` and re-check the atmosphere visually.
+   outputs so `build.rs` regenerates them (see the `refresh-embedded-assets`
+   skill), then rebuild.
+3. Run the `format-wgsl` + `validate-wgsl-naga` skills on the shader.
+4. Run the `build-and-run` skill and re-check the atmosphere visually.
 
 ## Neutral-change verification
 If a change is meant to be visually neutral, verify **both** the bake

@@ -1,4 +1,9 @@
-# Skill: Format WGSL
+---
+name: format-wgsl
+description: Format shaders/globe.wgsl with wgslfmt, the formatting authority for WGSL. Use after every shader edit. It is ASCII-safe and touches only whitespace/layout, never tokens.
+---
+
+# Format WGSL
 
 Format `shaders/globe.wgsl`. `wgslfmt` is the formatting authority for
 `.wgsl`, just as rustfmt is for `.rs`. Don't hand-format WGSL.
@@ -21,5 +26,5 @@ wgslfmt --check shaders/globe.wgsl
 - Keeps output **ASCII-only** (the golden rule still holds).
 - It does **not** wrap comments, so the math-reflow caution that applies to
   Rust does not apply here; WGSL comment wrapping is still manual.
-- After formatting, run `validate-wgsl-naga` — `wgslfmt` only formats, it
-  does not validate the shader.
+- After formatting, run the `validate-wgsl-naga` skill — `wgslfmt` only
+  formats, it does not validate the shader.

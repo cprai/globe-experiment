@@ -1,4 +1,9 @@
-# Skill: Refresh an embedded/baked asset
+---
+name: refresh-embedded-assets
+description: Re-download or re-bake an embedded asset (texture KTX2, atmosphere LUTs, EOP-All.csv, JPL ephemeris) by deleting the stale OUT_DIR output and rebuilding. Use to refresh a texture, force a LUT rebake, or pull a fresher EOP snapshot.
+---
+
+# Refresh an embedded/baked asset
 
 All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed.
 `build.rs` short-circuits when an output is already present, so refreshing
@@ -23,7 +28,8 @@ find target -type d -name out -path '*globe-experiment*' 2>/dev/null
   rm "$OUT_DIR"/<texture>.ktx2 && cargo build --release
   ```
 - **The atmosphere LUTs** (`*.ktx2` f16): delete them to force a rebake from
-  `build.rs`'s `mod atmosphere` (do this after `edit-atmosphere-constants`).
+  `build.rs`'s `mod atmosphere` (do this after the
+  `edit-atmosphere-constants` skill).
 - **EOP snapshot** (`EOP-All.csv`): delete it to pull a fresher CelesTrak
   snapshot. This also moves the scenario upper-bound (last data row).
   ```sh

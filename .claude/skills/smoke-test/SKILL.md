@@ -1,4 +1,9 @@
-# Skill: Smoke test (validate pipelines & bindings)
+---
+name: smoke-test
+description: Run Globe headless for ~20 seconds to confirm wgpu pipelines and bindings are valid - validation errors panic in the first frames, so a clean run means they are valid. Use after renderer, pipeline, or binding changes.
+---
+
+# Smoke test (validate pipelines & bindings)
 
 Run the app headless for a few seconds to confirm wgpu pipelines and
 bindings are valid. wgpu validation errors **panic in the first frames**,
@@ -20,8 +25,8 @@ timeout 20 cargo run --release > /tmp/smoke.log 2>&1; head -40 /tmp/smoke.log
 - **Catches:** invalid pipelines, bad bind-group layouts, uniform/buffer
   mismatches — anything wgpu validates at pipeline creation or first draw.
 - **Does NOT catch:** shader compile/validation issues are caught here too
-  (naga runs at runtime), but you should still run `validate-wgsl-naga`
-  after a shader edit for a precise line+caret error.
+  (naga runs at runtime), but you should still run the `validate-wgsl-naga`
+  skill after a shader edit for a precise line+caret error.
 - **Does NOT catch:** look/color/interaction-feel correctness — that needs a
   real interactive run, ideally a native Windows release build.
 
