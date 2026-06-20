@@ -114,13 +114,14 @@ src/simulation/satellite.rs  one Satellite per tracked object: TLE parse +
                          ISS_TLE/HST_TLE consts (array built in main)
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
-assets/                  gitignored; build-downloaded source textures + JPL
-                         DE440 ephemeris + EOP-All.csv (cached build inputs).
-                         The satellite TLEs are NOT here - they're inline source
+OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5 BC7
+                         textures + 3 f16 LUTs (*.ktx2) + the verbatim JPL DE440
+                         ephemeris (linux_p1550p2650.440) + EOP-All.csv. The
+                         source textures are downloaded+transcoded in memory and
+                         never hit disk (the .ktx2 is the cache); only the two
+                         verbatim embeds are stored as-is. No assets/ dir. The
+                         satellite TLEs are NOT here - they're inline source
                          literals (ISS_TLE/HST_TLE in satellite.rs)
-OUT_DIR/                 gitignored build artifacts, include_bytes!'d:
-                         5 BC7 textures + 3 f16 LUTs (*.ktx2) + the copied
-                         JPL DE440 ephemeris (linux_p1550p2650.440) + EOP-All.csv
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
@@ -200,8 +201,8 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
   now an inertial look direction, not geography. Owner-requested.
 - **Phase 9** (2026-06-19): **embedded ephemeris + offline EOP.** The DE440
-  binary is no longer a runtime side file. build.rs downloads it into `assets/`
-  (the cached download, like the textures) and copies it into `OUT_DIR`;
+  binary is no longer a runtime side file. build.rs downloads it straight into
+  `OUT_DIR` and embeds it verbatim (see Phase 12 for the final layout);
   `sky.rs` embeds it with `include_bytes!` and loads it into satkit's singleton
   via `jplephem::init_from_bytes` (satkit 0.18.1 entry point for embedded use).
   `set_datadir` and the `data/` dir are gone, so the binary is self-contained
@@ -219,7 +220,7 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
 - **Phase 10** (2026-06-19): **real EOP bundled** + project reframed as an
   astronomically-accurate, past-only satellite simulation tool. CelesTrak's
   `EOP-All.csv` is now downloaded in build.rs (the `EMBEDS` table, alongside the
-  ephemeris) into `assets/`, copied to `OUT_DIR`, embedded via `include_bytes!`
+  ephemeris) straight into `OUT_DIR`, embedded via `include_bytes!`
   as `EOP`, and loaded with `earth_orientation_params::init_from_bytes` (same
   call site as the old empty seed, so the no-`satkit-data`-dir guarantee
   stands). Effect: the satellite's `qteme2itrf` now applies **real** polar
@@ -243,6 +244,20 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   marker buffer (position + visible flag) that grows on demand; `sat_pos` left
   the uniform block. The UI panel lists one block per satellite under a shared
   datetime line. Owner-requested.
+- **Phase 12** (2026-06-20): **no `assets/` dir; everything in `OUT_DIR`.**
+  build.rs no longer creates or uses a gitignored `assets/` directory.
+  `embed_verbatim` (ephemeris + EOP) downloads straight into `OUT_DIR` (those
+  must be on disk for `include_bytes!`; `cargo::rerun-if-changed` points at the
+  `OUT_DIR` copy, so deleting one re-downloads it) and no longer does a separate
+  copy. **Textures** are now downloaded **into memory** and decoded+BC7-encoded
+  in a single pass (`transcode(asset, out_dir)` via the shared `download()`
+  helper + `image::load_from_memory`) - the source image **never hits disk**.
+  The `.ktx2` output is the cache: `cargo::rerun-if-changed` points at it and an
+  existing output short-circuits the download+transcode (the unconditional-
+  re-encode guard from 2026-06-17 is back, of necessity - with no on-disk source
+  there is nothing to re-encode from, so refreshing a texture or changing the
+  encoder settings means deleting the stale `.ktx2`). `download_if_missing` is
+  gone. `/assets` removed from `.gitignore`. Owner-requested.
 
 ---
 
@@ -1122,16 +1137,21 @@ tables. The whole bake is sub-second.
 
 ## 12. Build pipeline (`build.rs`)
 
-Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es). `assets/`
-holds the cached downloads (source images + the ephemeris + EOP) as gitignored
-build input.
+Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es). There is
+**no `assets/` dir**. The only files on disk are the outputs: the `.ktx2`
+textures/LUTs and the two verbatim embeds (ephemeris + EOP). Texture *sources*
+are downloaded into memory and transcoded in one pass - they never touch disk.
+`OUT_DIR` persists across incremental builds, so an existing output is the cache
+(see each step). `download(url, limit)` is the shared in-memory fetch helper
+(ureq, body capped at `limit`).
 
 ### 0. Embed satkit data files
 `embed_verbatim(embed, out_dir)`, run for each entry of the `EMBEDS` table,
-downloads a file into `assets/` via ureq (per-entry size cap) unless already
-present, emits `cargo::rerun-if-changed=assets/<name>` so deleting it
-re-downloads, then **copies** it into `OUT_DIR` so `sky.rs` can `include_bytes!`
-it. No transcode — embedded verbatim. The two entries:
+`download()`s a file straight into `OUT_DIR` (per-entry size cap) unless already
+present, and emits `cargo::rerun-if-changed=OUT_DIR/<name>` so deleting it
+re-downloads. These embeds **must** land on disk (unlike the textures) because
+`sky.rs` `include_bytes!`-es them directly — no copy, no transcode (embedded
+verbatim). The two entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) from
   `ssd.jpl.nasa.gov` (256 MiB cap) — loaded via `jplephem::init_from_bytes`.
 - **CelesTrak `EOP-All.csv`** (~2-3 MiB) from `celestrak.org/SpaceData/`
@@ -1141,28 +1161,29 @@ it. No transcode — embedded verbatim. The two entries:
 So there are no runtime data files. Adds ~100 MB to the network-dependent first
 build and to the binary (the EOP file is small; the ephemeris dominates).
 
-### 1. Download
+### 1+2. Download + BC7 → KTX2 transcode (one in-memory pass)
 `ASSETS`: five solarsystemscope.com textures, each tagged `srgb: bool` —
 `8k_earth_daymap.jpg`, `8k_earth_nightmap.jpg` (srgb), `8k_earth_normal_map.tif`,
 `8k_earth_specular_map.tif` (linear/data), `8k_stars_milky_way.jpg` (srgb);
-all 8192×4096. `download_if_missing` derives the filename, emits
-`cargo::rerun-if-changed=assets/<name>`, skips if present, else downloads via
-ureq (100 MB cap). Deleting a file re-triggers its download.
-
-### 2. BC7 → KTX2 transcode
-`transcode(source, srgb, out_dir)` decodes (`image`), asserts multiple-of-4
-dimensions (BC7 block size), BC7-compresses with
+all 8192×4096. `transcode(asset, out_dir)` derives `<stem>.ktx2` from the URL
+filename and emits `cargo::rerun-if-changed=OUT_DIR/<stem>.ktx2`. **If that
+output already exists it returns immediately** (the cache hit); otherwise it
+`download()`s the source into memory, decodes it with `image::load_from_memory`
+(format guessed from magic bytes — no on-disk file name needed), asserts
+multiple-of-4 dimensions (BC7 block size), BC7-compresses with
 `intel_tex_2::bc7::compress_blocks(opaque_basic_settings(), surface)`, and
 writes `<stem>.ktx2`. `srgb` → `BC7_SRGB_BLOCK` (day/night/stars), data →
-`BC7_UNORM_BLOCK` (normal/specular — must stay linear).
-- **Runs unconditionally on every build-script execution** (the per-file
-  `if dest.exists()` skip guard was removed 2026-06-17). cargo's
-  `rerun-if-changed` (per asset + `build.rs` itself) is the sole rerun gate.
-  Consequence: a no-change rebuild skips the script entirely, but **any**
-  rerun (editing `build.rs`, touching a texture) re-encodes **all five** BC7
-  textures (~1.5 min). An mtime guard and a content-hash cache were both
-  considered and deliberately not adopted (owner preferred pure
-  rerun-if-changed); revisit if the all-or-nothing re-encode becomes painful.
+`BC7_UNORM_BLOCK` (normal/specular — must stay linear). The source image is
+**never written to disk**.
+- **Skip-when-output-exists is now load-bearing**, not just an optimization:
+  with no on-disk source cache, re-encoding requires re-downloading, so the
+  guard is what stops every build-script rerun (e.g. editing `build.rs`) from
+  re-fetching all five textures over the network. The flip side of the
+  2026-06-17 "always re-encode" decision: **refreshing a texture or changing
+  the encoder settings means deleting the stale `.ktx2`** so the next build
+  re-downloads + re-encodes it. (The earlier on-disk-source cache made the
+  unconditional re-encode cheap; the in-memory rework traded that for not
+  spilling ~30 MB of sources onto disk.)
 
 ### 3. Atmosphere LUT bake
 `bake_luts` runs the inline `atmosphere::bake()` and writes the three tables
@@ -1629,7 +1650,7 @@ Sun consistency) is physically correct.
 - **Data files**: two, both **embedded** in the binary (no runtime data file):
   the **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) and CelesTrak's
   **`EOP-All.csv`** (~2-3 MiB Earth-orientation params). `build.rs` downloads
-  both into the gitignored `assets/` and copies them into `OUT_DIR`; `sky.rs`
+  both straight into `OUT_DIR`; `sky.rs`
   `include_bytes!`-es each and `sky::init_satkit()` (called once at the top of
   `main`) loads them via `jplephem::init_from_bytes` /
   `earth_orientation_params::init_from_bytes`. The EOP seed also stops satkit

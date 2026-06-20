@@ -17,7 +17,8 @@ cargo run --release
 That's it - the required textures (NASA-derived earth maps and a star
 field from [Solar System Scope](https://www.solarsystemscope.com/textures/)),
 the JPL DE440 planetary ephemeris, and CelesTrak's Earth-orientation
-parameters (`EOP-All.csv`) are downloaded automatically (into `assets/`) on the
+parameters (`EOP-All.csv`) are downloaded automatically (into the build's
+`OUT_DIR`) on the
 first build, so the first build needs a network connection and takes a little
 longer (the ephemeris is ~98 MB). The textures, ephemeris, and EOP data are all
 embedded into the binary, so the build is self-contained and needs no data

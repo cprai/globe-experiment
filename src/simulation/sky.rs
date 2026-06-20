@@ -19,14 +19,14 @@ use satkit::frametransform::{qgcrf2itrf_approx, qitrf2gcrf_approx};
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, Vector3};
 
-/// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it into
-/// the gitignored `assets/` dir and copies it into `OUT_DIR` so this
-/// `include_bytes!` can pick it up - no runtime data file.
+/// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it
+/// straight into `OUT_DIR` so this `include_bytes!` can pick it up - no runtime
+/// data file.
 const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2650.440"));
 
 /// CelesTrak's Earth-orientation parameters (`EOP-All.csv`), embedded the same
-/// way as the ephemeris (build.rs downloads to `assets/` and copies to
-/// `OUT_DIR`). Provides polar motion + UT1-UTC for accurate ITRF<->GCRF/TEME
+/// way as the ephemeris (build.rs downloads it straight into `OUT_DIR`).
+/// Provides polar motion + UT1-UTC for accurate ITRF<->GCRF/TEME
 /// transforms. Measured data starts 1962-01-01; the file also carries a few
 /// months of predictions past the build date. Since this is a past-only
 /// simulation tool, the snapshot stays valid for every in-range date.

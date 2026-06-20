@@ -28,7 +28,7 @@ use satkit::{Instant, Vector3};
 use crate::earth;
 
 // Tracked-object TLEs, inlined as source literals. Unlike the
-// textures/ephemeris/EOP (build-downloaded into the gitignored `assets/` and
+// textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and
 // baked into the binary), these small element sets live directly in source so a
 // fresh checkout needs no data file. The lines are column-sensitive TLE format
 // (each element line is exactly 69 chars) - keep the exact spacing. `concat!`

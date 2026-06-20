@@ -54,12 +54,15 @@ cargo run --release
 ```
 
 - **First build needs a network connection** and is slow (~1.5 min extra):
-  `build.rs` downloads five textures, the ~98 MB JPL ephemeris, and CelesTrak's
-  `EOP-All.csv` (~2-3 MB Earth-orientation params) into the gitignored
-  `assets/`, BC7-encodes the textures, and copies the ephemeris and EOP file
-  into `OUT_DIR`. Subsequent builds reuse the cached `OUT_DIR/*.ktx2` and the
-  cached `assets/` downloads. (Delete `assets/EOP-All.csv` to pull a fresher
-  EOP snapshot.)
+  `build.rs` downloads five textures and BC7-encodes them **in memory** (the
+  source image never hits disk), writing only the `*.ktx2` into `OUT_DIR`, and
+  downloads the ~98 MB JPL ephemeris + CelesTrak's `EOP-All.csv` (~2-3 MB
+  Earth-orientation params) into `OUT_DIR` verbatim (those must be on disk for
+  `include_bytes!`). Subsequent builds reuse the cached `OUT_DIR` outputs; the
+  `.ktx2` is the texture cache (`rerun-if-changed` points at it), so a present
+  output is never re-downloaded. No `assets/` directory is created. (Delete a
+  `OUT_DIR/*.ktx2` to re-download+re-encode that texture, or `OUT_DIR/EOP-All.csv`
+  to pull a fresher EOP snapshot.)
 - Smoke test: `timeout <n> cargo run 2>&1 | head` (or redirect to a file —
   pipe buffering can swallow output). wgpu validation errors panic in the
   first frames, so a clean 15-25 s run means pipelines/bindings are valid.
@@ -149,8 +152,8 @@ cargo run --release
   the dir is never created. **Do not drop the EOP seed** — the stray
   `satkit-data` dir comes back. (Run from a clean dir to verify none appears.)
   - **Content: real EOP, bundled** — CelesTrak's `EOP-All.csv`, embedded the
-    same way as the ephemeris (`build.rs` downloads it to `assets/`, copies to
-    `OUT_DIR`; `sky.rs` `include_bytes!`-es it as `EOP` and feeds it to
+    same way as the ephemeris (`build.rs` downloads it straight into `OUT_DIR`;
+    `sky.rs` `include_bytes!`-es it as `EOP` and feeds it to
     `init_from_bytes`). So polar motion + UT1-UTC are real, not zeros.
   - **What consumes it.** The **satellite** path (`qteme2itrf`) is the full,
     non-`approx` transform: it applies real polar motion (via `qitrf2tirs`) and
@@ -287,7 +290,7 @@ section is for the larger, explicitly-deferred ideas.)
     file is absent (same failure mode the EOP seed already prevents).
   - **Real work beyond seeding:** bundle three small text files
     (`tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` — KB each, negligible binary
-    cost) via `build.rs` (`EMBEDS` table → `assets/` → `OUT_DIR`) and
+    cost) via `build.rs` (`EMBEDS` table → `OUT_DIR`) and
     `include_bytes!` them in `sky.rs`; flip the two transform calls to the
     non-`approx` versions; and update every "sky is `*_approx`" claim in
     `CLAUDE.md`, `MEMORY.md`, and the `sky.rs` / `init_satkit` doc-comments in
@@ -392,13 +395,13 @@ section is for the larger, explicitly-deferred ideas.)
   embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
   real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
   `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
-  rule above. The EOP files live alongside the ephemeris (`assets/EOP-All.csv`
-  cached, copied to `OUT_DIR`).
+  rule above. The EOP file lives alongside the ephemeris in `OUT_DIR`
+  (`OUT_DIR/EOP-All.csv`).
 - All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
   **including** the two satkit data files that are bundled verbatim: the JPL
   ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB).
-  `build.rs` downloads both into the gitignored `assets/` (the `EMBEDS` table)
-  and copies them into `OUT_DIR`; `sky.rs` embeds each with `include_bytes!`. No
+  `build.rs` downloads both straight into `OUT_DIR` (the `EMBEDS` table);
+  `sky.rs` embeds each with `include_bytes!`. No `assets/` dir, no
   runtime data file.
 
 ### Scenarios & valid time range (read before adding a scenario)
@@ -422,7 +425,7 @@ section is for the larger, explicitly-deferred ideas.)
     this bound by construction.
 - **So: when you add a scenario, check its start and end epochs against the
   bundled EOP file's `[first_entry .. last_entry]` MJD range** (and against
-  1962 for the lower bound). The bundled `assets/EOP-All.csv`'s last data row is
+  1962 for the lower bound). The bundled `EOP-All.csv`'s last data row is
   the concrete upper bound; the first row (1962-01-01, MJD 37665) is the lower.
   If a scenario can't be brought in-range, it does not meet the accuracy bar —
   flag it rather than shipping a silently-degraded result.
@@ -443,9 +446,9 @@ section is for the larger, explicitly-deferred ideas.)
   follow-up.
 - **JPL ephemeris and EOP are embedded, not runtime files.** `build.rs`
   downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
-  (Earth-orientation params) from CelesTrak on the first build into the
-  gitignored `assets/` (adds to the already-network-dependent first build) and
-  copies both into `OUT_DIR`; `sky.rs` embeds each with `include_bytes!` and
+  (Earth-orientation params) from CelesTrak on the first build straight into
+  `OUT_DIR` (adds to the already-network-dependent first build);
+  `sky.rs` embeds each with `include_bytes!` and
   loads them via `jplephem::init_from_bytes` / `earth_orientation_params::
   init_from_bytes`. So there is **no runtime data file** - the binary is
   self-contained - but a fresh checkout still needs network for the first build.

@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use intel_tex_2::{RgbaSurface, bc7};
 
-/// Remote assets fetched into the gitignored assets directory, then
-/// transcoded to BC7 in a KTX2 container in `OUT_DIR` so the runtime can
-/// upload the bytes straight to the GPU with no decode step.
+/// Remote textures transcoded to BC7 in a KTX2 container in `OUT_DIR` so the
+/// runtime can upload the bytes straight to the GPU with no decode step. Each
+/// is downloaded into memory and encoded in a single pass - the source image
+/// is never written to disk; the `.ktx2` output is the only artifact and the
+/// rebuild cache.
 ///
 /// `srgb` marks color textures (encoded as `BC7_SRGB_BLOCK`); the normal
 /// and specular maps are data and stay linear (`BC7_UNORM_BLOCK`).
@@ -41,9 +43,9 @@ struct Asset {
 const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
 
 /// Files downloaded once and embedded into the binary verbatim (no transcode),
-/// for satkit's astronomical computations. Each is cached in the gitignored
-/// `assets/` dir and copied into `OUT_DIR` so the runtime can `include_bytes!`
-/// it - giving a self-contained binary with no runtime data files:
+/// for satkit's astronomical computations. Each is downloaded straight into
+/// `OUT_DIR` so the runtime can `include_bytes!` it - giving a self-contained
+/// binary with no runtime data files:
 ///
 /// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sun/planet
 ///   positions, loaded via `jplephem::init_from_bytes`.
@@ -79,46 +81,44 @@ fn main() {
     }
 
     for asset in ASSETS {
-        let source = download_if_missing(asset.url);
-        transcode(&source, asset.srgb, &out_dir);
+        transcode(asset, &out_dir);
     }
 
     bake_luts(&out_dir);
 }
 
-/// Downloads `embed.url` into `assets/` unless it is already there, then copies
-/// it into `OUT_DIR` under the same file name so the runtime can
-/// `include_bytes!` it. Registers the cached source with cargo so deleting it
-/// re-downloads on the next build. The cached download lives in `assets/` (like
-/// the textures) while the copy in `OUT_DIR` is what gets embedded.
+/// Downloads `embed.url` straight into `OUT_DIR` under its own file name
+/// (unless it is already there) so the runtime can `include_bytes!` it.
+/// Registers the cached download with cargo so deleting it re-downloads on
+/// the next build. `OUT_DIR` persists across incremental builds, so the file
+/// is downloaded at most once. These files are embedded verbatim, so unlike
+/// the textures they *must* land on disk for `include_bytes!`.
 fn embed_verbatim(embed: &Embed, out_dir: &Path) {
     let url = embed.url;
     let name = url.rsplit('/').next().expect("embed url has a file name");
-    let source = PathBuf::from(format!("assets/{name}"));
+    let dest = out_dir.join(name);
 
-    println!("cargo::rerun-if-changed={}", source.display());
+    println!("cargo::rerun-if-changed={}", dest.display());
 
-    if !source.exists() {
-        fs::create_dir_all("assets")
-            .unwrap_or_else(|error| panic!("failed to create assets directory: {error}"));
-
-        let mut response = ureq::get(url)
-            .call()
-            .unwrap_or_else(|error| panic!("failed to download {url}: {error}"));
-        let bytes = response
-            .body_mut()
-            .with_config()
-            .limit(embed.limit)
-            .read_to_vec()
-            .unwrap_or_else(|error| panic!("failed to read response of {url}: {error}"));
-
-        fs::write(&source, bytes)
-            .unwrap_or_else(|error| panic!("failed to write {source:?}: {error}"));
+    if dest.exists() {
+        return;
     }
 
-    let dest = out_dir.join(name);
-    fs::copy(&source, &dest)
-        .unwrap_or_else(|error| panic!("failed to copy {source:?} to {dest:?}: {error}"));
+    let bytes = download(url, embed.limit);
+    fs::write(&dest, bytes).unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
+}
+
+/// Fetches `url` fully into memory, capping the response body at `limit` bytes.
+fn download(url: &str, limit: u64) -> Vec<u8> {
+    let mut response = ureq::get(url)
+        .call()
+        .unwrap_or_else(|error| panic!("failed to download {url}: {error}"));
+    response
+        .body_mut()
+        .with_config()
+        .limit(limit)
+        .read_to_vec()
+        .unwrap_or_else(|error| panic!("failed to read response of {url}: {error}"))
 }
 
 /// Bakes the atmosphere LUTs and writes them as uncompressed
@@ -165,61 +165,45 @@ fn bake_luts(out_dir: &Path) {
     }
 }
 
-/// Downloads `url` into `assets/` unless the file is already there, and
-/// registers it with cargo so deleting the file re-downloads it on the
-/// next build.
-fn download_if_missing(url: &str) -> PathBuf {
-    let name = url
+/// Downloads `asset.url` into memory, BC7-compresses it, and writes
+/// `<stem>.ktx2` into `out_dir`. The source image is **never written to
+/// disk** - decode, compress, and KTX2-wrap all happen in one pass from the
+/// in-memory download.
+///
+/// The `.ktx2` output is the cache: `cargo::rerun-if-changed` points at it,
+/// and an existing output short-circuits the download+transcode. So a
+/// no-change rebuild skips the script entirely (cargo's rerun gate) and an
+/// already-encoded texture is never re-fetched. Because the source no longer
+/// lingers on disk, refreshing a texture (or changing this script's encoder
+/// settings) means deleting the stale `.ktx2` so the next build re-downloads
+/// and re-encodes it.
+fn transcode(asset: &Asset, out_dir: &Path) {
+    let name = asset
+        .url
         .rsplit('/')
         .next()
-        .unwrap_or_else(|| panic!("no file name in asset url {url}"));
-    let path = PathBuf::from(format!("assets/{name}"));
-
-    println!("cargo::rerun-if-changed={}", path.display());
-
-    if path.exists() {
-        return path;
-    }
-
-    fs::create_dir_all("assets")
-        .unwrap_or_else(|error| panic!("failed to create assets directory: {error}"));
-
-    let mut response = ureq::get(url)
-        .call()
-        .unwrap_or_else(|error| panic!("failed to download {url}: {error}"));
-    let bytes = response
-        .body_mut()
-        .with_config()
-        .limit(DOWNLOAD_LIMIT)
-        .read_to_vec()
-        .unwrap_or_else(|error| panic!("failed to read response of {url}: {error}"));
-
-    fs::write(&path, bytes).unwrap_or_else(|error| panic!("failed to write {path:?}: {error}"));
-
-    path
-}
-
-/// Decodes `source`, BC7-compresses it, and writes `<stem>.ktx2` into
-/// `out_dir`. This runs unconditionally on every build-script execution;
-/// cargo decides when that happens via the `cargo::rerun-if-changed` line
-/// per asset in `download_if_missing` (plus build.rs itself). So a
-/// no-change rebuild skips the script entirely and does no encoding, while
-/// editing a texture on disk - or the encoder settings in this script -
-/// reruns the script and refreshes the output.
-fn transcode(source: &Path, srgb: bool, out_dir: &Path) {
-    let stem = source
+        .unwrap_or_else(|| panic!("no file name in asset url {}", asset.url));
+    let stem = Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .unwrap_or_else(|| panic!("no file stem in {source:?}"));
+        .unwrap_or_else(|| panic!("no file stem in asset url {}", asset.url));
     let dest = out_dir.join(format!("{stem}.ktx2"));
 
-    let image = image::open(source)
-        .unwrap_or_else(|error| panic!("decode {source:?}: {error}"))
+    println!("cargo::rerun-if-changed={}", dest.display());
+
+    if dest.exists() {
+        return;
+    }
+
+    // Format is guessed from the magic bytes, so decoding straight from the
+    // download (JPEG / TIFF) needs no on-disk file name.
+    let image = image::load_from_memory(&download(asset.url, DOWNLOAD_LIMIT))
+        .unwrap_or_else(|error| panic!("decode {name}: {error}"))
         .to_rgba8();
     let (width, height) = image.dimensions();
     assert!(
         width % 4 == 0 && height % 4 == 0,
-        "{source:?} is {width}x{height}; BC7 needs multiple-of-4 dimensions"
+        "{name} is {width}x{height}; BC7 needs multiple-of-4 dimensions"
     );
 
     let surface = RgbaSurface {
@@ -232,7 +216,7 @@ fn transcode(source: &Path, srgb: bool, out_dir: &Path) {
     // ultra-fast ones but this runs once per texture and then caches.
     let blocks = bc7::compress_blocks(&bc7::opaque_basic_settings(), &surface);
 
-    let format = if srgb {
+    let format = if asset.srgb {
         ktx2::Format::BC7_SRGB_BLOCK
     } else {
         ktx2::Format::BC7_UNORM_BLOCK
