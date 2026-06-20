@@ -1,6 +1,6 @@
 //! ISS + Hubble scenario: track the International Space Station and the Hubble
-//! Space Telescope from their shared ~2024-001.5 TLE epoch. This is the original
-//! default scene, now expressed as a named scenario (CLI:
+//! Space Telescope from their shared ~2024-001.5 TLE epoch. This is the
+//! original default scene, now expressed as a named scenario (CLI:
 //! `globe-experiment scenario iss_and_hubble`).
 
 use crate::application::{self, ApplicationState};

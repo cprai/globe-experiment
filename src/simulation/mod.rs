@@ -157,9 +157,10 @@ impl SimulationState {
     /// tracked satellite is propagated *once* at the clock's current time and
     /// that single result feeds both its marker and its readout, so they always
     /// agree and every orbit is propagated only once per frame. The marker's
-    /// visibility is the Earth-occlusion test of the line of sight from `eye` to
-    /// the object. Takes `&mut self` because the satellites are propagated on
-    /// demand (satkit's `sgp4` needs `&mut` to cache its initialization).
+    /// visibility is the Earth-occlusion test of the line of sight from `eye`
+    /// to the object. Takes `&mut self` because the satellites are
+    /// propagated on demand (satkit's `sgp4` needs `&mut` to cache its
+    /// initialization).
     pub fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState) {
         let now = self.clock.now();
 

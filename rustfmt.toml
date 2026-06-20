@@ -1,0 +1,6 @@
+# Reflow comments to the comment width so long `//` / `/** */` blocks wrap
+# automatically instead of being hand-wrapped. This is an UNSTABLE rustfmt
+# option, so formatting must be run on nightly: `cargo +nightly fmt`. Plain
+# stable `cargo fmt` ignores it (with a warning) and leaves comments unwrapped.
+# See CLAUDE.md "Code style" for the workflow note.
+wrap_comments = true

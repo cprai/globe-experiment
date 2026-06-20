@@ -793,13 +793,13 @@ impl GlobeRenderer {
 
     /// Writes the per-frame uniforms and marker instances from the simulation's
     /// `RenderState`. Call before submitting the frame's command buffer;
-    /// `queue.write_buffer` is ordered before it. `viewport` is the surface size
-    /// in pixels (width, height), used only for the screen-space markers. Takes
-    /// `&mut self` (and `&Device`) because the marker instance buffer grows on
-    /// demand when more satellites are tracked than it currently holds. All
-    /// camera/astronomical math is done by the simulation (see
-    /// `simulation::SimulationState`); this just packs the finished values into
-    /// the GPU layout.
+    /// `queue.write_buffer` is ordered before it. `viewport` is the surface
+    /// size in pixels (width, height), used only for the screen-space
+    /// markers. Takes `&mut self` (and `&Device`) because the marker
+    /// instance buffer grows on demand when more satellites are tracked
+    /// than it currently holds. All camera/astronomical math is done by the
+    /// simulation (see `simulation::SimulationState`); this just packs the
+    /// finished values into the GPU layout.
     fn prepare(
         &mut self,
         device: &wgpu::Device,

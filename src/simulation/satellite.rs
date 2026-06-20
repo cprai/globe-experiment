@@ -46,10 +46,10 @@ pub struct Satellite {
 }
 
 impl Satellite {
-    /// Parses a 3-line TLE (name line + the two element lines, e.g. a scenario's
-    /// `ISS_TLE`). Panics on malformed input - the TLEs are inline source
-    /// literals, so a failure is a build-time bug, handled like the other
-    /// embedded data. No
+    /// Parses a 3-line TLE (name line + the two element lines, e.g. a
+    /// scenario's `ISS_TLE`). Panics on malformed input - the TLEs are
+    /// inline source literals, so a failure is a build-time bug, handled
+    /// like the other embedded data. No
     /// propagation happens here - the state is computed on demand via
     /// [`state_at`](Self::state_at).
     pub fn from_tle(tle_3line: &str) -> Self {

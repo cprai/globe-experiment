@@ -292,16 +292,15 @@ mod atmosphere {
     //!
     //! Two kinds of LUT are baked on the CPU:
     //!
-    //! - Transmittance: fraction of sunlight surviving from a point to the
-    //!   top of the atmosphere, parameterized by (altitude, sun zenith
-    //!   cosine).
-    //! - Inscatter: the Rayleigh and Mie single-scattering integrals along
-    //!   a full view ray. Because the scene is a perfect sphere seen from
+    //! - Transmittance: fraction of sunlight surviving from a point to the top
+    //!   of the atmosphere, parameterized by (altitude, sun zenith cosine).
+    //! - Inscatter: the Rayleigh and Mie single-scattering integrals along a
+    //!   full view ray. Because the scene is a perfect sphere seen from
     //!   outside, a ray is fully described by its impact parameter (closest
     //!   approach to the planet center) plus the sun angle at a reference
-    //!   point, so the per-pixel raymarch collapses into a 2D table. The
-    //!   only approximation is the sun's tilt *along* the ray, which is
-    //!   assumed perpendicular.
+    //!   point, so the per-pixel raymarch collapses into a 2D table. The only
+    //!   approximation is the sun's tilt *along* the ray, which is assumed
+    //!   perpendicular.
     //!
     //! The constants here must stay in sync with their WGSL twins in
     //! `shaders/globe.wgsl`. All lengths are kilometers; all coefficients

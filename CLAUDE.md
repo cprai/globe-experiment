@@ -346,9 +346,16 @@ section is for the larger, explicitly-deferred ideas.)
   `main.rs` is tiny: it uses **clap** to parse the CLI (`scenario <name>`
   subcommand) and dispatches to the matching `scenarios::*::run`; it does no
   setup itself.
-- **Run `cargo fmt` after every code change** (`.rs` edits). rustfmt with
-  the default config is the sole formatting authority — don't hand-format,
-  and keep diffs limited to real changes. (`cargo fmt` does not touch
+- **Run `cargo +nightly fmt` after every code change** (`.rs` edits).
+  rustfmt (with the checked-in `rustfmt.toml`) is the sole formatting
+  authority — don't hand-format, and keep diffs limited to real changes.
+  **Always reflow comments and let rustfmt's `wrap_comments` do the
+  wrapping** — never hand-wrap `//` / `///` / `//!` comment text. Because
+  `wrap_comments` is an **unstable** rustfmt option, formatting **must** run
+  on nightly (`cargo +nightly fmt`); plain stable `cargo fmt` ignores it
+  (emitting a warning) and leaves comments unwrapped, so don't use it. The
+  nightly requirement is formatting-only — the build/run toolchain stays
+  stable (`cargo run --release`). (`cargo +nightly fmt` does not touch
   `shaders/globe.wgsl`; format WGSL by hand to match the surrounding code.)
 
 ### Where things live
