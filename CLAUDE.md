@@ -413,14 +413,16 @@ section is for the larger, explicitly-deferred ideas.)
 - **Scenarios live in `src/scenarios/`** — one module per scenario, each with a
   `run()` that pins the simulation to a specific **past** event (a satellite/TLE
   + a time window). `main.rs` parses the CLI with **clap** and dispatches to one
-  (`globe-experiment scenario <name>`). Today there are two:
-  `scenarios::iss_and_hubble` (CLI token `iss_and_hubble`: ISS + HST) and
-  `scenarios::iss` (CLI token `iss`: ISS only). Each **owns its own inline TLE
-  element set `const`s** and assembles them into the tracked array, with a clock
-  that starts at the first satellite's epoch; the `ISS_TLE` literal is
-  **deliberately duplicated** across the two files (each scenario owns its TLE
-  data — do not factor it into a shared const). Add a scenario by adding a module
-  and a `ScenarioName` variant in `main.rs`.
+  (`globe-experiment scenario <name>`); the name is an **optional** positional,
+  so a bare `scenario` lists the available scenarios (via `list_scenarios`,
+  driven off the `ScenarioName` `ValueEnum` so it can't drift) instead of
+  erroring. Today there are two: `scenarios::iss_and_hubble` (CLI token
+  `iss_and_hubble`: ISS + HST) and `scenarios::iss` (CLI token `iss`: ISS only).
+  Each **owns its own inline TLE element set `const`s** and assembles them into
+  the tracked array, with a clock that starts at the first satellite's epoch; the
+  `ISS_TLE` literal is **deliberately duplicated** across the two files (each
+  scenario owns its TLE data — do not factor it into a shared const). Add a
+  scenario by adding a module and a `ScenarioName` variant in `main.rs`.
 - **Every scenario's time window must fall inside the valid EOP range** so the
   astronomical accuracy goal actually holds. That range is bounded on **both**
   ends:

@@ -274,11 +274,16 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   `const`s also **moved out of `satellite.rs` into this scenario** - the
   `satellite` module is now element-set agnostic (it propagates whatever a
   scenario hands it). `main.rs` is now a pure **clap**
-  CLI: a `Cli` with a `Scenario { name: ScenarioName }` subcommand and a
-  `ScenarioName` `ValueEnum` (`#[value(name = "iss_and_hubble")]` keeps the token
-  snake_case), dispatching to the matching `run`. So
+  CLI: `Parser` is derived **directly on an enum** `Cli` (no wrapper struct /
+  separate `Subcommand` enum - each variant is a top-level subcommand), with a
+  `Scenario { name: Option<ScenarioName> }` variant and a `ScenarioName`
+  `ValueEnum` (`#[value(name = "iss_and_hubble")]` keeps the token snake_case),
+  dispatching to the matching `run`. So
   `globe-experiment scenario iss_and_hubble` runs the scene; an unknown name is a
-  clap usage error. New dep: `clap` (derive). A second scenario `scenarios::iss`
+  clap usage error. The name is **optional**: a bare `scenario` prints the
+  available scenarios (`list_scenarios`, iterating `ScenarioName::value_variants`
+  so it can't drift) instead of erroring. New dep: `clap` (derive). A second
+  scenario `scenarios::iss`
   (CLI token `iss`, ISS only) was then added as a clone of `iss_and_hubble` minus
   HST; its `ISS_TLE` const is **deliberately duplicated** rather than shared
   (owner's call - each scenario owns its TLE data). Owner-requested.
