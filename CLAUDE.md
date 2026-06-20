@@ -68,7 +68,11 @@ cargo run --release
   first frames, so a clean 15-25 s run means pipelines/bindings are valid.
 - **WGSL is compiled by naga at runtime** in `create_shader_module`, *not*
   during `cargo build`. A clean `cargo build` proves nothing about the
-  shader — you must actually run it.
+  shader. Statically validate it with the **naga CLI**
+  (`naga --compact --capabilities none shaders/globe.wgsl` — same naga the
+  app links; see Testing & verification) after every shader edit; that
+  catches all compile/validation errors, but you still must actually run the
+  app to check look and pipeline-binding correctness.
 
 ---
 
@@ -520,12 +524,41 @@ section is for the larger, explicitly-deferred ideas.)
 - **Check correctness with `cargo clippy`, not just `cargo build`** — run
   it heavily and aim for warning-free. clippy catches misuse, redundancy,
   and footguns the bare compiler misses. Caveat: neither command validates
-  `shaders/globe.wgsl` — naga compiles WGSL only at runtime, so a clean
-  build/clippy says nothing about the shader; you must run the app.
-- **`wgsl-analyzer` can statically validate `globe.wgsl`, but only via its
-  LSP server** — useful as a quick syntax/spec check *before* the run-the-app
-  test, not a replacement for it (naga is still the actual compiler).
-  Gotchas, all verified here (2026-06-20):
+  `shaders/globe.wgsl` — `cargo build`/clippy never compile the WGSL (naga
+  only runs at app runtime), so a clean build says nothing about the shader.
+  Statically validate it with the **naga CLI** (next bullet) after every
+  shader edit; an actual run is still required for look/pipeline-binding
+  correctness, which validation can't see.
+- **Verify `shaders/globe.wgsl` with the `naga` CLI after every shader
+  change.** This is the authoritative static check: the CLI is the *same
+  naga* the app links through wgpu (CLI 29.x ↔ the `wgpu`/`naga` 29.x in
+  `Cargo.lock`), so it runs the exact frontend + IR validator that would
+  otherwise only fire at runtime — full type checking, all entry points, all
+  validation flags. Use the strictest invocation:
+
+  ```sh
+  naga --compact --capabilities none shaders/globe.wgsl
+  ```
+
+  - **What the flags buy.** No output file means *validate only* (don't emit
+    a translation). Default `--validate` is already every `ValidationFlags`
+    bit, so it's left implicit (so it auto-tracks any flags naga adds — don't
+    hardcode the `63` bitmask). `--compact` runs a second validation pass over
+    the compacted IR. `--capabilities none` forbids every *optional* capability
+    (float16, subgroup ops, dual-source blending, ...) — the shader uses only
+    baseline features, so `none` passes today and turns any future
+    capability-gated feature into a deliberate, visible decision (relax it by
+    naming the capability if you ever add one).
+  - **Reading the result:** `Validation successful` + exit 0 = good;
+    parse/type/validation errors print with a line+caret and exit 1. It
+    catches real semantics, not just syntax (e.g. a `let x: f32 = 1u;` type
+    mismatch is reported).
+  - **Keep the CLI version aligned** with the linked naga (bump it when wgpu
+    bumps) so the static check can't disagree with the runtime compiler.
+- **`wgsl-analyzer` is a *secondary*, spec-strict linter** — the naga CLI
+  above is the authoritative check (it's the real compiler); reach for
+  wgsl-analyzer only when you want an editor-grade second opinion, and it can
+  only be driven via its LSP server. Gotchas, all verified here (2026-06-20):
   - **The CLI subcommands are stubs.** `wgsl-analyzer parse` / `diagnostics`
     / `unresolved-references` panic with "subcommand not implemented", and
     `--print-config-schema` prints nothing. Don't reach for them.
