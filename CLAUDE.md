@@ -132,10 +132,10 @@ cargo run --release
 - **The terminator / night-side darkening must use the GEOMETRIC normal**
   (`cos_sun = dot(n_geo, sun)`, the `daylight` smoothstep), never the
   bump-mapped normal `n`. Bump detail on the day/night edge speckles it.
-- **Star map and Sun are ephemeris-driven** (`src/simulation/sky.rs`). The Sun's
+- **Star map and Sun are ephemeris-driven** (`src/simulation/celestial_sphere.rs`). The Sun's
   direction comes from the JPL DE440 ephemeris and the star map is oriented by
   Earth's real GCRF↔ITRF attitude, both for the current clock time. (This
-  reverses the earlier deliberately-non-physical "sky rigidly attached to the
+  reverses the earlier deliberately-non-physical "celestial sphere rigidly attached to the
   sun" model — the owner asked for the astronomically-correct version on
   2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
   uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
@@ -153,17 +153,17 @@ cargo run --release
   `satkit-data` dir comes back. (Run from a clean dir to verify none appears.)
   - **Content: real EOP, bundled** — CelesTrak's `EOP-All.csv`, embedded the
     same way as the ephemeris (`build.rs` downloads it straight into `OUT_DIR`;
-    `sky.rs` `include_bytes!`-es it as `EOP` and feeds it to
+    `celestial_sphere.rs` `include_bytes!`-es it as `EOP` and feeds it to
     `init_from_bytes`). So polar motion + UT1-UTC are real, not zeros.
   - **What consumes it.** The **satellite** path (`qteme2itrf`) is the full,
     non-`approx` transform: it applies real polar motion (via `qitrf2tirs`) and
     real UT1-UTC (via `gmst`), so the simulated ground track is sub-arcsec. The
-    **sky** path still uses the `*_approx` transforms; those pick up real
+    **celestial-sphere** path still uses the `*_approx` transforms; those pick up real
     UT1-UTC through `gmst` but still neglect polar motion (~0.3") and use
     approximate nutation (~1"). That residual is sub-arcsec and only affects the
     Sun/star *backdrop*, so it's left as-is.
-  - **Going fully IERS-2010 for the sky is a bigger job — don't assume it's a
-    one-liner.** Switching the sky to `qgcrf2itrf`/`qitrf2gcrf` additionally
+  - **Going fully IERS-2010 for the celestial sphere is a bigger job — don't assume it's a
+    one-liner.** Switching the celestial sphere to `qgcrf2itrf`/`qitrf2gcrf` additionally
     needs satkit's IERS nutation tables (Tab5A/5B/5D), which it reads from the
     data dir via `ierstable` and **`.unwrap()`s** — i.e. it would `panic` (and
     re-create `satkit-data`) unless those tables are *also* bundled and seeded
@@ -174,7 +174,7 @@ cargo run --release
 - **The camera is in the inertial (star-fixed) frame** (owner-requested
   2026-06-18). The `Camera` rig (in `src/application/camera.rs`) is built around
   the origin as before but interpreted in the celestial frame, then rotated into
-  the Earth-fixed world by **`celestial_to_world = sky.star_rot_inv.transpose()`**.
+  the Earth-fixed world by **`celestial_to_world = celestial_sphere.star_rot_inv.transpose()`**.
   That rotation is produced by `SimulationState::celestial_to_world()` and applied
   in `ApplicationState::redraw` (the camera lives in `application`, so it resolves
   `camera.eye`/`camera.view_proj` there and passes the finished `eye`/`view_proj`
@@ -184,7 +184,7 @@ cargo run --release
   Don't move the camera back into the ECEF/world frame.
 - **Backdrop anchoring**: both the star lookup and the sun disc are
   functions of the **camera-relative view direction** (`world − camera_pos`),
-  not of position on the sky sphere. Anchoring either to the sky-sphere
+  not of position on the celestial sphere. Anchoring either to the celestial-sphere
   surface reintroduces parallax between sun and stars (a fixed bug). Do not
   regress it.
 
@@ -242,7 +242,7 @@ the owner. Re-introducing them silently is a regression.
 - **The astronomically-correct star model** — was rejected during the
   slider era, but **adopted on 2026-06-18** via the JPL ephemerides (see the
   "Star map and Sun are ephemeris-driven" rule above). The old non-physical
-  sun-attached sky is the thing not to reintroduce now.
+  sun-attached celestial sphere is the thing not to reintroduce now.
 - **Noise *frequency* ramp toward the terminator** for the city-light
   dissolve — rejected because it boils/fizzes under sun motion. The dither
   uses a **fixed** `DITHER_SCALE` for a coherent wipe.
@@ -269,8 +269,8 @@ Adding to this list does **not** authorize doing it — confirm with the owner
 first. (Concrete engineering follow-ups also live in `MEMORY.md` §14; this
 section is for the larger, explicitly-deferred ideas.)
 
-- **Full IERS-2010 Earth orientation for the sky.** Switch the Sun/star
-  backdrop in `src/simulation/sky.rs` from the `*_approx` transforms
+- **Full IERS-2010 Earth orientation for the celestial sphere.** Switch the Sun/star
+  backdrop in `src/simulation/celestial_sphere.rs` from the `*_approx` transforms
   (`qgcrf2itrf_approx` / `qitrf2gcrf_approx`) to the full
   `qgcrf2itrf` / `qitrf2gcrf`, closing the residual ~1" error (real polar
   motion + IERS-2010 nutation instead of approximate nutation / neglected
@@ -282,7 +282,7 @@ section is for the larger, explicitly-deferred ideas.)
     and EOP. satkit exposes `frametransform::init_iers_table_from_bytes(id,
     bytes)` (re-export of `ierstable::init_from_bytes`) over three
     `OnceLock<IERSTable>` singletons keyed by `IersTableId::{Tab5A, Tab5B,
-    Tab5D}`. Seed all three in `sky::init_satkit()` *before* the first sky
+    Tab5D}`. Seed all three in `celestial_sphere::init_satkit()` *before* the first celestial-sphere
     transform — otherwise `table()`'s lazy `get_or_init` wins and
     `IERSTable::from_file(...).unwrap()` resolves a data dir (recreating the
     stray `satkit-data` dir), tries to download from
@@ -291,9 +291,9 @@ section is for the larger, explicitly-deferred ideas.)
   - **Real work beyond seeding:** bundle three small text files
     (`tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` — KB each, negligible binary
     cost) via `build.rs` (`EMBEDS` table → `OUT_DIR`) and
-    `include_bytes!` them in `sky.rs`; flip the two transform calls to the
-    non-`approx` versions; and update every "sky is `*_approx`" claim in
-    `CLAUDE.md`, `MEMORY.md`, and the `sky.rs` / `init_satkit` doc-comments in
+    `include_bytes!` them in `celestial_sphere.rs`; flip the two transform calls to the
+    non-`approx` versions; and update every "celestial sphere is `*_approx`" claim in
+    `CLAUDE.md`, `MEMORY.md`, and the `celestial_sphere.rs` / `init_satkit` doc-comments in
     the same change.
 
 ---
@@ -370,7 +370,7 @@ section is for the larger, explicitly-deferred ideas.)
   `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
   `Uniforms` packing; `MARKER_RADIUS_PX`). Mesh in `src/renderer/mesh.rs`.
 - **Simulation state / RenderState / TelemetryState**: `src/simulation/mod.rs`
-  (`SimulationState` composes clock / `Vec<Satellite>` / sky; `advance`,
+  (`SimulationState` composes clock / `Vec<Satellite>` / celestial_sphere; `advance`,
   `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)` where
   both carry a per-satellite `Vec` (`markers` / `satellites`); `marker_occluded`).
   `SimulationState::new(satellites)` takes the tracked list and starts the clock
@@ -392,11 +392,11 @@ section is for the larger, explicitly-deferred ideas.)
 - **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by
   wall-clock dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`).
   Starts at the TLE epoch.
-- **Sun / Earth orientation / star map**: `src/simulation/sky.rs`
-  (`Sky::at(time)` → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's
-  JPL ephemeris + `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()`
+- **Sun / Earth orientation / star map**: `src/simulation/celestial_sphere.rs`
+  (`CelestialSphere::at(time)` → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's
+  JPL ephemeris + `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `celestial_sphere::init_satkit()`
   (called once via the `simulation::init()` wrapper at the start of a scenario's
-  `run`, before any `Sky` is built) seeds satkit's global state from
+  `run`, before any `CelestialSphere` is built) seeds satkit's global state from
   embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
   real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
   `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
@@ -406,7 +406,7 @@ section is for the larger, explicitly-deferred ideas.)
   **including** the two satkit data files that are bundled verbatim: the JPL
   ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB).
   `build.rs` downloads both straight into `OUT_DIR` (the `EMBEDS` table);
-  `sky.rs` embeds each with `include_bytes!`. No `assets/` dir, no
+  `celestial_sphere.rs` embeds each with `include_bytes!`. No `assets/` dir, no
   runtime data file.
 
 ### Scenarios & valid time range (read before adding a scenario)
@@ -461,15 +461,15 @@ section is for the larger, explicitly-deferred ideas.)
   downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
   (Earth-orientation params) from CelesTrak on the first build straight into
   `OUT_DIR` (adds to the already-network-dependent first build);
-  `sky.rs` embeds each with `include_bytes!` and
+  `celestial_sphere.rs` embeds each with `include_bytes!` and
   loads them via `jplephem::init_from_bytes` / `earth_orientation_params::
   init_from_bytes`. So there is **no runtime data file** - the binary is
   self-contained - but a fresh checkout still needs network for the first build.
-- **Earth orientation: satellite is full EOP; sky is `*_approx` (~1").** With
+- **Earth orientation: satellite is full EOP; celestial sphere is `*_approx` (~1").** With
   real EOP bundled, the satellite's `qteme2itrf` applies real polar motion +
   UT1-UTC (sub-arcsec). The Sun/star backdrop still uses the `*_approx`
   transforms (real UT1-UTC via `gmst`, but polar motion neglected + approximate
-  nutation, ~1") — fine for a backdrop. Going full IERS-2010 for the sky would
+  nutation, ~1") — fine for a backdrop. Going full IERS-2010 for the celestial sphere would
   *additionally* require bundling satkit's IERS nutation tables (Tab5A/5B/5D,
   which `ierstable` `.unwrap()`s from the data dir) — not done. Because the tool
   is **past-only**, the bundled EOP is valid forever for in-range dates. Keep

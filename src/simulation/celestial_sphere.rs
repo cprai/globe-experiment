@@ -1,6 +1,6 @@
-//! Ephemeris-driven sky: the Sun's direction and the star-map orientation for
-//! a given simulation time, from satkit's JPL Development Ephemerides (DE440)
-//! and Earth-orientation transforms.
+//! Ephemeris-driven celestial sphere: the Sun's direction and the star-map
+//! orientation for a given simulation time, from satkit's JPL Development
+//! Ephemerides (DE440) and Earth-orientation transforms.
 //!
 //! Geocentric model: the Earth stays the rendered globe at the origin in its
 //! Earth-fixed (ECEF) frame. The Sun's position comes from the ephemeris
@@ -64,7 +64,7 @@ pub fn init_satkit() {
 
 /// Sun direction and star-map orientation for one instant, in the renderer's
 /// world frame.
-pub struct Sky {
+pub struct CelestialSphere {
     /// Unit vector toward the Sun in the Earth-fixed (ECEF) world frame.
     pub sun_dir: Vec3,
     /// Rotation taking world (ECEF) view directions into the star map's
@@ -75,8 +75,8 @@ pub struct Sky {
     pub subsolar_lon_deg: f32,
 }
 
-impl Sky {
-    /// Computes the sky for `time` from the JPL ephemeris.
+impl CelestialSphere {
+    /// Computes the celestial sphere for `time` from the JPL ephemeris.
     pub fn at(time: &Instant) -> Self {
         // P: standard ECEF/GCRF (Z = pole) -> world frame (Y = north),
         // mapping (x, y, z) -> (y, z, x). Orthonormal, so transpose = inverse.
@@ -94,7 +94,7 @@ impl Sky {
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
         // back to Y-up, so the equirectangular lookup's pole tracks the
-        // celestial pole. As time advances this rotates the sky at the
+        // celestial pole. As time advances this rotates the star map at the
         // sidereal rate, consistent with the Sun's motion above.
         let q = qitrf2gcrf_approx(time);
         let r_itrf2gcrf = Mat3::from_cols(

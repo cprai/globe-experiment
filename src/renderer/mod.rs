@@ -712,7 +712,7 @@ impl GlobeRenderer {
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
-                    // The sky sphere is seen from inside.
+                    // The celestial sphere is seen from inside.
                     cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },

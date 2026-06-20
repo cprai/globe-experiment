@@ -40,7 +40,7 @@ files at runtime.
 - A physically based atmosphere with realistic sky colors - watch the
   terminator band glow orange at sunset, and the blue halo hug the
   planet's edge.
-- Astronomically accurate Sun and sky: the Sun's position, Earth's
+- Astronomically accurate Sun and celestial sphere: the Sun's position, Earth's
   orientation, and the star backdrop are computed from the JPL DE440
   ephemeris (via the [satkit](https://crates.io/crates/satkit) crate) for the
   current simulated time, so the day/night terminator and the stars track real

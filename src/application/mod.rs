@@ -37,7 +37,8 @@ pub fn run(mut app: ApplicationState) {
 /// and the renderer. The window/egui_state/gfx are created on `resumed`.
 pub struct ApplicationState {
     camera: Camera,
-    /// All simulation state: clock, tracked satellite, ephemeris-driven sky.
+    /// All simulation state: clock, tracked satellite, ephemeris-driven
+    /// celestial sphere.
     simulation: SimulationState,
     controller: Controller,
     /// The window, created on `resumed`. Shared with the renderer's surface.
@@ -181,20 +182,20 @@ impl ApplicationState {
         let mut animating = self.controller.tick(&mut self.camera, gfx.viewport().1);
 
         // Advance the simulation: the clock steps and, while it runs, the
-        // ephemeris-driven sky is re-evaluated at the new time. (This frame's
-        // play/pause and speed edits come from the previous frame's UI, applied
-        // here - a one-frame, ~16 ms delay, imperceptible.) A running clock is
-        // another "animating" source - it keeps requesting frames; when paused
-        // nothing advances and the app can go idle.
+        // ephemeris-driven celestial sphere is re-evaluated at the new time.
+        // (This frame's play/pause and speed edits come from the previous
+        // frame's UI, applied here - a one-frame, ~16 ms delay, imperceptible.)
+        // A running clock is another "animating" source - it keeps requesting
+        // frames; when paused nothing advances and the app can go idle.
         animating |= self.simulation.advance();
 
         // Resolve the inertial-frame camera into the Earth-fixed world frame
-        // using the sky's current orientation, then hand the finished view to
-        // the simulation to produce this frame's RenderState *and* the UI's
-        // TelemetryState in one shot (a single satellite propagation feeds
-        // both). All the camera math lives here (with the camera); the
-        // simulation only consumes the resolved eye/view and fills in the
-        // astronomical positions.
+        // using the celestial sphere's current orientation, then hand the
+        // finished view to the simulation to produce this frame's RenderState
+        // *and* the UI's TelemetryState in one shot (a single satellite
+        // propagation feeds both). All the camera math lives here (with the
+        // camera); the simulation only consumes the resolved eye/view and fills
+        // in the astronomical positions.
         let (width, height) = gfx.viewport();
         let aspect = width / height.max(1.0);
         let celestial_to_world = self.simulation.celestial_to_world();

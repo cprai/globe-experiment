@@ -83,9 +83,9 @@ impl Camera {
 
     /// The view-projection matrix. `celestial_to_world` is the rotation from
     /// the inertial (star) frame the rig lives in to the Earth-fixed world
-    /// frame the scene is drawn in (the inverse of the sky's world->celestial
-    /// rotation); applying it keeps the camera fixed relative to the stars
-    /// while the Earth rotates beneath it.
+    /// frame the scene is drawn in (the inverse of the celestial sphere's
+    /// world->celestial rotation); applying it keeps the camera fixed relative
+    /// to the stars while the Earth rotates beneath it.
     pub fn view_proj(&self, aspect: f32, celestial_to_world: Mat3) -> Mat4 {
         let (eye, target, up) = self.world_frame(celestial_to_world);
 

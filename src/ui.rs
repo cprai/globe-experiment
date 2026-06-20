@@ -11,8 +11,8 @@ use crate::simulation::clock::Clock;
 /// `Clock` (play/pause + speed), passed in by mutable reference.
 ///
 /// The Sun's position is no longer user-controlled - it comes from the JPL
-/// ephemeris for the clock's time (see `sky`), so the old latitude/longitude
-/// sliders are gone.
+/// ephemeris for the clock's time (see `celestial_sphere`), so the old
+/// latitude/longitude sliders are gone.
 pub fn control_panel(ctx: &egui::Context, telemetry: &TelemetryState, clock: &mut Clock) {
     egui::Area::new(egui::Id::new("control_panel"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])

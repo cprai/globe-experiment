@@ -1,20 +1,20 @@
 //! Simulation state and astronomical math: the simulation clock, the tracked
-//! satellite, and the ephemeris-driven sky. This module owns everything about
-//! *what is being simulated* and computes the positions of the rendered
-//! objects; it is deliberately free of any windowing (winit), GPU (wgpu), or UI
-//! (egui) dependency, and never references the camera type (the camera lives in
-//! `application`). See `REFACTOR_PLAN.md`.
+//! satellite, and the ephemeris-driven celestial sphere. This module owns
+//! everything about *what is being simulated* and computes the positions of the
+//! rendered objects; it is deliberately free of any windowing (winit), GPU
+//! (wgpu), or UI (egui) dependency, and never references the camera type (the
+//! camera lives in `application`). See `REFACTOR_PLAN.md`.
 
+pub mod celestial_sphere;
 pub mod clock;
 pub mod satellite;
-pub mod sky;
 
 use glam::{Mat3, Mat4, Vec3};
 
 use crate::earth;
+use celestial_sphere::CelestialSphere;
 use clock::Clock;
 use satellite::Satellite;
-use sky::Sky;
 
 /// The finished, render-ready positions/matrices for one frame: everything the
 /// renderer needs, as plain `glam` data (no GPU types). Produced together with
@@ -83,16 +83,17 @@ pub struct SatelliteTelemetry {
 
 /// Seeds satkit's global state (embedded ephemeris + EOP table) for fully
 /// offline, data-dir-free use. Must be called once at startup, before any
-/// `Sky` is built. Thin wrapper over `sky::init_satkit` so callers (e.g.
-/// `main`) need not know about the `sky` submodule.
+/// `CelestialSphere` is built. Thin wrapper over
+/// `celestial_sphere::init_satkit` so callers (e.g. `main`) need not know about
+/// the `celestial_sphere` submodule.
 pub fn init() {
-    sky::init_satkit();
+    celestial_sphere::init_satkit();
 }
 
 /// All simulation state: the clock (datetime + play/paused + speed), the
 /// tracked satellites (each a TLE; positions propagated on demand), and the
-/// ephemeris-driven sky (Sun direction + star-map orientation). Held by
-/// composition so each subsystem keeps its own tuned logic.
+/// ephemeris-driven celestial sphere (Sun direction + star-map orientation).
+/// Held by composition so each subsystem keeps its own tuned logic.
 ///
 /// This struct owns *what is being simulated* and the astronomical math over
 /// it; it does not own the camera (that lives in `application`) and carries no
@@ -102,52 +103,52 @@ pub struct SimulationState {
     /// The tracked objects, assembled by the caller (`main`) and passed to
     /// [`new`](Self::new). Rendered as markers in this order.
     pub satellites: Vec<Satellite>,
-    pub sky: Sky,
+    pub celestial_sphere: CelestialSphere,
 }
 
 impl SimulationState {
     /// Builds the initial state from a caller-provided list of satellites: the
-    /// clock starts at the first satellite's TLE epoch and the sky is evaluated
-    /// at that same time. `init` must already have run (the satellites/sky read
-    /// satkit globals). Panics if `satellites` is empty - the clock needs a
-    /// start epoch and the tool always tracks at least one object.
+    /// clock starts at the first satellite's TLE epoch and the celestial sphere
+    /// is evaluated at that same time. `init` must already have run (the
+    /// satellites/celestial sphere read satkit globals). Panics if `satellites`
+    /// is empty - the clock needs a start epoch and the tool always tracks at
+    /// least one object.
     pub fn new(satellites: Vec<Satellite>) -> Self {
         let epoch = satellites
             .first()
             .expect("at least one satellite to track")
             .epoch();
         let clock = Clock::new(epoch);
-        let sky = Sky::at(&clock.now());
+        let celestial_sphere = CelestialSphere::at(&clock.now());
         Self {
             clock,
             satellites,
-            sky,
+            celestial_sphere,
         }
     }
 
     /// Advances the simulation by the wall-clock delta since the last call:
-    /// the clock steps, and while it is running the ephemeris-driven sky is
-    /// re-evaluated at the new time. The satellite carries no stored state - it
-    /// is propagated on demand from the clock's time in `frame_state`, which
-    /// feeds the result to both the renderer and the UI. Returns whether the
-    /// clock is running - an
-    /// "animating" source that keeps frames coming; when paused nothing
-    /// advances and the app can go idle.
+    /// the clock steps, and while it is running the ephemeris-driven celestial
+    /// sphere is re-evaluated at the new time. The satellite carries no stored
+    /// state - it is propagated on demand from the clock's time in
+    /// `frame_state`, which feeds the result to both the renderer and the UI.
+    /// Returns whether the clock is running - an "animating" source that keeps
+    /// frames coming; when paused nothing advances and the app can go idle.
     pub fn advance(&mut self) -> bool {
         let running = self.clock.tick();
         if running {
-            self.sky = Sky::at(&self.clock.now());
+            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
         }
         running
     }
 
     /// Rotation from the inertial (star-fixed) frame the camera rig lives in
     /// to the Earth-fixed world frame the scene is drawn in - the inverse of
-    /// the sky's world -> celestial rotation. The application applies this to
-    /// resolve the camera into the world frame before building its view; see
-    /// `REFACTOR_PLAN.md`. (Orthonormal, so transpose = inverse.)
+    /// the celestial sphere's world -> celestial rotation. The application
+    /// applies this to resolve the camera into the world frame before building
+    /// its view; see `REFACTOR_PLAN.md`. (Orthonormal, so transpose = inverse.)
     pub fn celestial_to_world(&self) -> Mat3 {
-        self.sky.star_rot_inv.transpose()
+        self.celestial_sphere.star_rot_inv.transpose()
     }
 
     /// Produces this frame's [`RenderState`] (for the renderer) and
@@ -181,13 +182,13 @@ impl SimulationState {
         let render = RenderState {
             view_proj,
             camera_pos: eye,
-            sun_dir: self.sky.sun_dir,
-            star_rot_inv: self.sky.star_rot_inv,
+            sun_dir: self.celestial_sphere.sun_dir,
+            star_rot_inv: self.celestial_sphere.star_rot_inv,
             markers,
         };
         let telemetry = TelemetryState {
-            subsolar_lat_deg: self.sky.subsolar_lat_deg,
-            subsolar_lon_deg: self.sky.subsolar_lon_deg,
+            subsolar_lat_deg: self.celestial_sphere.subsolar_lat_deg,
+            subsolar_lon_deg: self.celestial_sphere.subsolar_lon_deg,
             datetime_label: self.clock.datetime_label(),
             satellites,
         };

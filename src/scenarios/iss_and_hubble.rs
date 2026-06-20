@@ -39,9 +39,9 @@ const HST_TLE: &str = concat!(
 /// then hands off to the winit event loop. Blocks until the window closes.
 pub fn run() {
     // Seed satkit's global state (embedded ephemeris + EOP table) before
-    // anything else: SimulationState::new below builds the Sky (which reads the
-    // ephemeris) and the satellites parse TLEs. Doing it here keeps satkit fully
-    // offline and data-dir-free.
+    // anything else: SimulationState::new below builds the CelestialSphere
+    // (which reads the ephemeris) and the satellites parse TLEs. Doing it here
+    // keeps satkit fully offline and data-dir-free.
     simulation::init();
 
     // Assemble the tracked objects and hand them to the simulation. The clock

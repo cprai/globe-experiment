@@ -55,7 +55,7 @@ Runtime:
   `qteme2itrf` consumes the real EOP (sub-arcsec); the Sun/star backdrop uses
   the `*_approx` transforms (~1 arcsec). Note: frame transforms *read* satkit's
   global EOP table on first use, which would create a stray `satkit-data` dir;
-  `sky::init_satkit` pre-seeds the table to suppress that — see §16.8. Pulls
+  `celestial_sphere::init_satkit` pre-seeds the table to suppress that — see §16.8. Pulls
   `numeris` (its linear-algebra crate; `Vector3`/`Quaternion`/`DMatrix`)
   transitively.
 
@@ -109,11 +109,11 @@ src/renderer/mod.rs      Gfx: surface/device/queue/config + egui_wgpu +
                          private GlobeRenderer scene; init/resize/viewport/
                          update; FrameOutcome, UiFrame
 src/renderer/mesh.rs     WGS84-ellipsoid generator (km, with geodetic normals)
-src/simulation/mod.rs    SimulationState (clock+satellite+sky), RenderState +
+src/simulation/mod.rs    SimulationState (clock+satellite+celestial_sphere), RenderState +
                          TelemetryState, advance / celestial_to_world /
                          frame_state -> (RenderState, TelemetryState);
                          marker_occluded; init() wrapper for satkit seeding
-src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
+src/simulation/celestial_sphere.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
 src/simulation/satellite.rs  one Satellite per tracked object: TLE parse +
                          satkit SGP4 -> world-space km marker pos; state_at(time)
@@ -189,12 +189,12 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   the displayed datetime now comes from the clock. A running clock is another
   "animating" redraw source; per the owner it **starts playing**, so the app
   renders continuously from launch and only idles when paused.
-- **Phase 7** (2026-06-18): **ephemeris-driven Sun & sky.** Replaced the
-  slider-driven `Sun` with `sky.rs` (`Sky`): the Sun direction comes from the
+- **Phase 7** (2026-06-18): **ephemeris-driven Sun & celestial sphere.** Replaced the
+  slider-driven `Sun` with `celestial_sphere.rs` (`CelestialSphere`): the Sun direction comes from the
   JPL DE440 ephemeris (`jplephem::geocentric_pos`) and the star map is oriented
   by Earth's real GCRF↔ITRF attitude (`q*_approx`, EOP-free), both for the
   clock's time and updated every running frame alongside the satellite. This
-  **reverses** the earlier deliberately-non-physical "sky attached to the sun"
+  **reverses** the earlier deliberately-non-physical "celestial sphere attached to the sun"
   rule (owner-requested). build.rs downloaded the DE440 file into `data/` and
   the app pointed satkit there via `set_datadir` (**superseded in Phase 9** -
   the ephemeris is now embedded). The Sun lat/lon sliders are
@@ -202,7 +202,7 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   its uniforms are unchanged - only the values of `sun_dir`/`star_rot_inv`.
 - **Phase 8** (2026-06-18): **inertial camera.** The camera's orbital rig is
   now built in the celestial frame and rotated into the Earth-fixed world by
-  `celestial_to_world = sky.star_rot_inv.transpose()` (since the 2026-06-19
+  `celestial_to_world = celestial_sphere.star_rot_inv.transpose()` (since the 2026-06-19
   refactor, in `ApplicationState::redraw` via `SimulationState::celestial_to_world`,
   applied with `camera.view_proj(aspect, c2w)`/`eye(c2w)`). So the camera holds still
   relative to the stars and the globe spins beneath it; `Camera`'s lon/lat are
@@ -210,7 +210,7 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
 - **Phase 9** (2026-06-19): **embedded ephemeris + offline EOP.** The DE440
   binary is no longer a runtime side file. build.rs downloads it straight into
   `OUT_DIR` and embeds it verbatim (see Phase 12 for the final layout);
-  `sky.rs` embeds it with `include_bytes!` and loads it into satkit's singleton
+  `celestial_sphere.rs` embeds it with `include_bytes!` and loads it into satkit's singleton
   via `jplephem::init_from_bytes` (satkit 0.18.1 entry point for embedded use).
   `set_datadir` and the `data/` dir are gone, so the binary is self-contained
   (~+98 MB) with no runtime data dependency. `init_data_dir` renamed
@@ -233,7 +233,7 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   stands). Effect: the satellite's `qteme2itrf` now applies **real** polar
   motion + UT1-UTC (sub-arcsec); the Sun/star backdrop still uses the
   `*_approx` transforms (which pick up real UT1-UTC via `gmst` but not polar
-  motion, ~1"). Going full IERS-2010 for the sky would also need the IERS
+  motion, ~1"). Going full IERS-2010 for the celestial sphere would also need the IERS
   nutation tables (Tab5A/5B/5D) bundled — not done. Valid EOP range ≈ 1962 →
   build date; past-only keeps every scenario in range and the snapshot valid
   forever. Owner-requested.
@@ -297,7 +297,7 @@ subcommand backed by a `ScenarioName` `ValueEnum`) and dispatches to the matchin
 `scenarios::*::run`; it does no setup itself. Each scenario's `run` does the
 setup that used to live in `main`: `simulation::init()` (seeds satkit's globals -
 the embedded DE440 ephemeris and the real bundled EOP table - before any
-ephemeris/frame-transform use; thin wrapper over `sky::init_satkit`), then it
+ephemeris/frame-transform use; thin wrapper over `celestial_sphere::init_satkit`), then it
 assembles the tracked `Vec<Satellite>` from the inline TLE consts
 (`Satellite::from_tle(ISS_TLE)`, `HST_TLE`), then
 `SimulationState::new(satellites)`, then
@@ -319,9 +319,9 @@ The 2026-06-19 refactor (see `REFACTOR_PLAN.md`) split the old monolithic
   rig + `Controller` live here so a different input scheme (e.g. touch) stays
   local to this module.
 - **`simulation`** (`src/simulation/mod.rs`) owns `SimulationState { clock,
-  satellite, sky }` (composition) + the astronomical math. `new()` builds the
+  satellite, celestial_sphere }` (composition) + the astronomical math. `new()` builds the
   `Satellite` (parses TLE, runs SGP4), `Clock::new(satellite.epoch())` (clock
-  starts at the TLE epoch), and `Sky::at(clock.now())`. It has **no
+  starts at the TLE epoch), and `CelestialSphere::at(clock.now())`. It has **no
   winit/wgpu/egui dependency and never names the `Camera` type** — it only ever
   takes a resolved camera `eye`/`view_proj` and returns a `RenderState`.
 - **`renderer`** (`src/renderer/mod.rs`) owns `Gfx` (surface/device/queue/config
@@ -371,7 +371,7 @@ calls `redraw()`. Everything else → `handle_input`:
 1. `controller.tick(&mut camera, gfx.viewport().1)` advances flick inertia
    **and** the zoom glide; returns `animating`.
 2. `simulation.advance()`: `clock.tick()` advances sim time by the wall-clock
-   delta x multiplier; if it ran, `sky = Sky::at(now)` (ephemeris) is recomputed
+   delta x multiplier; if it ran, `celestial_sphere = CelestialSphere::at(now)` (ephemeris) is recomputed
    for `now = clock.now()`. Satellite positions are **not** propagated here -
    that happens once in `frame_state` (step 3). Returns clock-running, so
    `animating |=` it and a playing clock keeps requesting frames. (Runs
@@ -380,7 +380,7 @@ calls `redraw()`. Everything else → `handle_input`:
    ordering is what lets each satellite's single propagation feed both its
    marker and its readout; see step 3.)
 3. **Resolve the camera** (in `application`, since the camera lives here):
-   `c2w = simulation.celestial_to_world()` (= `sky.star_rot_inv.transpose()`),
+   `c2w = simulation.celestial_to_world()` (= `celestial_sphere.star_rot_inv.transpose()`),
    `eye = camera.eye(c2w)`, `view_proj = camera.view_proj(aspect, c2w)` with
    `aspect` from `gfx.viewport()`. Then `(render_state, telemetry) =
    simulation.frame_state(eye, view_proj)`: it loops `self.satellites`, calling
@@ -482,7 +482,7 @@ not a geographic point.
   `celestial_to_world` (a `Mat3`; the origin-centered rotation transforms eye,
   target, and up alike). `view_proj(aspect, c2w)` and `eye(c2w)` take that
   rotation; `ApplicationState::redraw` passes it `SimulationState::celestial_to_world()`
-  = `sky.star_rot_inv.transpose()` (the inverse of the world→celestial
+  = `celestial_sphere.star_rot_inv.transpose()` (the inverse of the world→celestial
   rotation), then hands the resolved `eye`/`view_proj` to
   `SimulationState::frame_state`. This is what makes the camera
   star-fixed: in the celestial frame the rig is constant (modulo user input),
@@ -571,9 +571,9 @@ whether either still needs frames.
 
 ---
 
-## 6. Sky (`src/simulation/sky.rs`) — ephemeris-driven Sun + star orientation
+## 6. Celestial sphere (`src/simulation/celestial_sphere.rs`) — ephemeris-driven Sun + star orientation
 
-Replaces the old slider-driven `Sun`. `Sky::at(time)` computes, for a satkit
+Replaces the old slider-driven `Sun`. `CelestialSphere::at(time)` computes, for a satkit
 `Instant`, the Sun direction and the star-map orientation in the renderer's
 world frame; recomputed every running frame (cheap: ephemeris interp + a few
 rotations). Geocentric model — Earth stays the globe at the origin. **For the
@@ -603,7 +603,7 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
       `gmst`) → sub-arcsec ground track. The Sun/star backdrop uses `*_approx`,
       which picks up real UT1-UTC via `gmst` but neglects polar motion (~0.3")
       and uses approximate nutation (~1"); fine for a backdrop.
-    - **Full IERS-2010 for the sky is a bigger job** (not done): switching to
+    - **Full IERS-2010 for the celestial sphere is a bigger job** (not done): switching to
       `qgcrf2itrf`/`qitrf2gcrf` additionally needs satkit's IERS nutation tables
       (Tab5A/5B/5D), which `ierstable` `.unwrap()`s from the data dir — would
       `panic` + re-create `satkit-data` unless those are also bundled and seeded
@@ -620,7 +620,7 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
   `qitrf2gcrf_approx(time)` as a `Mat3` (built by rotating the basis vectors)
   and `P` is the standard-ECEF→world permutation `(x,y,z)->(y,z,x)`. This maps
   a world view direction into the celestial (GCRF) frame for the equirect star
-  lookup; as time advances it rotates the sky at the sidereal rate, consistent
+  lookup; as time advances it rotates the celestial sphere at the sidereal rate, consistent
   with the Sun. Uploaded to the shader **as-is** (no transpose).
 - **Frame note**: satkit is standard ECEF/GCRF (Z = pole); the project world
   is Y = north. `P` bridges them — the same permutation `earth::
@@ -809,8 +809,8 @@ Per-marker position + visibility are **not** in the uniform - they live in the
 marker instance buffer (one `MarkerInstance { position: vec3, visible: f32 }`
 per satellite, drawn instanced; see the marker shader §). WGSL `mat3x3` columns
 have vec4 stride, so the Rust struct pads each column. `star_rot_inv` =
-`sky.star_rot_inv` (world ECEF → celestial GCRF, uploaded as-is) and `sun_dir` =
-`sky.sun_dir`, both ephemeris-derived. The uniform and the marker instances are
+`celestial_sphere.star_rot_inv` (world ECEF → celestial GCRF, uploaded as-is) and `sun_dir` =
+`celestial_sphere.sun_dir`, both ephemeris-derived. The uniform and the marker instances are
 written every frame in `prepare` (`queue.write_buffer`, ordered before the
 frame's submit); `prepare` takes `&mut self` + `&Device` so it can grow the
 marker buffer when the satellite count exceeds its capacity.
@@ -879,7 +879,7 @@ is the surface (width, height) px, used solely for the constant-pixel markers.
 | transmittance LUT | 6 | Rgba16Float 256×64 | `fs_main` | T(r, μ): fraction of sunlight surviving to the top of atmosphere. |
 | inscatter Rayleigh | 8 | Rgba16Float 256×128 | `fs_atmosphere` | Σ_R: view-ray Rayleigh integral, phase factored out. |
 | inscatter Mie | 9 | Rgba16Float 256×128 | `fs_atmosphere` | Σ_M: same for Mie. |
-| stars | 10 | BC7 sRGB | `fs_stars` | Equirectangular sky backdrop, sampled by direction. |
+| stars | 10 | BC7 sRGB | `fs_stars` | Equirectangular star backdrop, sampled by direction. |
 
 ### Equirectangular mapping (both directions)
 
@@ -1035,7 +1035,7 @@ front-face (seen from inside), no blending, **before everything**.
 interpolation), output twice: `dir = star_rot_inv · relative` (for the star
 lookup) and `view = relative` (world frame, for the sun). Both normalized
 per fragment. `star_rot_inv` is now the **ephemeris** world(ECEF)→celestial
-(GCRF) rotation (`sky.star_rot_inv`), so the sky tracks Earth's real attitude
+(GCRF) rotation (`celestial_sphere.star_rot_inv`), so the celestial sphere tracks Earth's real attitude
 and rotates at the sidereal rate as the clock advances; `sun_dir` is likewise
 the ephemeris Sun direction. (The shader code is unchanged — only the uniform
 values; the old sun-attached `star_rotation` is gone.)
@@ -1185,7 +1185,7 @@ are downloaded into memory and transcoded in one pass - they never touch disk.
 `download()`s a file straight into `OUT_DIR` (per-entry size cap) unless already
 present, and emits `cargo::rerun-if-changed=OUT_DIR/<name>` so deleting it
 re-downloads. These embeds **must** land on disk (unlike the textures) because
-`sky.rs` `include_bytes!`-es them directly — no copy, no transcode (embedded
+`celestial_sphere.rs` `include_bytes!`-es them directly — no copy, no transcode (embedded
 verbatim). The two entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) from
   `ssd.jpl.nasa.gov` (256 MiB cap) — loaded via `jplephem::init_from_bytes`.
@@ -1285,7 +1285,7 @@ GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418, ANGULAR_VELOCITY_RAD_S 7.292115e-5.
 ~318550, MAX_TILT 80; defaults lon 0, lat 0, distance ~12742, tilt 0; lat
 clamp ±89.
 **`src/renderer/mod.rs`**: STACKS 64, SLICES 128, MARKER_RADIUS_PX 6.
-**`src/simulation/sky.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440) +
+**`src/simulation/celestial_sphere.rs`**: embedded ephemeris `linux_p1550p2650.440` (DE440) +
 embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
@@ -1524,9 +1524,9 @@ version bump — this crate's API is still moving.
 The single place that explains, in full, how the Sun (and any planet) and the
 satellite are positioned/oriented every frame: the reference frames, the
 transforms and their math, the exact satkit calls, units, data files, and
-accuracy. Quick references elsewhere: module summaries in §6 (Sky), §6.5
+accuracy. Quick references elsewhere: module summaries in §6 (Celestial sphere), §6.5
 (Satellite), §6.6 (Clock); the satkit API cheat-sheet in §15; the camera in
-§4. **Source is authoritative** (`sky.rs`, `satellite.rs`, `earth.rs`,
+§4. **Source is authoritative** (`celestial_sphere.rs`, `satellite.rs`, `earth.rs`,
 `camera.rs`, `renderer.rs`) — this section is the consolidated explanation.
 
 ### 16.1 Model, units, cadence
@@ -1536,13 +1536,13 @@ accuracy. Quick references elsewhere: module summaries in §6 (Sky), §6.5
   astronomical (Sun direction, Earth attitude, star orientation, satellite
   position) is computed *for the current simulation time* and expressed in that
   fixed world frame. The visible "Earth rotation" is actually the **camera**
-  and the **sky/Sun** moving (the camera is star-fixed, §16.7).
+  and the **celestial sphere/Sun** moving (the camera is star-fixed, §16.7).
 - **Units.** World space is **kilometers**. satkit returns **meters**, so
   every satkit length is ÷1000 on the way in. Angles in code are radians;
   degrees only at the UI edge.
 - **Time** is a satkit `Instant` (µs since the Unix epoch, UTC). The `Clock`
   (§6.6, §16.4) advances it by wall-dt × speed; **every running frame**
-  re-evaluates the sky (`Sky::at`) at `clock.now()` and propagates the
+  re-evaluates the celestial sphere (`CelestialSphere::at`) at `clock.now()` and propagates the
   satellite on demand (`Satellite::state_at`) where its position is consumed.
   Paused ⇒ nothing recomputes, no frames.
 
@@ -1627,10 +1627,10 @@ Caveats: SGP4 is only accurate ~days around the TLE epoch (far-future clock
 times still render, but drift physically); `sgp4`/`qteme2itrf`/`ITRFCoord` need
 **no data files**.
 
-### 16.6 Sun & planets — JPL ephemeris (`sky.rs`)
+### 16.6 Sun & planets — JPL ephemeris (`celestial_sphere.rs`)
 
-Pipeline (Sun → world direction + Earth/sky orientation), re-run every running
-frame by `Sky::at(time)`:
+Pipeline (Sun → world direction + Earth/celestial-sphere orientation), re-run every running
+frame by `CelestialSphere::at(time)`:
 
 1. **Body position**: `geocentric_pos(SolarSystem::Sun, &time) -> Result<
    Vector3>` — position **relative to Earth's center**, **meters**, **GCRF**
@@ -1651,7 +1651,7 @@ frame by `Sky::at(time)`:
    **`star_rot_inv = P · R_itrf2gcrf · Pᵀ`** — world→celestial. This is the
    `star_rot_inv` uniform: the shader maps each world view direction into the
    Y-up celestial frame for the equirectangular star lookup. As `time`
-   advances `R_itrf2gcrf` rotates about the celestial pole, so the sky turns at
+   advances `R_itrf2gcrf` rotates about the celestial pole, so the celestial sphere turns at
    the **sidereal rate**, consistent with the Sun's motion.
 
 ### 16.7 Star backdrop & the inertial camera
@@ -1672,7 +1672,7 @@ ECEF globe spins underneath**. So `Camera.longitude/latitude` are an inertial
 look direction, not geography.
 
 Limitation: the Milky-Way texture is not precisely registered to ICRF, so the
-**absolute** sky orientation is arbitrary; the **motion** (sidereal rotation +
+**absolute** celestial-sphere orientation is arbitrary; the **motion** (sidereal rotation +
 Sun consistency) is physically correct.
 
 ### 16.8 satkit usage & data files (summary)
@@ -1688,8 +1688,8 @@ Sun consistency) is physically correct.
 - **Data files**: two, both **embedded** in the binary (no runtime data file):
   the **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) and CelesTrak's
   **`EOP-All.csv`** (~2-3 MiB Earth-orientation params). `build.rs` downloads
-  both straight into `OUT_DIR`; `sky.rs`
-  `include_bytes!`-es each and `sky::init_satkit()` (called once at the start of
+  both straight into `OUT_DIR`; `celestial_sphere.rs`
+  `include_bytes!`-es each and `celestial_sphere::init_satkit()` (called once at the start of
   a scenario's `run`) loads them via `jplephem::init_from_bytes` /
   `earth_orientation_params::init_from_bytes`. The EOP seed also stops satkit
   from creating a `satkit-data` dir (§16.8). The satellite consumes the real EOP
@@ -1705,7 +1705,7 @@ Sun consistency) is physically correct.
   (real polar motion + UT1-UTC) → sub-arcsec, in-range. The **Sun/star
   backdrop** uses the `*_approx` (IAU-76/FK5) transforms: they pick up real
   UT1-UTC via `gmst` but neglect polar motion (~0.3") and use approximate
-  nutation (~1"); fine for a backdrop. Full IERS-2010 for the sky additionally
+  nutation (~1"); fine for a backdrop. Full IERS-2010 for the celestial sphere additionally
   needs the IERS nutation tables (Tab5A/5B/5D) bundled — not done (§16.8).
 - **Valid time range (load-bearing for scenarios).** The bundled EOP is only
   defined on a bounded interval, so every scenario's epoch window must lie

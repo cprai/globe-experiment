@@ -15,7 +15,8 @@
 //! lands on exactly the same ellipsoid the globe mesh is built from.
 //!
 //! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
-//! EOP table (real polar motion + UT1-UTC), which `sky::init_satkit` pre-seeds
+//! EOP table (real polar motion + UT1-UTC), which
+//! `celestial_sphere::init_satkit` pre-seeds
 //! from the bundled `EOP-All.csv` at startup. That seeding also suppresses the
 //! stray `satkit-data` dir satkit would otherwise create on first use; see its
 //! docs.

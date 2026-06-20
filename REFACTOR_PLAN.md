@@ -54,7 +54,7 @@ Move from the current `main.rs` + flat `src/globe/*` layout to:
    `Gfx` owns `egui_wgpu::Renderer` and draws the UI in the same render pass.
    All GPU submission stays in `renderer`.
 3. **`SimulationState` is composition**, not flattened: it holds named
-   `clock` / `satellite` / `sky` sub-structs (preserving each subsystem's
+   `clock` / `satellite` / `celestial_sphere` sub-structs (preserving each subsystem's
    tuned logic), not loose `paused`/`datetime`/`speed` fields.
 4. **`earth`** is a top-level shared module (`src/earth.rs`), not buried in
    simulation or renderer.
@@ -66,7 +66,7 @@ Move from the current `main.rs` + flat `src/globe/*` layout to:
 
 The camera rig lives in the **inertial (star-fixed) frame**; the scene is
 drawn in the **Earth-fixed world frame**. The bridge is `celestial_to_world =
-sky.star_rot_inv.transpose()`, which comes from `sky` (simulation). So each
+celestial_sphere.star_rot_inv.transpose()`, which comes from `celestial_sphere` (simulation). So each
 frame `application`:
 
 1. reads the rotation from simulation: `let c2w = simulation.celestial_to_world();`
@@ -96,7 +96,7 @@ src/
     mod.rs             # SimulationState, RenderState, new()/advance()/render_state()/celestial_to_world()
     clock.rs           # moved from globe/clock.rs
     satellite.rs       # moved from globe/satellite.rs
-    sky.rs             # moved from globe/sky.rs (incl. init_satkit)
+    celestial_sphere.rs             # moved from globe/celestial_sphere.rs (incl. init_satkit)
   renderer/
     mod.rs             # Gfx: device/queue/surface/config + pipelines + egui_wgpu
     mesh.rs            # moved from globe/mesh.rs
@@ -135,19 +135,19 @@ Two purity rules the compiler will enforce once imports are cleaned up:
 pub struct SimulationState {
     pub clock: Clock,          // datetime + play/paused + speed (multiplier)
     pub satellite: Satellite,  // TLE + last propagated state
-    pub sky: Sky,              // ephemeris-driven sun_dir + star rotation
+    pub celestial_sphere: CelestialSphere, // ephemeris-driven sun_dir + star rotation
 }
 
 impl SimulationState {
     pub fn new() -> Self;                         // was App::default() minus the camera
-    pub fn advance(&mut self) -> bool;            // tick clock; if running, re-propagate sat + recompute sky; returns "animating"
-    pub fn celestial_to_world(&self) -> Mat3;     // sky.star_rot_inv.transpose(); the inertial->world bridge for the camera
+    pub fn advance(&mut self) -> bool;            // tick clock; if running, re-propagate sat + recompute celestial sphere; returns "animating"
+    pub fn celestial_to_world(&self) -> Mat3;     // celestial_sphere.star_rot_inv.transpose(); the inertial->world bridge for the camera
     pub fn render_state(&self, eye: Vec3, view_proj: Mat4) -> RenderState;   // fills astronomical fields + marker visibility
 }
 ```
 
 - `advance()` absorbs the `clock.tick()` + `satellite.update_to()` +
-  `Sky::at()` block currently inline in `main::App::redraw`.
+  `CelestialSphere::at()` block currently inline in `main::App::redraw`.
 - `render_state(eye, view_proj)` takes the application-resolved camera and
   returns a finished `RenderState`. It computes `marker_visible` from `eye` +
   `sat_pos` (the `marker_occluded` test, **moved into simulation**), and
@@ -265,14 +265,14 @@ A free `pub fn run(app: ApplicationState)` creates the `EventLoop`, sets
 
 ```rust
 fn main() {
-    simulation::init();                 // thin wrapper over sky::init_satkit() (ephemeris + EOP)
+    simulation::init();                 // thin wrapper over celestial_sphere::init_satkit() (ephemeris + EOP)
     let simulation = SimulationState::new();
     application::run(ApplicationState::new(simulation));
 }
 ```
 
-`simulation::init()` keeps `main` from knowing about the `sky` submodule, and
-must run **before** `SimulationState::new()` (which builds `Sky`).
+`simulation::init()` keeps `main` from knowing about the `celestial_sphere` submodule, and
+must run **before** `SimulationState::new()` (which builds `CelestialSphere`).
 
 ---
 
@@ -298,16 +298,16 @@ each is a mostly-mechanical move so regressions are easy to localize.
 - Update imports: `globe::earth` / `super::earth` → `crate::earth`.
 - **Done when:** builds, runs, clippy clean. Pure move.
 
-### M2 — Carve out `simulation` (clock / satellite / sky only — NOT camera)
-- **M2a (move):** Move `clock.rs`, `satellite.rs`, `sky.rs` from `src/globe/`
+### M2 — Carve out `simulation` (clock / satellite / celestial_sphere only — NOT camera)
+- **M2a (move):** Move `clock.rs`, `satellite.rs`, `celestial_sphere.rs` from `src/globe/`
   to `src/simulation/`; create `simulation/mod.rs` with `pub mod`
-  declarations + a `pub fn init()` wrapper over `sky::init_satkit()`. Update
+  declarations + a `pub fn init()` wrapper over `celestial_sphere::init_satkit()`. Update
   paths (`globe::x` → `simulation::x`, `super::earth` → `crate::earth`).
   `App` still uses the pieces individually; `camera.rs`/`input.rs` stay in
   `globe/` for now. Builds & runs identically.
-- **M2b (state):** Add `SimulationState { clock, satellite, sky }` (composition)
-  + `new()` (the clock/satellite/sky part of `App::default`) + `advance()`
-  (the clock/satellite/sky block from `redraw`). Replace those three `App`
+- **M2b (state):** Add `SimulationState { clock, satellite, celestial_sphere }` (composition)
+  + `new()` (the clock/satellite/celestial_sphere part of `App::default`) + `advance()`
+  (the clock/satellite/celestial_sphere block from `redraw`). Replace those three `App`
   fields with one `simulation: SimulationState`; `App` keeps `camera` +
   `controller`. `redraw` calls `simulation.advance()`. Builds & runs.
 - **M2c (render_state):** Move `marker_occluded` into `simulation`. Add
@@ -357,8 +357,8 @@ each is a mostly-mechanical move so regressions are easy to localize.
   behaves as before; idle-when-paused = zero frames.
 
 ### M5 — Finish the `ui` module
-- Change `ui::control_panel` signature from `(ctx, &Sky, &Satellite, &mut
-  Clock)` to `(ctx, &mut SimulationState)` (read sky/satellite, mutate clock).
+- Change `ui::control_panel` signature from `(ctx, &CelestialSphere, &Satellite, &mut
+  Clock)` to `(ctx, &mut SimulationState)` (read celestial_sphere/satellite, mutate clock).
   Confirm all egui panel logic lives here and `application` only *invokes* it.
 - **Done when:** builds, panel identical.
 
@@ -427,13 +427,13 @@ reality:
 Behavior-preserving means **none** of these change:
 
 - **satkit seeding** (`init_satkit`: ephemeris + EOP from embedded bytes,
-  `disable_eop_time_warning`) runs once **before** any `Sky` is built. No
+  `disable_eop_time_warning`) runs once **before** any `CelestialSphere` is built. No
   stray `satkit-data` dir appears (run from a clean dir to verify).
 - **Astronomical accuracy** unchanged: satellite path `qteme2itrf` (full EOP),
-  sky path `*_approx`. No frame/transform changes.
+  celestial-sphere path `*_approx`. No frame/transform changes.
 - **Inertial-frame camera unchanged**: the camera rig stays in the inertial
   frame and is rotated to world by `celestial_to_world =
-  sky.star_rot_inv.transpose()` via `Camera::view_proj(aspect, c2w)`. The math
+  celestial_sphere.star_rot_inv.transpose()` via `Camera::view_proj(aspect, c2w)`. The math
   is identical; it just executes in `application` now instead of inside
   `prepare`.
 - **First frame** rendered via direct `redraw()` (never `request_redraw`);
@@ -462,7 +462,7 @@ Behavior-preserving means **none** of these change:
   importing winit/wgpu/egui *and* never references the `Camera` type. If a
   signature tempts a `Camera` import, pass `Vec3`/`Mat4` instead — as
   `render_state` does.
-- **Camera/sky coupling lives in `application`:** `application` must read
+- **Camera/celestial-sphere coupling lives in `application`:** `application` must read
   `simulation.celestial_to_world()` to resolve the inertial rig into the world
   frame before calling `render_state`. That is a one-way read
   (application → simulation), not a cycle.

@@ -2,9 +2,9 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     sun_dir: vec3<f32>,
-    // Inverse of the star map's orientation (sky is rigidly attached to
-    // the sun: longitude spins it about the polar axis, latitude tilts
-    // it about the horizontal equinox axis).
+    // Inverse of the star map's orientation (the celestial sphere is rigidly
+    // attached to the sun: longitude spins it about the polar axis, latitude
+    // tilts it about the horizontal equinox axis).
     star_rot_inv: mat3x3<f32>,
     // Marker params shared by every satellite marker:
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
@@ -435,7 +435,7 @@ struct StarsOutput {
     @builtin(position) position: vec4<f32>,
     // Camera-relative view direction, rotated into the star map's base
     // frame. The backdrop is at infinity, so everything on it is a
-    // function of view direction from the eye - anchoring it to the sky
+    // function of view direction from the eye - anchoring it to the celestial
     // sphere's surface instead would parallax against the sun.
     @location(0) dir: vec3<f32>,
     // The same view direction in the world frame, for the sun.
