@@ -202,8 +202,7 @@ fn sun_transmittance(r: f32, mu: f32) -> vec3<f32> {
         lut_sampler,
         vec2<f32>(x_mu, x_r),
         0.0,
-    )
-    .rgb;
+    ).rgb;
 }
 
 // Entry/exit distances of a ray against a sphere centered on the origin,
@@ -223,8 +222,7 @@ fn ray_sphere(origin: vec3<f32>, dir: vec3<f32>, radius: f32) -> vec2<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let albedo = textureSample(day_texture, earth_sampler, in.uv).rgb;
     let night = textureSample(night_texture, earth_sampler, in.uv).rgb;
-    let normal_sample =
-        textureSample(normal_texture, earth_sampler, in.uv).xyz * 2.0 - 1.0;
+    let normal_sample = textureSample(normal_texture, earth_sampler, in.uv).xyz * 2.0 - 1.0;
     let specular_mask = textureSample(specular_texture, earth_sampler, in.uv).r;
 
     // Geometric (geodetic) surface normal. Unit length and with the same
@@ -268,8 +266,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let f = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
 
-    var specular =
-        d * g * f / max(4.0 * n_dot_v * n_dot_l, 1e-4) * n_dot_l;
+    var specular = d * g * f / max(4.0 * n_dot_v * n_dot_l, 1e-4) * n_dot_l;
 
     // Wave texture, water only: modulate the glint around its mean so
     // the average brightness stays put.
@@ -281,8 +278,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the terminator the blue is scattered away on the long grazing path
     // and the remaining light turns orange.
     let cos_sun = dot(n_geo, sun);
-    let sun_light =
-        sun_transmittance(PLANET_RADIUS_KM + 0.1, cos_sun);
+    let sun_light = sun_transmittance(PLANET_RADIUS_KM + 0.1, cos_sun);
 
     let day_lit = albedo
         * (vec3<f32>(DAY_AMBIENT)
@@ -381,20 +377,18 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
         v = 0.5
             + 0.5
                 * clamp(
-                    (b - PLANET_RADIUS_KM)
+            (b - PLANET_RADIUS_KM)
                         / (ATMOSPHERE_TOP_KM - PLANET_RADIUS_KM),
-                    0.0,
-                    1.0,
-                );
+            0.0,
+            1.0,
+        );
     }
 
     let mu_ref = dot(normalize(reference), sun);
     let uv = vec2<f32>(mu_ref * 0.5 + 0.5, v);
 
-    let sum_r =
-        textureSampleLevel(inscatter_rayleigh_lut, lut_sampler, uv, 0.0).rgb;
-    let sum_m =
-        textureSampleLevel(inscatter_mie_lut, lut_sampler, uv, 0.0).rgb;
+    let sum_r = textureSampleLevel(inscatter_rayleigh_lut, lut_sampler, uv, 0.0).rgb;
+    let sum_m = textureSampleLevel(inscatter_mie_lut, lut_sampler, uv, 0.0).rgb;
 
     // Phase functions are constant along the ray.
     let mu = dot(dir, sun);
@@ -468,8 +462,7 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
         acos(clamp(d.y, -1.0, 1.0)) / PI,
     );
 
-    let stars =
-        textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
+    let stars = textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
 
     // The sun, along the same camera-relative view direction as the
     // stars, so the two stay locked under rotation and zoom. The globe

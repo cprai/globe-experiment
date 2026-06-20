@@ -356,7 +356,15 @@ section is for the larger, explicitly-deferred ideas.)
   (emitting a warning) and leaves comments unwrapped, so don't use it. The
   nightly requirement is formatting-only — the build/run toolchain stays
   stable (`cargo run --release`). (`cargo +nightly fmt` does not touch
-  `shaders/globe.wgsl`; format WGSL by hand to match the surrounding code.)
+  `shaders/globe.wgsl` — see the next bullet for WGSL.)
+- **Format WGSL with `wgslfmt`, not by hand.** Run `wgslfmt
+  shaders/globe.wgsl` (or `wgslfmt --check` to verify) after editing the
+  shader; it is the formatting authority for `.wgsl`, just as rustfmt is for
+  `.rs`. Don't hand-format WGSL. `wgslfmt` keeps output ASCII-only (the
+  golden rule still holds) and only touches whitespace/layout, never tokens,
+  so it is safe to run on the look-tuning `const` block. It does **not** wrap
+  comments, so the math-reflow caution above is rust-only; WGSL comment
+  wrapping is still manual.
 - **Watch reflow on math.** `wrap_comments` re-wraps purely on width and is
   blind to meaning, so it will happily insert a line break in the middle of a
   mathematical formula or equation (e.g. splitting `cos_sun = dot(n_geo,
