@@ -1,3 +1,4 @@
+mod headless;
 mod mesh;
 
 use std::sync::Arc;
@@ -10,11 +11,20 @@ use winit::window::Window;
 use crate::simulation::RenderState;
 use mesh::Vertex;
 
+pub use headless::HeadlessRenderer;
+
 const STACKS: u32 = 64;
 const SLICES: u32 = 128;
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
+
+/// Maximum width or height (pixels) for a single-frame [`HeadlessRenderer`]
+/// target. Matches wgpu's default 2D texture dimension limit
+/// (`wgpu::Limits::default().max_texture_dimension_2d`, which the globe device
+/// requests); the offscreen color texture cannot exceed it. `HeadlessRenderer`
+/// `debug_assert`s this against the real device limit so the two cannot drift.
+pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
 /// The renderer: owns the GPU surface/device/queue, the globe scene resources
 /// (pipelines, buffers, bind group), and the egui paint backend. Created once
@@ -63,24 +73,10 @@ impl Gfx {
             .create_surface(window.clone())
             .expect("create surface");
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .expect("request adapter");
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("globe device"),
-            // The earth/star textures are BC7-compressed at build time.
-            // BC support is universal on desktop GPUs.
-            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        }))
-        .expect("request device");
+        // Shared adapter+device creation (BC7 feature, default limits). The
+        // surface is passed so the chosen adapter is guaranteed able to present
+        // to it; the headless renderer passes `None` instead.
+        let (adapter, device, queue) = request_adapter_device(&instance, Some(&surface));
 
         let size = window.inner_size();
         let mut config = surface
@@ -223,6 +219,39 @@ impl Gfx {
 
         FrameOutcome::Presented
     }
+}
+
+/// Requests a high-performance adapter and a device with the globe's required
+/// features (BC7 texture compression) and default limits. Shared by the
+/// windowed [`Gfx`] and the headless [`HeadlessRenderer`] so both create the
+/// device identically. Pass `Some(&surface)` for the windowed path (the adapter
+/// must be able to present to that surface) or `None` for offscreen rendering.
+/// `instance` is borrowed because each caller owns it (the windowed path needs
+/// it to build the surface first).
+fn request_adapter_device(
+    instance: &wgpu::Instance,
+    compatible_surface: Option<&wgpu::Surface<'_>>,
+) -> (wgpu::Adapter, wgpu::Device, wgpu::Queue) {
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface,
+        force_fallback_adapter: false,
+    }))
+    .expect("request adapter");
+
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("globe device"),
+        // The earth/star textures are BC7-compressed at build time.
+        // BC support is universal on desktop GPUs.
+        required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+        required_limits: wgpu::Limits::default(),
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+    }))
+    .expect("request device");
+
+    (adapter, device, queue)
 }
 
 /// Per-frame shader uniforms. Layout must match `Uniforms` in globe.wgsl:

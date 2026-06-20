@@ -50,8 +50,18 @@ phase 2) — do not reintroduce it.
 ## Build & run
 
 ```sh
-cargo run --release
+cargo run --release                       # default: runs a scenario in a window
+cargo run --release -- render --datetime 2024-01-15T12:30:00Z \
+    --longitude -75 --latitude 40 --distance 12742 --tilt 0 --output frame.png
 ```
+
+The CLI has two modes: a `scenario` subcommand (interactive window, the default
+focus of this project) and a **`render` subcommand** (headless single-frame mode
+- draws one frame to a PNG and exits, no window/input/UI; see the `snapshot`
+module and the "Render mode" notes throughout). Render mode adds two runtime
+dependencies: **`humantime`** (RFC3339 datetime parsing) and **`image`** with
+only the `png` feature (PNG encoding; `image` was already a *build*-dependency
+for texture decoding - the runtime entry is separate, `png`-only).
 
 - **First build needs a network connection** and is slow (~1.5 min extra):
   `build.rs` downloads five textures and BC7-encodes them **in memory** (the
@@ -106,6 +116,15 @@ cargo run --release
 - **Every look-tuning constant in `globe.wgsl` is calibrated to the
   non-sRGB surface.** Moving to a colorimetrically correct sRGB target
   invalidates all of them and requires re-tuning the entire shader.
+- **The headless render target must be non-sRGB for the same reason.**
+  `HeadlessRenderer` (the `render` CLI mode) renders to an offscreen
+  `Rgba8Unorm` (non-sRGB) texture, not `Rgba8UnormSrgb`. On a non-sRGB target
+  the shader's 8-bit output is stored raw, and those bytes already equal the
+  sRGB-encoded pixels a display shows - so they are written verbatim into the
+  PNG (read back as-is, no gamma/sRGB transform), reproducing the on-screen
+  look. An sRGB offscreen target would hardware-encode the output and diverge
+  from the window - the headless twin of the surface-format rule above. Do not
+  "fix" it to sRGB.
 - **No HDR, no bloom.** Output is LDR straight to the swapchain. "Glow" and
   "brightness" everywhere (sun disc, city lights) are the LDR cheat: a
   clipped-white core inside an additive soft falloff. A real bloom pass is
@@ -337,19 +356,29 @@ section is for the larger, explicitly-deferred ideas.)
   *why* (especially the non-obvious GPU/winit/precision reasons), small
   focused structs, descriptive names. The existing files are the style
   guide.
-- The code is organized into five top-level modules plus a shared `earth`:
+- The code is organized into six top-level modules plus a shared `earth`:
   **`application`** (windowing, the winit event loop, the camera + input, and
   per-frame redraw orchestration; owns the `SimulationState` and the renderer),
   **`simulation`** (`SimulationState` + the astronomical math; produces a
   `RenderState`; no winit/wgpu/egui and no `Camera` type), **`renderer`** (the
-  `Gfx` struct: GPU setup + per-frame `update`), **`ui`** (the egui panel
-  logic), **`earth`** (`src/earth.rs`: shared WGS84 constants/helpers), and
-  **`scenarios`** (`src/scenarios/`: one module per past scenario, each with a
-  `run()` that seeds satkit, assembles the tracked objects, builds the
-  `SimulationState`/`ApplicationState`, and hands off to `application::run`).
-  `main.rs` is tiny: it uses **clap** to parse the CLI (`scenario <name>`
-  subcommand) and dispatches to the matching `scenarios::*::run`; it does no
-  setup itself.
+  `Gfx` struct: GPU setup + per-frame `update`; **and** the headless
+  `HeadlessRenderer`, an offscreen-texture + readback target that shares the
+  scene core), **`ui`** (the egui panel logic), **`earth`** (`src/earth.rs`:
+  shared WGS84 constants/helpers), **`scenarios`** (`src/scenarios/`: one module
+  per past scenario, each with a `run()` that seeds satkit, assembles the
+  tracked objects, builds the `SimulationState`/`ApplicationState`, and hands off
+  to `application::run`), and **`snapshot`** (`src/snapshot.rs`: the headless
+  single-frame `render` CLI mode - no winit/input/egui; builds a `RenderState`
+  directly from a datetime + camera and drives `HeadlessRenderer`).
+  `main.rs` is tiny: it uses **clap** to parse the CLI (a `scenario <name>`
+  subcommand **and** a `render` subcommand) and dispatches to the matching
+  `scenarios::*::run` or `snapshot::run`; it does no setup itself. The
+  interactive windowed `Gfx` and the `HeadlessRenderer` share one device-creation
+  path (`renderer::request_adapter_device`) and the same scene core
+  (`GlobeRenderer`); they differ only in the presentation target (swapchain
+  surface + egui vs. offscreen texture + readback, no UI). The `Camera` rig stays
+  in `application` (the input `Controller` stays private there) but is re-exported
+  `pub(crate)` so `snapshot` can build the same rig.
 - **Run `cargo +nightly fmt` after every code change** (`.rs` edits).
   rustfmt (with the checked-in `rustfmt.toml`) is the sole formatting
   authority — don't hand-format, and keep diffs limited to real changes.
@@ -398,7 +427,16 @@ section is for the larger, explicitly-deferred ideas.)
   telemetry, then calls `Gfx::update`.
 - **Renderer**: `src/renderer/mod.rs` (`Gfx`: `init`/`resize`/`viewport`/
   `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
-  `Uniforms` packing; `MARKER_RADIUS_PX`). Mesh in `src/renderer/mesh.rs`.
+  `Uniforms` packing; `MARKER_RADIUS_PX`; the shared `request_adapter_device`
+  helper; `MAX_FRAME_DIMENSION`). Mesh in `src/renderer/mesh.rs`. **Headless
+  renderer** in `src/renderer/headless.rs` (`HeadlessRenderer`: offscreen
+  `Rgba8Unorm` target + 256-aligned readback -> `image::RgbaImage`; no
+  surface/egui).
+- **Single-frame render mode**: `src/snapshot.rs` (`snapshot::run` +
+  `RenderParams`: parse the RFC3339 datetime via `humantime` ->
+  `Instant::from_unixtime`, build a `RenderState` from `CelestialSphere` + a
+  `Camera`, drive `HeadlessRenderer`, save the PNG, print a stdout summary; no
+  EOP range check - see the Scenarios section).
 - **Simulation state / RenderState / TelemetryState**: `src/simulation/mod.rs`
   (`SimulationState` composes clock / `Vec<Satellite>` / celestial_sphere; `advance`,
   `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)` where
@@ -472,6 +510,14 @@ section is for the larger, explicitly-deferred ideas.)
   the concrete upper bound; the first row (1962-01-01, MJD 37665) is the lower.
   If a scenario can't be brought in-range, it does not meet the accuracy bar —
   flag it rather than shipping a silently-degraded result.
+- **Render mode (`snapshot`) deliberately does NOT enforce this.** The headless
+  `render` CLI mode is a debugging entry point where the caller owns the time, so
+  it intentionally skips the EOP range check that scenarios must pass — there is
+  no runtime EOP logic in `snapshot` at all (not even a warning). An out-of-range
+  datetime renders anyway and silently degrades (satkit falls back to zeros below
+  1962 and constant-extrapolates past the last entry). This is a conscious
+  deviation from the accuracy rules above, documented in `snapshot.rs`, the
+  `analyze-render` skill, and here; do not "fix" it by adding a check.
 
 ---
 

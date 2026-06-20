@@ -9,6 +9,12 @@ egui = "0.34.3"
 egui-wgpu = "0.34.3"
 egui-winit = "0.34.3"
 glam = "0.33.1"
+# RFC3339 datetime parsing for the `render` single-frame CLI mode.
+humantime = "2"
+# PNG encoding for the `render` single-frame output. Runtime dep (the
+# build-dependency `image` below decodes the source textures); only the `png`
+# encoder is needed here, so default features (other formats) are dropped.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 ktx2 = "0.5"
 pollster = "0.4"
 rayon = "1.10"

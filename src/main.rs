@@ -3,7 +3,10 @@ mod earth;
 mod renderer;
 mod scenarios;
 mod simulation;
+mod snapshot;
 mod ui;
+
+use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
@@ -12,9 +15,11 @@ use clap::{Parser, ValueEnum};
 // to a struct with a `#[command(subcommand)]` field only if global flags shared
 // across all subcommands are ever wanted.) The `///` doc comment below is the
 // user-facing `about` text, so keep it free of implementation notes like this.
-/// Globe: an astronomically-accurate satellite simulation tool. The CLI selects
-/// which past scenario to run; all the actual setup lives in the `scenarios`
-/// module. `main` does nothing but parse args and dispatch.
+/// Globe: an astronomically-accurate satellite simulation tool. The CLI either
+/// runs a past scenario in an interactive window (`scenario`) or renders a
+/// single frame to an image file (`render`); the actual setup lives in the
+/// `scenarios` / `snapshot` modules. `main` does nothing but parse args and
+/// dispatch.
 //
 // No explicit `name`: clap defaults the command name to `CARGO_PKG_NAME` (the
 // Cargo.toml package name, "globe-experiment"), so there's no string to keep in
@@ -30,6 +35,49 @@ enum Cli {
         /// is what makes the bare `scenario` invocation valid.
         #[arg(value_enum)]
         name: Option<ScenarioName>,
+    },
+
+    /// Render a single frame to an image file and exit (no window, no UI). The
+    /// datetime fixes the celestial positions and the camera flags fix the
+    /// view; the frame is written to --output as a PNG. Intended for visually
+    /// debugging rendering changes.
+    ///
+    /// NOTE: unlike `scenario`, the datetime is NOT range-checked against the
+    /// bundled Earth-orientation (EOP) data - times outside the bundled range
+    /// silently degrade rather than erroring. Use a past, in-range datetime for
+    /// an accurate frame.
+    //
+    // `allow_negative_numbers` lets the numeric camera flags take negative
+    // values (e.g. `--longitude -75`); without it clap parses the leading `-`
+    // as an unknown short flag ("unexpected argument '-7'"). It still rejects
+    // genuine unknown flags, so only number-shaped values are affected.
+    #[command(allow_negative_numbers = true)]
+    Render {
+        /// RFC3339 UTC instant for the celestial positions, e.g.
+        /// 2024-01-15T12:30:00Z.
+        #[arg(long)]
+        datetime: String,
+        /// Inertial look longitude, degrees.
+        #[arg(long)]
+        longitude: f32,
+        /// Inertial look latitude, degrees.
+        #[arg(long)]
+        latitude: f32,
+        /// Eye distance to the look-at point, kilometers.
+        #[arg(long)]
+        distance: f32,
+        /// Tilt off nadir, degrees (0 looks straight down).
+        #[arg(long)]
+        tilt: f32,
+        /// Output image width in pixels.
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        /// Output image height in pixels.
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        /// Path to write the PNG.
+        #[arg(long)]
+        output: PathBuf,
     },
 }
 
@@ -55,6 +103,25 @@ fn main() {
         },
         // Bare `scenario` with no name: list what's available instead of erroring.
         Cli::Scenario { name: None } => list_scenarios(),
+        Cli::Render {
+            datetime,
+            longitude,
+            latitude,
+            distance,
+            tilt,
+            width,
+            height,
+            output,
+        } => snapshot::run(snapshot::RenderParams {
+            datetime,
+            longitude,
+            latitude,
+            distance_km: distance,
+            tilt,
+            width,
+            height,
+            output,
+        }),
     }
 }
 

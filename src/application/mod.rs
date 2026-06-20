@@ -20,7 +20,9 @@ use winit::window::{Window, WindowId};
 use crate::renderer::{FrameOutcome, Gfx, UiFrame};
 use crate::simulation::SimulationState;
 use crate::ui;
-use camera::Camera;
+// Re-exported crate-wide so the headless `render` mode (`crate::snapshot`) can
+// build the same camera rig; only the input `Controller` stays private here.
+pub(crate) use camera::Camera;
 use input::Controller;
 
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by

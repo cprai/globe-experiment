@@ -44,6 +44,12 @@ Runtime:
 - `bytemuck = "1.25" (derive)` — Pod casts for vertex/uniform data.
 - `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
 - `rayon = "1.10"` — parallelizes `GlobeRenderer::new` (the scene builder inside `Gfx::init`).
+- `humantime = "2"` — parses the `render` CLI mode's RFC3339 UTC `--datetime`
+  into a `SystemTime` (then `Instant::from_unixtime`). Render-mode only.
+- `image = "0.25"` (default-features off, **`png` only**) — PNG encoding for the
+  `render` single-frame output (`RgbaImage::from_raw` + `.save`). Distinct from
+  the build-dependency `image` below (which decodes source textures with
+  `jpeg`/`tiff`); this runtime entry carries only the `png` encoder.
 - `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
   station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`) **and** the
   JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
@@ -69,7 +75,10 @@ Build-dependencies:
 - `half = "2.7" (bytemuck)`, `bytemuck = "1.25"` — the atmosphere LUT bake
   produces f16 texels.
 
-`image` and `half` are **build-only** now (runtime decodes nothing).
+`half` is **build-only** (the LUT bake). `image` is now used on **both** sides:
+build-side decoding (`jpeg`/`tiff`) and a separate runtime entry for `png`
+encoding in `render` mode — the two `[dependencies]`/`[build-dependencies]`
+entries carry different feature sets. Runtime still decodes no textures.
 
 Profile overrides: `[profile.dev.package.X] opt-level = 3` for `image`,
 `zune-jpeg`, `zune-core`, `tiff`, `miniz_oxide`, `weezl` — they speed up
@@ -84,8 +93,13 @@ build.rs                 download 5 textures -> BC7/KTX2 transcode +
                          OUT_DIR; also download the JPL DE440 ephemeris into
                          data/. Contains inline `mod atmosphere`.
 .cargo/config.toml       Linux-only -lstdc++ for intel_tex_2's ISPC objs
-src/main.rs              tiny: clap CLI parse (`scenario <name>` subcommand),
-                         dispatch to the matching scenarios::*::run
+src/main.rs              tiny: clap CLI parse (`scenario <name>` + `render`
+                         subcommands), dispatch to scenarios::*::run or
+                         snapshot::run
+src/snapshot.rs          headless single-frame `render` mode: parse datetime
+                         (humantime), build RenderState from CelestialSphere +
+                         Camera, drive HeadlessRenderer, save PNG, print summary.
+                         NO EOP range check (deliberate)
 src/scenarios/mod.rs     scenario registry (one module per past scenario)
 src/scenarios/iss_and_hubble.rs  ISS+HST scenario: owns the ISS_TLE/HST_TLE
                          consts; run() seeds satkit (simulation::init), assembles
@@ -107,7 +121,11 @@ src/earth.rs             WGS84 + Earth physical constants (axes, eccentricity,
                          single source of truth; mesh + camera both call it.
 src/renderer/mod.rs      Gfx: surface/device/queue/config + egui_wgpu +
                          private GlobeRenderer scene; init/resize/viewport/
-                         update; FrameOutcome, UiFrame
+                         update; FrameOutcome, UiFrame; shared
+                         request_adapter_device helper; MAX_FRAME_DIMENSION
+src/renderer/headless.rs HeadlessRenderer: surfaceless offscreen Rgba8Unorm
+                         target + 256-aligned readback -> image::RgbaImage; no
+                         surface/egui. Shares GlobeRenderer + request_adapter_device
 src/renderer/mesh.rs     WGS84-ellipsoid generator (km, with geodetic normals)
 src/simulation/mod.rs    SimulationState (clock+satellite+celestial_sphere), RenderState +
                          TelemetryState, advance / celestial_to_world /
@@ -887,6 +905,72 @@ is the surface (width, height) px, used solely for the constant-pixel markers.
 
 ---
 
+## 9.5. Headless render mode (`HeadlessRenderer` + `snapshot`)
+
+The `render` CLI subcommand draws **one** frame to a PNG and exits — no winit,
+no input, no egui. It exists mainly so a rendering change can be inspected
+visually (e.g. an agent opening the PNG) where the interactive window can't be
+eyeballed.
+
+**Split of responsibility.** `src/snapshot.rs` (`snapshot::run(RenderParams)`)
+is the orchestration: it parses the datetime, builds a `RenderState`, drives the
+renderer, saves the PNG, and prints a summary. `src/renderer/headless.rs`
+(`HeadlessRenderer`) is the GPU side. The two share the windowed path's core:
+- **Device creation** is the extracted `renderer::request_adapter_device(&instance,
+  compatible_surface)` — `Gfx::init` passes `Some(&surface)`, `HeadlessRenderer`
+  passes `None` (surfaceless). Same BC7 feature + default limits both ways.
+- **Scene** is the same private `GlobeRenderer` (`prepare` + `render`); a child
+  module can reach the parent module's private items, so no visibility change was
+  needed there.
+
+**`HeadlessRenderer`** owns an offscreen color `Texture`
+(`RENDER_ATTACHMENT | COPY_SRC`) and a CPU-mappable `readback` `Buffer`. `render`:
+`globe.prepare` → one render pass into the offscreen view (`LoadOp::Clear(BLACK)`,
+no depth, then `globe.render` — stars → surface → atmosphere; **markers skipped**
+because render mode tracks none, so `RenderState.markers` is empty) →
+`copy_texture_to_buffer` with rows padded to `COPY_BYTES_PER_ROW_ALIGNMENT` (256)
+→ `submit` → `map_async` + `device.poll(PollType::Wait{..})` (block via an mpsc
+channel) → strip the per-row padding into a tight `width*height*4` buffer →
+`image::RgbaImage::from_raw`.
+
+**Offscreen format = `Rgba8Unorm` (non-sRGB), on purpose.** This is the headless
+twin of the "surface must be non-sRGB" rule (§ and CLAUDE.md): the look-tuning
+constants are calibrated to a non-sRGB target, so the stored 8-bit bytes already
+equal the sRGB-encoded on-screen pixels and are written **verbatim** to the PNG
+(no gamma/sRGB transform on readback). `Rgba8Unorm` (vs the surface's usual
+`Bgra8Unorm`) also makes the read-back bytes already RGBA — no channel swap. An
+sRGB offscreen target would diverge from the window.
+
+**No clock / no SimulationState.** Render mode builds the `RenderState` directly:
+`CelestialSphere::at(time)` for `sun_dir`/`star_rot_inv`, `celestial_to_world =
+star_rot_inv.transpose()`, and a `Camera { longitude, latitude, distance, tilt }`
+(re-exported `pub(crate)` from `application`, with `Camera::clamp_distance`
+applied) for `view_proj`/`camera_pos`. `markers: Vec::new()`. So it reuses the
+exact windowed camera + celestial math without the clock or tracked-satellite
+machinery.
+
+**Datetime.** `humantime::parse_rfc3339` → `SystemTime` →
+`duration_since(UNIX_EPOCH)` → `Instant::from_unixtime` (leap-second-correct: it
+re-adds the leap seconds Unix time omits — see §15). `MAX_FRAME_DIMENSION = 8192`
+caps `--width`/`--height` (matches the default `max_texture_dimension_2d`;
+`HeadlessRenderer::new` `debug_assert`s it against the real device limit).
+
+**No EOP range check — deliberate.** Unlike scenarios (§16.9 / CLAUDE.md), render
+mode does **not** validate the datetime against the bundled EOP range and has no
+runtime EOP logic at all (not even a warning). Out-of-range times render and
+silently degrade (zeros below 1962, constant-extrapolation past the last entry).
+The caller owns the time; documented in `snapshot.rs`, the `analyze-render`
+skill, CLAUDE.md, and here.
+
+**CLI.** `main.rs` gains a `Render` clap variant: required `--datetime`,
+`--longitude`, `--latitude`, `--distance` (km), `--tilt`; `--width`/`--height`
+default 1920×1080; required `--output`. Usage errors (bad datetime / zero or
+oversize dims / write failure) print to stderr and `exit(2)`; GPU init failures
+panic like the windowed path. On success it prints a summary (resolved datetime,
+subsolar lat/lon, camera, output path) to stdout for context.
+
+---
+
 ## 10. Shader (`shaders/globe.wgsl`) — four passes, one module
 
 ### Texture inventory (how each is used)
@@ -1348,6 +1432,21 @@ Other standing items:
   leap" from textured globe toward real Google Earth). The `Sun` model and
   the animation-capable redraw loop are already in place for a future
   time-of-day animation (just another "animating" flag).
+- **Render mode not yet GPU-verified.** The headless `render` mode (§9.5) was
+  built and CPU-validated (datetime parse, sim seeding, camera/`RenderState`,
+  clean CLI errors), but the actual offscreen render + PNG output could not be
+  exercised in the dev sandbox — it has **no GPU stack** (no `/dev/dri`, no
+  Vulkan/GL ICD). On a real-GPU host (where the windowed app runs), confirm:
+  the surfaceless `request_adapter(None)` + readback succeed, `Rgba8Unorm` is
+  renderable+`COPY_SRC` (a core format, so expected fine), and the saved PNG
+  matches the windowed look (the non-sRGB color reasoning in §9.5). Debug note:
+  an adapter failure printing `active_backends: 0x0` is a **missing-driver
+  environment**, not a `compatible_surface: None` problem — that would show up
+  as a nonzero `incompatible_surface_backends`, which stays `0x0` here.
+- **No satellite markers in render mode** (deliberate — it tracks none). If
+  wanted later, the clean path is a `SimulationState::at(instant, satellites)`
+  (a paused clock pinned to `instant`) feeding `frame_state`, instead of the
+  current direct `RenderState` construction in `snapshot::run`.
 
 ### wgpu 27 → 29 churn (reference, in case of a future bump)
 From the phase-2 migration: `Instance::new` takes `InstanceDescriptor` by
