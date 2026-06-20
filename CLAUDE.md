@@ -30,8 +30,8 @@ in kilometers** (real-scale orbital simulation). The Sun
 direction, Earth's orientation, and the star-map orientation are computed from
 the **satkit** crate's **JPL DE440 ephemeris** + Earth-orientation transforms
 for the current time (no more sun sliders). It tracks satellites: each
-TLE is propagated with satkit's SGP4 (the tracked array is built in `main` and
-passed to the simulation). All of this is driven by a
+TLE is propagated with satkit's SGP4 (the tracked array is built by a scenario
+and passed to the simulation). All of this is driven by a
 **simulation clock** (play/pause, exponential 1x-100x real-time speed); each
 satellite is drawn as a marker circle and everything animates as time
 advances, with the clock's datetime shown in the UI.
@@ -333,16 +333,19 @@ section is for the larger, explicitly-deferred ideas.)
   *why* (especially the non-obvious GPU/winit/precision reasons), small
   focused structs, descriptive names. The existing files are the style
   guide.
-- The code is organized into four top-level modules plus a shared `earth`:
+- The code is organized into five top-level modules plus a shared `earth`:
   **`application`** (windowing, the winit event loop, the camera + input, and
   per-frame redraw orchestration; owns the `SimulationState` and the renderer),
   **`simulation`** (`SimulationState` + the astronomical math; produces a
   `RenderState`; no winit/wgpu/egui and no `Camera` type), **`renderer`** (the
   `Gfx` struct: GPU setup + per-frame `update`), **`ui`** (the egui panel
-  logic), and **`earth`** (`src/earth.rs`: shared WGS84 constants/helpers).
-  `main.rs` is tiny: seed satkit, build `SimulationState`, build
-  `ApplicationState`, hand off to `application::run`. See `REFACTOR_PLAN.md` for
-  the module-boundary rationale.
+  logic), **`earth`** (`src/earth.rs`: shared WGS84 constants/helpers), and
+  **`scenarios`** (`src/scenarios/`: one module per past scenario, each with a
+  `run()` that seeds satkit, assembles the tracked objects, builds the
+  `SimulationState`/`ApplicationState`, and hands off to `application::run`).
+  `main.rs` is tiny: it uses **clap** to parse the CLI (`scenario <name>`
+  subcommand) and dispatches to the matching `scenarios::*::run`; it does no
+  setup itself. See `REFACTOR_PLAN.md` for the module-boundary rationale.
 - **Run `cargo fmt` after every code change** (`.rs` edits). rustfmt with
   the default config is the sole formatting authority — don't hand-format,
   and keep diffs limited to real changes. (`cargo fmt` does not touch
@@ -376,11 +379,13 @@ section is for the larger, explicitly-deferred ideas.)
   frame conversion to a world-space km point). Each `Satellite` is one tracked
   object storing only the `tle` + `name`; the position is **not** stored -
   `state_at(time)` propagates it on demand (returning a `SatelliteState`)
-  wherever it's needed, so nothing goes stale as the clock advances. The TLEs
-  are **inline source literals** (`pub const ISS_TLE`, `HST_TLE` - `concat!` of
+  wherever it's needed, so nothing goes stale as the clock advances. This module
+  is element-set agnostic - it carries no TLE data; `Satellite::from_tle(text)`
+  parses whatever a scenario hands it. **The TLEs live in the scenario** that
+  uses them: the `ISS_TLE`/`HST_TLE` **inline source literals** (`concat!` of
   the three TLE lines each; not `include_str!`, so a fresh checkout needs no
-  data file); `Satellite::from_tle(text)` parses one. **The tracked array is
-  assembled in `main`** (`vec![Satellite::from_tle(ISS_TLE), ...]`) and passed
+  data file) are `const`s in `src/scenarios/iss_and_hubble.rs`, which assembles
+  the tracked array (`vec![Satellite::from_tle(ISS_TLE), ...]`) and passes it
   into `SimulationState::new`, not built inside the simulation. The HST set is
   flagged in-source as approximate (real orbit shape, made-up phase). Marker
   colors live in the marker shader.
@@ -390,8 +395,8 @@ section is for the larger, explicitly-deferred ideas.)
 - **Sun / Earth orientation / star map**: `src/simulation/sky.rs`
   (`Sky::at(time)` → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's
   JPL ephemeris + `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `sky::init_satkit()`
-  (called once via the `simulation::init()` wrapper at the top of `main`, before
-  any `Sky` is built) seeds satkit's global state from
+  (called once via the `simulation::init()` wrapper at the start of a scenario's
+  `run`, before any `Sky` is built) seeds satkit's global state from
   embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
   real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
   `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
@@ -405,11 +410,14 @@ section is for the larger, explicitly-deferred ideas.)
   runtime data file.
 
 ### Scenarios & valid time range (read before adding a scenario)
-- **Scenarios do not exist yet** — they will be added later. Each will pin the
-  simulation to a specific **past** event (a satellite/TLE + a time window).
-  Today the only "scenario" is the inline TLE element sets (`ISS_TLE` +
-  `HST_TLE`) in `satellite.rs`, assembled into the tracked array in `main`, with
-  a clock that starts at the first (ISS) epoch.
+- **Scenarios live in `src/scenarios/`** — one module per scenario, each with a
+  `run()` that pins the simulation to a specific **past** event (a satellite/TLE
+  + a time window). `main.rs` parses the CLI with **clap** and dispatches to one
+  (`globe-experiment scenario <name>`). Today the only scenario is
+  `scenarios::iss_and_hubble` (CLI token `iss_and_hubble`): it owns its inline
+  TLE element sets (the `ISS_TLE` + `HST_TLE` `const`s) and assembles them into
+  the tracked array, with a clock that starts at the first (ISS) epoch. Add a
+  scenario by adding a module and a `ScenarioName` variant in `main.rs`.
 - **Every scenario's time window must fall inside the valid EOP range** so the
   astronomical accuracy goal actually holds. That range is bounded on **both**
   ends:

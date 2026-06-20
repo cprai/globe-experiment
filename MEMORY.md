@@ -84,8 +84,13 @@ build.rs                 download 5 textures -> BC7/KTX2 transcode +
                          OUT_DIR; also download the JPL DE440 ephemeris into
                          data/. Contains inline `mod atmosphere`.
 .cargo/config.toml       Linux-only -lstdc++ for intel_tex_2's ISPC objs
-src/main.rs              tiny: seed satkit (simulation::init), build
-                         SimulationState + ApplicationState, application::run
+src/main.rs              tiny: clap CLI parse (`scenario <name>` subcommand),
+                         dispatch to the matching scenarios::*::run
+src/scenarios/mod.rs     scenario registry (one module per past scenario)
+src/scenarios/iss_and_hubble.rs  ISS+HST scenario: owns the ISS_TLE/HST_TLE
+                         consts; run() seeds satkit (simulation::init), assembles
+                         the Satellite array from them, builds SimulationState +
+                         ApplicationState, application::run
 src/application/mod.rs   ApplicationState + winit ApplicationHandler + run():
                          window, egui logic side (Context + egui_winit::State),
                          camera, controller, frame orchestration
@@ -110,8 +115,8 @@ src/simulation/sky.rs    ephemeris-driven Sun dir + star-map orientation
                          (JPL DE440 + GCRF<->ITRF); embeds + loads the ephemeris
 src/simulation/satellite.rs  one Satellite per tracked object: TLE parse +
                          satkit SGP4 -> world-space km marker pos; state_at(time)
-                         propagates on demand (no stored pos); from_tle ctor +
-                         ISS_TLE/HST_TLE consts (array built in main)
+                         propagates on demand (no stored pos); from_tle ctor.
+                         Element-set agnostic - TLEs live in the scenario
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
 OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5 BC7
@@ -121,7 +126,7 @@ OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5 BC7
                          never hit disk (the .ktx2 is the cache); only the two
                          verbatim embeds are stored as-is. No assets/ dir. The
                          satellite TLEs are NOT here - they're inline source
-                         literals (ISS_TLE/HST_TLE in satellite.rs)
+                         literals (ISS_TLE/HST_TLE in scenarios/iss_and_hubble.rs)
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
 
@@ -258,13 +263,30 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   there is nothing to re-encode from, so refreshing a texture or changing the
   encoder settings means deleting the stale `.ktx2`). `download_if_missing` is
   gone. `/assets` removed from `.gitignore`. Owner-requested.
+- **Phase 13** (2026-06-20): **scenarios module + clap CLI.** A new top-level
+  `scenarios` module (`src/scenarios/`) holds one module per past scenario, each
+  with a `run()`. The first is `scenarios::iss_and_hubble`, which now owns the
+  setup that used to live in `main`: `simulation::init()`, assembling the
+  `Vec<Satellite>` from `ISS_TLE`/`HST_TLE`, building `SimulationState` +
+  `ApplicationState`, and `application::run`. The `ISS_TLE`/`HST_TLE` inline TLE
+  `const`s also **moved out of `satellite.rs` into this scenario** - the
+  `satellite` module is now element-set agnostic (it propagates whatever a
+  scenario hands it). `main.rs` is now a pure **clap**
+  CLI: a `Cli` with a `Scenario { name: ScenarioName }` subcommand and a
+  `ScenarioName` `ValueEnum` (`#[value(name = "iss_and_hubble")]` keeps the token
+  snake_case), dispatching to the matching `run`. So
+  `globe-experiment scenario iss_and_hubble` runs the scene; an unknown name is a
+  clap usage error. New dep: `clap` (derive). Owner-requested.
 
 ---
 
 ## 3. Application shell (`application` / `simulation` / `renderer`)
 
-`main()` is tiny: `simulation::init()` (seeds satkit's globals - the embedded
-DE440 ephemeris and the real bundled EOP table - before any
+`main()` is tiny: it parses the CLI with **clap** (a `scenario <name>`
+subcommand backed by a `ScenarioName` `ValueEnum`) and dispatches to the matching
+`scenarios::*::run`; it does no setup itself. Each scenario's `run` does the
+setup that used to live in `main`: `simulation::init()` (seeds satkit's globals -
+the embedded DE440 ephemeris and the real bundled EOP table - before any
 ephemeris/frame-transform use; thin wrapper over `sky::init_satkit`), then it
 assembles the tracked `Vec<Satellite>` from the inline TLE consts
 (`Satellite::from_tle(ISS_TLE)`, `HST_TLE`), then
@@ -547,8 +569,8 @@ world frame; recomputed every running frame (cheap: ephemeris interp + a few
 rotations). Geocentric model — Earth stays the globe at the origin. **For the
 full pipeline, frames, and math see §16** (this is the module-level summary).
 
-- `init_satkit()` seeds two satkit globals once at the top of `main` (before
-  the first ephemeris/frame-transform use):
+- `init_satkit()` seeds two satkit globals once at the start of a scenario's
+  `run` (before the first ephemeris/frame-transform use):
   - `satkit::jplephem::init_from_bytes(EPHEMERIS)`, where `EPHEMERIS` is the
     DE440 binary embedded via `include_bytes!(concat!(env!("OUT_DIR"),
     "/linux_p1550p2650.440"))`. Sets satkit's `JPL_INSTANCE` `OnceLock`
@@ -610,7 +632,7 @@ full pipeline, frames, and math see §16** (this is the module-level summary).
 ## 6.5. Satellite (`src/simulation/satellite.rs`)
 
 One `Satellite` = one tracked object. The simulation holds a `Vec<Satellite>`
-(see §6.6/§3), **assembled in `main`** and passed to `SimulationState::new`.
+(see §6.6/§3), **assembled by a scenario** and passed to `SimulationState::new`.
 Each is one TLE propagated with the **satkit** crate's SGP4.
 `Satellite::from_tle(text)` parses a 3-line TLE only - **no propagation at
 load**. The position state is **not stored**; `state_at(time)` propagates on
@@ -622,10 +644,13 @@ disagree and nothing goes stale as the `Clock` advances. The parsed `TLE` is
 needs `&mut TLE` (it caches its propagator init). **For the full pipeline,
 frames, and math see §16** (this is the module-level summary).
 
-- **TLEs**: `pub const ISS_TLE` (real) and `HST_TLE` (orbit shape real, phase
+- **TLEs**: `ISS_TLE` (real) and `HST_TLE` (orbit shape real, phase
   approximate - flagged in-source), each a 3-line (name + two element lines)
-  inline source literal (`concat!`; was `include_str!("assets/TLE.txt")`).
-  `Satellite::from_tle(text)` splits the lines and parses with
+  inline source literal (`concat!`; was `include_str!("assets/TLE.txt")`). These
+  `const`s live in the **scenario** that uses them
+  (`scenarios/iss_and_hubble.rs`), not in this module - `satellite.rs` is
+  element-set agnostic. `Satellite::from_tle(text)` splits the lines and parses
+  with
   `TLE::load_3line(line0, line1, line2)` (parses by column; trailing checksum
   **not** verified). `tle.epoch` is an `Instant`; `Satellite::epoch()` exposes
   it, and `SimulationState::new` starts the clock at the **first** satellite's
@@ -1254,9 +1279,10 @@ clamp ±89.
 embedded `EOP-All.csv`, both loaded via `init_from_bytes` in `init_satkit`; Sun
 via `jplephem::geocentric_pos(SolarSystem::Sun)`, backdrop Earth orientation via
 `q*2*_approx` (~1 arcsec); re-evaluated each running frame.
-**`src/simulation/satellite.rs`**: TLEs = inline `ISS_TLE`/`HST_TLE` consts
-(`from_tle` ctor), via `satkit` 0.18 SGP4; position propagated on demand
-(`state_at`), not stored. Array of `Satellite` built in `main`.
+**`src/simulation/satellite.rs`**: element-set agnostic - `from_tle` ctor parses
+any 3-line TLE, propagated via `satkit` 0.18 SGP4; position computed on demand
+(`state_at`), not stored. The `ISS_TLE`/`HST_TLE` consts and the `Satellite`
+array both live in the scenario (`scenarios/iss_and_hubble.rs`).
 **`src/simulation/clock.rs`**: MIN_MULTIPLIER 1.0, MAX_MULTIPLIER 100.0 (UI slider
 is exponential base e); starts at the TLE epoch, `paused = false` (runs at
 launch).
@@ -1552,13 +1578,14 @@ Earth rotation, sub-pixel here — see §16.9).
 
 ### 16.5 Satellites — SGP4 (`satellite.rs`)
 
-The simulation tracks a `Vec<Satellite>` (built in `main`). Per-satellite
+The simulation tracks a `Vec<Satellite>` (built by a scenario). Per-satellite
 pipeline (TLE → world-space km point), run on demand by `state_at(time)`
 (returns a `SatelliteState`; nothing is stored on the struct). `frame_state`
 runs it once per satellite per frame:
 
 1. **TLE** `ISS_TLE`/`HST_TLE` (3-line: name + 2 element lines), inline source
-   literals (`concat!`; was `include_str!("assets/TLE.txt")`), parsed by
+   literals (`concat!`; was `include_str!("assets/TLE.txt")`) that live in the
+   scenario `scenarios/iss_and_hubble.rs`, parsed by
    `Satellite::from_tle(text)` → `TLE::load_3line(l0,l1,l2) -> TLE` (by column;
    checksum not verified). The parsed `TLE` is **retained** (sgp4 needs
    `&mut TLE` — it caches its propagator) and `tle.epoch` (an `Instant`) of the
@@ -1651,8 +1678,8 @@ Sun consistency) is physically correct.
   the **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) and CelesTrak's
   **`EOP-All.csv`** (~2-3 MiB Earth-orientation params). `build.rs` downloads
   both straight into `OUT_DIR`; `sky.rs`
-  `include_bytes!`-es each and `sky::init_satkit()` (called once at the top of
-  `main`) loads them via `jplephem::init_from_bytes` /
+  `include_bytes!`-es each and `sky::init_satkit()` (called once at the start of
+  a scenario's `run`) loads them via `jplephem::init_from_bytes` /
   `earth_orientation_params::init_from_bytes`. The EOP seed also stops satkit
   from creating a `satkit-data` dir (§16.8). The satellite consumes the real EOP
   (sub-arcsec); the Sun/star backdrop uses the `*_approx` transforms (~1 arcsec).

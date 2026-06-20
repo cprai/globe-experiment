@@ -1,28 +1,46 @@
 mod application;
 mod earth;
 mod renderer;
+mod scenarios;
 mod simulation;
 mod ui;
 
-use application::ApplicationState;
-use simulation::SimulationState;
-use simulation::satellite::{self, Satellite};
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Globe: an astronomically-accurate satellite simulation tool. The CLI selects
+/// which past scenario to run; all the actual setup lives in the `scenarios`
+/// module. `main` does nothing but parse args and dispatch.
+#[derive(Parser)]
+#[command(name = "globe-experiment", version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run a named scenario, e.g. `scenario iss_and_hubble`.
+    Scenario {
+        /// Which scenario to simulate.
+        #[arg(value_enum)]
+        name: ScenarioName,
+    },
+}
+
+/// The set of available scenarios. Each variant maps to a module under
+/// `scenarios`; the `value(name = ...)` keeps the CLI token snake_case so the
+/// command reads `scenario iss_and_hubble`.
+#[derive(Clone, ValueEnum)]
+enum ScenarioName {
+    #[value(name = "iss_and_hubble")]
+    IssAndHubble,
+}
 
 fn main() {
-    // Seed satkit's global state (embedded ephemeris + EOP table) before
-    // anything else (SimulationState::new below builds the Sky, which reads the
-    // ephemeris, and the satellites parse TLEs). Doing it here keeps satkit
-    // fully offline and data-dir-free.
-    simulation::init();
-
-    // Assemble the tracked objects here and hand them to the simulation. The
-    // clock starts at the first satellite's TLE epoch, so order matters: the
-    // primary object goes first.
-    let satellites = vec![
-        Satellite::from_tle(satellite::ISS_TLE),
-        Satellite::from_tle(satellite::HST_TLE),
-    ];
-
-    let simulation = SimulationState::new(satellites);
-    application::run(ApplicationState::new(simulation));
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Scenario { name } => match name {
+            ScenarioName::IssAndHubble => scenarios::iss_and_hubble::run(),
+        },
+    }
 }
