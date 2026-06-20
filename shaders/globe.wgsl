@@ -128,9 +128,9 @@ fn wave_noise(uv: vec2<f32>) -> f32 {
 // precision and the noise develops visible banding. p arrives as an
 // integer-valued vec3 (the floored cell corner).
 fn hash3(p: vec3<f32>) -> f32 {
-    var n = u32(i32(p.x)) * 1597334677u
-        ^ u32(i32(p.y)) * 3812015801u
-        ^ u32(i32(p.z)) * 2369874511u;
+    var n = (u32(i32(p.x)) * 1597334677u)
+        ^ (u32(i32(p.y)) * 3812015801u)
+        ^ (u32(i32(p.z)) * 2369874511u);
     n = (n ^ (n >> 15u)) * 2246822519u;
     n = (n ^ (n >> 13u)) * 3266489917u;
     n = n ^ (n >> 16u);
