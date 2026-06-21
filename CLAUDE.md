@@ -92,6 +92,33 @@ script does not decode anything now.
 
 ## Golden rules (do not violate without asking the owner)
 
+### Platform compatibility (maximize it - load-bearing)
+- **Always keep maximum platform compatibility.** The supported target matrix is
+  **Windows, Linux, and macOS, each on both x86_64 and aarch64** (six
+  combinations, including Apple Silicon and ARM Linux). Every change must keep
+  building and running across all six - treat a regression here as a bug, the
+  same as an accuracy regression.
+- **Prefer the broadest-support option, even at a cost.** When a feature, format,
+  or dependency would narrow the matrix, choose the portable alternative and
+  accept reasonable overhead (memory, binary size, startup time) rather than
+  cutting a platform. The canonical example: GPU textures are uploaded
+  **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`) and the device requests
+  `Features::empty()` - no BC/ASTC compression feature - specifically so it runs
+  on GPUs without BC (Apple Silicon, ARM SoCs). The ~4x VRAM cost was accepted
+  for that reach (see Hard constraints + `MEMORY.md` §14). Do not re-add a GPU
+  feature requirement, a host-arch-specific build dependency (e.g. an x86_64-only
+  encoder), or platform-gated link flags without owner sign-off.
+- **No host-arch or OS assumptions in the build.** `build.rs`, dependencies, and
+  any link config must work when *compiled natively* on any supported host
+  (notably aarch64 - users build from source). Avoid build-time tools that ship
+  prebuilt single-arch binaries; if a dependency forces an OS/arch assumption,
+  flag it.
+- **Verify portability when you touch GPU features, build deps, formats, or
+  linkage.** The dev sandbox here is x86_64 Linux + lavapipe and cannot prove
+  macOS/aarch64 behavior, so reason it through against this rule and call out
+  what still needs hardware confirmation. When in doubt, pick the option that
+  needs no per-platform branch.
+
 ### Source format
 - **All `.rs` files and `shaders/globe.wgsl` are pure ASCII**, comments and
   strings included (`—`→`-`, `°`→`deg`, `±`→`+/-`, `≈`→`~`, `×`→`x`/`*`).
