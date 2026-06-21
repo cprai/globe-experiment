@@ -225,6 +225,22 @@ script does not decode anything now.
   `FrameOutcome` that `Gfx::update` returns (`Presented`/`Occluded` reveal the
   window; the `Occluded` first-frame guard also re-requests a redraw) — the
   renderer never touches the window. **Do not "simplify" either.**
+- **egui's `textures_delta.set` must be applied BEFORE the surface acquire in
+  `Gfx::update`, never after.** egui's `Context` emits each texture delta
+  (font-atlas allocation, per-glyph updates) exactly once and then forgets it —
+  it assumes the renderer applied it and never resends. So a delta dropped by a
+  frame that does not present desyncs `egui_renderer` permanently. If the set
+  deltas ran after the `get_current_texture()` match and that match took an
+  early-return arm (`Occluded`/`Lost`/`Outdated`/`Timeout`), the **first** frame's
+  full font-atlas *allocation* would be lost, and a later *partial* atlas update
+  (a newly rasterized glyph) would panic in egui-wgpu with **"Tried to update a
+  texture that has not been allocated yet."** This bit on macOS specifically,
+  where the hidden-until-ready startup makes the first acquire come back
+  `Occluded` (above). `update_texture` needs only the device/queue, not the
+  swapchain frame, so the loop is hoisted to the top of `update`. The matching
+  `free` deltas deliberately stay *after* present (those textures may be in use
+  by the frame's draw; a dropped `free` is a benign delayed cleanup, not a
+  panic). **Do not move the set-delta loop back below the acquire.**
 
 ### Input feel
 - **Do not restructure the smoothed-zoom glide/coast in `input.rs`.** It

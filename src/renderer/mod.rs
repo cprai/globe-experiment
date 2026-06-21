@@ -134,12 +134,42 @@ impl Gfx {
         (self.config.width as f32, self.config.height as f32)
     }
 
-    /// Renders one frame: writes the uniforms from `render`, then draws the
-    /// scene (stars -> surface -> atmosphere -> marker) and the egui overlay
-    /// in a single pass, and presents. `window` is borrowed only for the
-    /// pre-present latency hint. Returns a [`FrameOutcome`] so the caller can
-    /// reveal the window / reschedule a redraw.
+    /// Renders one frame: applies egui's texture-set deltas, writes the
+    /// uniforms from `render`, then draws the scene (stars -> surface ->
+    /// atmosphere -> marker) and the egui overlay in a single pass, and
+    /// presents. `window` is borrowed only for the pre-present latency hint.
+    /// Returns a [`FrameOutcome`] so the caller can reveal the window /
+    /// reschedule a redraw.
+    ///
+    /// The egui texture-set deltas are applied **first, before the surface
+    /// acquire**, so they survive a frame that never presents - see the comment
+    /// at the top of the body for why that ordering is load-bearing.
     pub fn update(&mut self, window: &Window, render: &RenderState, ui: UiFrame) -> FrameOutcome {
+        // Apply egui's texture-set deltas (font-atlas allocation + per-glyph
+        // updates) BEFORE acquiring the surface, so they are never skipped on a
+        // frame that does not present. This ordering is load-bearing: egui's
+        // `Context` emits each texture delta exactly once and then forgets it
+        // (it assumes the renderer applied it), so a dropped delta desyncs
+        // `egui_renderer` permanently with no resend. If these ran after the
+        // surface acquire below and that acquire took an early-return arm
+        // (Occluded / Lost / Outdated / Timeout), the first frame's full
+        // font-atlas *allocation* could be lost; a later *partial* atlas update
+        // (a newly rasterized glyph, `ImageDelta.pos = Some`) would then panic
+        // inside egui-wgpu with "Tried to update a texture that has not been
+        // allocated yet." This shows up on macOS in particular, where the
+        // hidden-until-ready startup makes the very first acquire come back
+        // Occluded (see `ApplicationState::redraw`). `update_texture` needs only
+        // the device/queue, not the swapchain frame, so it is safe to hoist
+        // here. (The matching `free` deltas stay *after* present - those
+        // textures may still be referenced by this frame's draw; a `free`
+        // dropped on an early-return frame only delays cleanup and is overwritten
+        // cleanly if egui later reuses the id, so it is benign, unlike a dropped
+        // allocation.)
+        for (id, delta) in &ui.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, delta);
+        }
+
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -165,10 +195,6 @@ impl Gfx {
             size_in_pixels: [self.config.width, self.config.height],
             pixels_per_point: ui.pixels_per_point,
         };
-        for (id, delta) in &ui.textures_delta.set {
-            self.egui_renderer
-                .update_texture(&self.device, &self.queue, *id, delta);
-        }
 
         let mut encoder = self
             .device

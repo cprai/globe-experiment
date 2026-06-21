@@ -463,7 +463,10 @@ calls `redraw()`. Everything else → `handle_input`:
    in 0.34).
 5. Build `UiFrame { primitives: egui_ctx.tessellate(...), textures_delta,
    pixels_per_point }`.
-6. `gfx.update(&window, &render_state, ui_frame)` does the GPU frame:
+6. `gfx.update(&window, &render_state, ui_frame)` does the GPU frame. **First,
+   before anything else**, it applies `update_texture` per `textures_delta.set`
+   (egui font-atlas allocation + glyph updates) - this runs *ahead of* the
+   surface acquire on purpose; see "egui texture-delta ordering" below. Then
    `get_current_texture()` returns the wgpu-29 `CurrentSurfaceTexture` enum
    (not `Result`): `Success`/`Suboptimal` carry the frame; `Lost`/`Outdated` →
    reconfigure + return `FrameOutcome::Reconfigured`; `Timeout` →
@@ -471,11 +474,10 @@ calls `redraw()`. Everything else → `handle_input`:
    `GlobeRenderer::prepare(device, queue, render, viewport)` writes the uniforms
    **and** the per-satellite marker instance buffer (growing it via `device` if
    needed; `viewport` from `config`; pixel size feeds the constant-size markers) →
-   `update_texture` per `textures_delta.set` → `update_buffers` → one render
-   pass (clear BLACK → `globe.render` → `egui_renderer.render`) → submit egui
-   commands chained with the frame encoder → `window.pre_present_notify()` →
-   `present` → `free_texture` per `textures_delta.free`. Returns
-   `FrameOutcome::Presented`.
+   `update_buffers` → one render pass (clear BLACK → `globe.render` →
+   `egui_renderer.render`) → submit egui commands chained with the frame
+   encoder → `window.pre_present_notify()` → `present` → `free_texture` per
+   `textures_delta.free`. Returns `FrameOutcome::Presented`.
 7. `application` reacts to the `FrameOutcome`: `Presented`/`Occluded` reveal
    the window on the first frame (`shown` flips true); `Occluded`/`Reconfigured`
    re-request a redraw and return. The renderer never touches the window
@@ -502,6 +504,34 @@ found by the owner on Windows):
 - **`Occluded` first-frame guard**: some backends report a still-hidden
   window as occluded from `get_current_texture`; if that happens before
   `shown`, show the window and retry rather than deadlocking invisible.
+
+### egui texture-delta ordering (the "not allocated yet" edge case)
+
+`Gfx::update` applies egui's `textures_delta.set` (`update_texture`) **before**
+the `get_current_texture()` acquire, not after. This is load-bearing and easy to
+regress by "tidying" the function:
+
+- egui's `Context` emits each texture delta **exactly once** and then forgets it
+  - it assumes the renderer applied it and never resends. A full *allocation*
+  delta (e.g. the font atlas) is emitted only when the texture is first created;
+  afterwards egui sends only *partial* updates (`ImageDelta.pos = Some`, one per
+  newly rasterized glyph).
+- So if a frame that carries a `set` delta never reaches the apply step, the
+  delta is lost for good and `egui_renderer` desyncs from the context. The next
+  partial update for that id panics inside egui-wgpu: **"Tried to update a
+  texture that has not been allocated yet."**
+- The trap: `get_current_texture()`'s early-return arms
+  (`Occluded`/`Lost`/`Outdated`/`Timeout`) return *before* the rest of the body.
+  If the set-delta loop sat after the acquire, the **first** frame's font-atlas
+  allocation would be dropped whenever the first acquire is `Occluded` - which is
+  exactly the hidden-until-ready startup on macOS (see the `Occluded` first-frame
+  guard above). Hoisting the loop above the acquire makes the deltas survive
+  non-presenting frames. `update_texture` needs only the device/queue, not the
+  swapchain frame, so the hoist is free.
+- The matching `free` deltas stay **after** present (those textures may still be
+  referenced by the frame's draw). A `free` dropped on an early-return frame is
+  benign: it only delays cleanup, and a later full `set` reusing the id
+  overwrites cleanly - unlike a dropped *allocation*, which hard-panics.
 
 ### Redraw policy
 
