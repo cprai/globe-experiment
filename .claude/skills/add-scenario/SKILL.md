@@ -46,5 +46,5 @@ bound). If a scenario can't be brought in-range, it does not meet the
 accuracy bar — **flag it** rather than shipping a silently-degraded result.
 
 ## Docs
-Update `CLAUDE.md` (Scenarios section) and `MEMORY.md` (file map / phase
-notes) in the same change.
+Update `.claude/rules/scenarios.md` and `.claude/rules/architecture.md`
+(file map) in the same change.
