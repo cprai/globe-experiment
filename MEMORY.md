@@ -611,6 +611,19 @@ plus wheel-cadence tracking (`last_wheel`, `wheel_gap`).
   independent), tracked on every `CursorMoved` for flick detection.
 - Cursor icon `CursorIcon::Grab` / `Grabbing` (set on the window).
 
+**Cross-platform input notes (macOS feel unvalidated — see CLAUDE.md "Input
+feel"):** the `MouseWheel` arm handles **both** delta kinds —
+`MouseScrollDelta::LineDelta` (Windows/X11 notched wheels) and `PixelDelta`
+(macOS, precision trackpads); dropping either kills scroll-zoom on half the
+matrix. `PixelDelta.y` is mapped to wheel "ticks" by a magic `/ 60.0`, which
+sets the trackpad zoom *rate* and has never been felt on real macOS hardware
+(only Windows/X11), so it carries the same "tune on native hardware" caveat as
+the look-tuning constants. Tilt is on **right-drag** (`MouseButton::Right`),
+awkward on a trackpad-only Mac (secondary-click is ctrl-/two-finger). Input uses
+`WindowEvent` (`CursorMoved`), **not** `DeviceEvent` raw motion — deliberate:
+raw deltas are scaled/accelerated inconsistently across backends, while
+`CursorMoved` is consistent. No `Touch`/pinch path (desktop-only by design).
+
 ### Flick inertia
 On left release, if `speed > FLICK_SPEED (50 px/s)` and the last move was
 `< FLICK_TIMEOUT (0.1 s)` ago, start coasting. `tick_coast` integrates with
@@ -1550,6 +1563,30 @@ A cheaper partial win that keeps the uncompressed path: **downsize to 4K**
 (¼ VRAM), above.
 
 Other standing items:
+- **Cross-platform audit (2026-06-21) — no blockers, three things to know.**
+  A sweep of the six-target matrix (Windows/Linux/macOS x86_64 + aarch64) found
+  the code clean (no `cfg`/`target_os`/`target_arch` branches, no path/env
+  assumptions, GPU path requests `Features::empty()` + `Limits::default()`,
+  surface format chosen dynamically via `!is_srgb()`). Residual notes, all also
+  in CLAUDE.md "Hard constraints":
+  - **8K textures sit exactly at `Limits::default().max_texture_dimension_2d`
+    (8192)** — fits everywhere (inclusive) but with zero headroom; growing a
+    texture past 8192 needs a raised limit (narrows the matrix) or the 4K
+    downsize above.
+  - **From-source build needs a C toolchain**: `ring` (build-dep via `ureq`,
+    used by `build.rs` to download assets) compiles C/asm through `cc`. Portable
+    across all six targets but not pure-Rust; build-time only. Swapping `ureq`
+    TLS to `aws-lc-rs` does not help (also C).
+  - **The `linux_` ephemeris file name is byte order, not OS** — JPL's
+    little-endian DE440; all supported targets are little-endian, so the bytes
+    are matrix-wide. Don't OS-gate it.
+  - Structural cross-platform correctness verified and load-bearing (don't
+    regress): the winit event loop runs on the **main thread** (`main` ->
+    `application::run` directly — moving it to a spawned thread panics on
+    macOS); `resumed()` guards re-entry with `if self.gfx.is_some()` (winit can
+    fire it more than once); the hidden-until-first-frame reveal already handles
+    the Windows "no RedrawRequested to a hidden window" and macOS "first acquire
+    comes back Occluded" quirks (§3).
 - **No mipmaps** → far-zoom shimmer; the city-light dither can twinkle/alias
   sub-pixel at low zoom (no MSAA). Mitigations: lower `DITHER_SCALE`, or swap
   `step(fade, dither)` for a narrow `smoothstep`.

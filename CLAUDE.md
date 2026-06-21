@@ -276,6 +276,19 @@ script does not decode anything now.
   `ZOOM_COAST_HALF_LIFE`, `ZOOM_STOP_RATE`). Rejected designs that must not
   be reintroduced: fixed-half-life always-glide, and a fixed burst-gap
   split (instant if gap < threshold, glide otherwise). See `MEMORY.md`.
+- **macOS input feel is unvalidated (no native hardware here).** Two spots
+  follow the OS but have only ever been felt on Windows/X11, so treat them like
+  the look-tuning constants - validate on a real Mac before changing:
+  - The scroll path converts trackpad/precision `MouseScrollDelta::PixelDelta`
+    to wheel "ticks" with a magic `/ 60.0` (`input.rs`, the `MouseWheel` arm).
+    `LineDelta` (Windows/X11 notched wheels) and `PixelDelta` (macOS, precision
+    trackpads) are **both** handled - do not drop either - but the `60.0` divisor
+    that sets trackpad zoom *rate* is uncalibrated against real macOS momentum.
+  - **Tilt is bound to right-drag** (`MouseButton::Right`). On a trackpad-only
+    Mac, secondary-click is ctrl-/two-finger-click, so right-drag-to-tilt can be
+    awkward to perform. A UX gap, not a bug; flagged so a future touch/gesture
+    pass knows to revisit it. There is intentionally **no `Touch`/pinch-gesture
+    path** (desktop-only by design).
 
 ### Tuning discipline
 - **Look-tuning constants drift between sessions.** Always read
@@ -611,6 +624,14 @@ section is for the larger, explicitly-deferred ideas.)
   (~134 MB each, ~670 MB total) vs ~165 MB as BC7 - an accepted cost of the
   no-compression-feature portability. Runtime file loading is a known,
   unimplemented follow-up.
+  - **Texture size sits exactly at the portable limit.** The five textures are
+    8192x8192 and the device requests `Limits::default()`, whose
+    `max_texture_dimension_2d` is **8192** - so they fit on the edge of what
+    every conformant backend guarantees, with no headroom. Do **not** grow a
+    texture past 8192 without either raising the limit (which narrows the
+    matrix above the WebGPU baseline) or downsizing (the "downsize to 4K"
+    backlog item, which also relieves the VRAM cost above). Inclusive, so 8192
+    passes everywhere today.
 - **JPL ephemeris and EOP are embedded, not runtime files.** `build.rs`
   downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
   (Earth-orientation params) from CelesTrak on the first build straight into
@@ -619,6 +640,10 @@ section is for the larger, explicitly-deferred ideas.)
   loads them via `jplephem::init_from_bytes` / `earth_orientation_params::
   init_from_bytes`. So there is **no runtime data file** - the binary is
   self-contained - but a fresh checkout still needs network for the first build.
+  The `linux_` in the ephemeris file name is the **byte order, not the OS**: it
+  is JPL's little-endian DE440 build, and every supported target (x86_64 and
+  aarch64, on all three OSes) is little-endian, so the same embedded bytes work
+  across the whole matrix. Do not assume it is Linux-only or try to OS-gate it.
 - **Earth orientation: satellite is full EOP; celestial sphere is `*_approx` (~1").** With
   real EOP bundled, the satellite's `qteme2itrf` applies real polar motion +
   UT1-UTC (sub-arcsec). The Sun/star backdrop still uses the `*_approx`
@@ -635,6 +660,15 @@ section is for the larger, explicitly-deferred ideas.)
   deleted. There is no longer any host-arch-specific link flag - native builds
   work on every supported platform/arch (Windows/Linux/macOS x86_64 + aarch64).
   Do not re-add it.
+- **Building from source needs a C compiler.** The only non-pure-Rust piece in
+  the tree is `ring` (pulled in transitively as a **build-dependency** through
+  `ureq`, which `build.rs` uses to download the embedded assets): it compiles
+  C/asm via `cc` at build time. `ring` supports all six targets, so this is not
+  a matrix regression - but a from-source build (the expected path, incl. native
+  aarch64) requires a working C toolchain on the host, not just rustc. It is
+  build-time only; nothing C ends up at runtime. If you ever want a pure-Rust
+  build, note that swapping `ureq`'s TLS to rustls-`aws-lc-rs` does **not** help
+  (also C) - there is no drop-in pure-Rust replacement, so leave it.
 - **WSLg flakiness**: app launch intermittently fails with libEGL/MESA
   errors — transient, retry; not a code bug. Not present on native Windows.
 - **Windows mount tooling**: `cargo add` can emit a bogus "found cargo.toml
