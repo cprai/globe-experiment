@@ -2,9 +2,9 @@
 
 Project rules, conventions, and constraints for **Globe**, an
 astronomically-accurate satellite simulation tool (past scenarios only).
-Companion: `MEMORY.md` holds the technical reference (architecture, math,
+Companion: `.claude/MEMORY.md` holds the technical reference (architecture, math,
 phase history, file map, satkit API, exact constants). Read both. When
-`MEMORY.md` and the source disagree, **the source wins** — look-tuning
+`.claude/MEMORY.md` and the source disagree, **the source wins** — look-tuning
 constants in particular drift between sessions.
 
 ---
@@ -17,7 +17,7 @@ ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
 (star-fixed) camera, simulation clock (1x-100x, plays from launch).
 **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
-reintroduce it. See `MEMORY.md` §1 for the full stack and file map.
+reintroduce it. See `.claude/MEMORY.md` §1 for the full stack and file map.
 
 ## Build & run
 
@@ -105,7 +105,7 @@ after every shader edit (see Testing & verification).
   the binary and every frame transform silently falls back to zeros for
   EOP. Also call `disable_eop_time_warning()`. Going full IERS-2010 for the
   celestial sphere additionally needs the IERS nutation tables (Tab5A/5B/5D)
-  bundled and seeded — see `MEMORY.md` §14. **Do not drop the EOP seed.**
+  bundled and seeded — see `.claude/MEMORY.md` §14. **Do not drop the EOP seed.**
 - **Camera is in the inertial (star-fixed) frame.** Built in the celestial
   frame, rotated into world by
   `celestial_to_world = star_rot_inv.transpose()` (via
@@ -125,27 +125,27 @@ after every shader edit (see Testing & verification).
   `Gfx::update`.** egui emits each texture delta exactly once; a missed
   allocation delta causes a panic ("Tried to update a texture that has not
   been allocated yet") on the next partial atlas update. The `free` deltas
-  deliberately stay after present. See `MEMORY.md` §3.
+  deliberately stay after present. See `.claude/MEMORY.md` §3.
 
 ### Input feel
 - **Do not restructure the smoothed-zoom glide/coast in `input.rs`.** Tune
   only the named constants (`ZOOM_HALF_LIFE_MIN/MAX`, `ZOOM_COAST_HALF_LIFE`,
   `ZOOM_STOP_RATE`). Rejected designs that must not return: fixed-half-life
-  always-glide; fixed burst-gap split. See `MEMORY.md` §5.
+  always-glide; fixed burst-gap split. See `.claude/MEMORY.md` §5.
 - **macOS input feel is unvalidated** (no native hardware here). Validate on
   a real Mac before changing the trackpad `/ 60.0` divisor or tilt
   (right-drag) binding.
 
 ### Tuning discipline
 - **Look-tuning constants drift between sessions.** Always read `globe.wgsl`
-  for live values; `MEMORY.md` §13 is a dated snapshot.
+  for live values; `.claude/MEMORY.md` §13 is a dated snapshot.
 - **Tune and feel-test on a native Windows release build.** The WSLg dev
   environment cannot validate exact colors or interaction feel.
 
 ### Documentation
-- **Keep all docs current in the same change**: code comments, `CLAUDE.md`,
-  `MEMORY.md`, and `README.md`. Stale docs are bugs.
-- One exception: `MEMORY.md` §13 (live constant snapshot) may lag owner
+- **Keep all docs current in the same change**: code comments, `.claude/CLAUDE.md`,
+  `.claude/MEMORY.md`, and `README.md`. Stale docs are bugs.
+- One exception: `.claude/MEMORY.md` §13 (live constant snapshot) may lag owner
   tuning — for live values the source is authoritative.
 
 ---
@@ -172,25 +172,25 @@ after every shader edit (see Testing & verification).
 
 ## TODO / backlog (confirm with owner before starting)
 
-None is scheduled work or a bug. See `MEMORY.md` §14 for engineering
+None is scheduled work or a bug. See `.claude/MEMORY.md` §14 for engineering
 details on each.
 
 - **Full IERS-2010 Earth orientation for the celestial sphere**: switch
   `*_approx` transforms to full `qgcrf2itrf`/`qitrf2gcrf`. Requires bundling
   satkit's IERS nutation tables (Tab5A/5B/5D) and seeding them in
   `init_satkit()`. Sub-pixel improvement; a consistency nicety, not a
-  visible fix. See `MEMORY.md` §14.
+  visible fix. See `.claude/MEMORY.md` §14.
 - **Reconsider GPU texture compression (BC7 + ASTC)**: not a simple revert
   — Apple Silicon has no BC, so the full re-add needs both formats baked,
   runtime format selection from adapter caps, and a portable build-host
   encoder solution. Cheaper partial win: downsize textures to 4K (quarter
-  VRAM, no feature needed). See `MEMORY.md` §14.
+  VRAM, no feature needed). See `.claude/MEMORY.md` §14.
 
 ---
 
 ## Conventions
 
-### Coordinate & mapping (see `MEMORY.md` for formulas)
+### Coordinate & mapping (see `.claude/MEMORY.md` for formulas)
 - **WGS84 ellipsoid at origin; world space in km; +Y north; lon0/lat0 →
   +Z; +X east.** Constants and helpers in `src/earth.rs` (single source of
   truth; mesh and camera both call it).
@@ -211,7 +211,7 @@ details on each.
   egui logic), `simulation` (clock, satellites, celestial sphere — no
   winit/wgpu/egui, no `Camera` type), `renderer` (`Gfx` +
   `HeadlessRenderer`), `ui`, `earth`, `scenarios`, `snapshot`. See
-  `MEMORY.md` §1 for the full file map.
+  `.claude/MEMORY.md` §1 for the full file map.
 - **`cargo +nightly fmt` after every `.rs` edit.** Nightly is required for
   `wrap_comments`; plain stable `cargo fmt` silently skips it. Never
   hand-format. After reflow, **scan diffs for formula-breaking line breaks
@@ -229,7 +229,7 @@ details on each.
   `src/application/camera.rs` (in km).
 - **All build assets** land in `OUT_DIR`, `include_bytes!`-ed. No `assets/`
   dir.
-- Full file map: `MEMORY.md` §1.
+- Full file map: `.claude/MEMORY.md` §1.
 
 ### Scenarios & valid time range
 - **Scenarios in `src/scenarios/`** — one module per past scenario with a
@@ -280,7 +280,7 @@ details on each.
   No output file = validate only. `Validation successful` + exit 0 = good.
   Keep the CLI version aligned with the wgpu/naga version in `Cargo.lock`.
 - **`wgsl-analyzer`** is a secondary spec-strict linter (LSP only — CLI
-  subcommands are stubs). See `MEMORY.md` §14 for verified gotchas.
+  subcommands are stubs). See `.claude/MEMORY.md` §14 for verified gotchas.
 - **Manual pass after risky changes**: pan, flick (inertia), zoom to
   min/max, tilt to clamp, play/pause + speed slider (watch Sun, stars, and
   satellite advance together), window resize, minimize/restore. Confirm idle

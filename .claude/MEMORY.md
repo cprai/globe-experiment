@@ -3,7 +3,7 @@
 Technical reference for **Globe**, an **astronomically-accurate satellite
 simulation tool** built on a Google-Earth-style globe renderer:
 architecture, subsystem behavior, the rendering and atmosphere math, exact
-constants, and the project's history. Companion file: `CLAUDE.md` holds the
+constants, and the project's history. Companion file: `.claude/CLAUDE.md` holds the
 rules, conventions, and constraints (what you must / must not do). This file
 is the "how and why."
 
@@ -147,7 +147,7 @@ OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5
                          is the cache); only the LUTs are baked. No assets/ dir.
                          The satellite TLEs are NOT here - they're inline source
                          literals (ISS_TLE/HST_TLE in scenarios/iss_and_hubble.rs)
-CLAUDE.md, MEMORY.md     the docs (this consolidation)
+.claude/CLAUDE.md, .claude/MEMORY.md     the docs (this consolidation)
 ```
 
 Note: `src/globe/atmosphere.rs` **no longer exists** — the bake source was
@@ -395,7 +395,7 @@ simulation.
    feature - textures upload uncompressed, so it runs on any GPU) and
    `experimental_features: ExperimentalFeatures::disabled()`.
 3. `get_default_config(...)`, then **two deliberate overrides** (both are
-   `get_default_config` traps — see `CLAUDE.md` "Surface / display"):
+   `get_default_config` traps — see `.claude/CLAUDE.md` "Surface / display"):
    - **Non-sRGB surface format** via `caps.formats.iter().find(|f|
      !f.is_srgb())`. The shader writes linear color; a non-sRGB surface
      stores it raw and the display reads it as sRGB. This is what iced's
@@ -611,7 +611,7 @@ plus wheel-cadence tracking (`last_wheel`, `wheel_gap`).
   independent), tracked on every `CursorMoved` for flick detection.
 - Cursor icon `CursorIcon::Grab` / `Grabbing` (set on the window).
 
-**Cross-platform input notes (macOS feel unvalidated — see CLAUDE.md "Input
+**Cross-platform input notes (macOS feel unvalidated — see `.claude/CLAUDE.md` "Input
 feel"):** the `MouseWheel` arm handles **both** delta kinds —
 `MouseScrollDelta::LineDelta` (Windows/X11 notched wheels) and `PixelDelta`
 (macOS, precision trackpads); dropping either kills scroll-zoom on half the
@@ -893,7 +893,7 @@ device's internal lock anyway. The expensive work is parallelized:
 
 This is **intentional** (do not confuse it with the phase-1 reverted
 `thread::scope` decode; the rayon decode *is* the sanctioned one - see
-`CLAUDE.md`).
+`.claude/CLAUDE.md`).
 
 ### `upload_image(device, queue, label, bytes, srgb) -> TextureView`
 
@@ -1012,7 +1012,7 @@ channel) → strip the per-row padding into a tight `width*height*4` buffer →
 `image::RgbaImage::from_raw`.
 
 **Offscreen format = `Rgba8Unorm` (non-sRGB), on purpose.** This is the headless
-twin of the "surface must be non-sRGB" rule (§ and CLAUDE.md): the look-tuning
+twin of the "surface must be non-sRGB" rule (§ and `.claude/CLAUDE.md`): the look-tuning
 constants are calibrated to a non-sRGB target, so the stored 8-bit bytes already
 equal the sRGB-encoded on-screen pixels and are written **verbatim** to the PNG
 (no gamma/sRGB transform on readback). `Rgba8Unorm` (vs the surface's usual
@@ -1033,12 +1033,12 @@ re-adds the leap seconds Unix time omits — see §15). `MAX_FRAME_DIMENSION = 8
 caps `--width`/`--height` (matches the default `max_texture_dimension_2d`;
 `HeadlessRenderer::new` `debug_assert`s it against the real device limit).
 
-**No EOP range check — deliberate.** Unlike scenarios (§16.9 / CLAUDE.md), render
+**No EOP range check — deliberate.** Unlike scenarios (§16.9 / `.claude/CLAUDE.md`), render
 mode does **not** validate the datetime against the bundled EOP range and has no
 runtime EOP logic at all (not even a warning). Out-of-range times render and
 silently degrade (zeros below 1962, constant-extrapolation past the last entry).
 The caller owns the time; documented in `snapshot.rs`, the `analyze-render`
-skill, CLAUDE.md, and here.
+skill, `.claude/CLAUDE.md`, and here.
 
 **CLI.** `main.rs` gains a `Render` clap variant: required `--datetime`,
 `--longitude`, `--latitude`, `--distance` (km), `--tilt`; `--width`/`--height`
@@ -1110,7 +1110,7 @@ for the view vector — `pos` is no longer the normal on an ellipsoid).
    and specular.
 7. **Diffuse + composite**: `day_lit = albedo·(DAY_AMBIENT + (1−DAY_AMBIENT)
    ·(n·l)·sun_light) + specular·sun_light`.
-8. **Night-side darkening** (geometric normal, see `CLAUDE.md`):
+8. **Night-side darkening** (geometric normal, see `.claude/CLAUDE.md`):
    `daylight = smoothstep(−0.12, 0.18, cos_sun)`,
    `night_factor = mix(NIGHT_DARKNESS, 1.0, daylight)`,
    `surface = day_lit · night_factor`.
@@ -1568,7 +1568,7 @@ Other standing items:
   the code clean (no `cfg`/`target_os`/`target_arch` branches, no path/env
   assumptions, GPU path requests `Features::empty()` + `Limits::default()`,
   surface format chosen dynamically via `!is_srgb()`). Residual notes, all also
-  in CLAUDE.md "Hard constraints":
+  in `.claude/CLAUDE.md` "Hard constraints":
   - **8K textures sit exactly at `Limits::default().max_texture_dimension_2d`
     (8192)** — fits everywhere (inclusive) but with zero headroom; growing a
     texture past 8192 needs a raised limit (narrows the matrix) or the 4K
@@ -1606,7 +1606,7 @@ Other standing items:
   the saved PNG matches the windowed look (the non-sRGB color reasoning in §9.5).
   Earlier this could not be exercised because the dev sandbox had no GPU stack
   (no `/dev/dri`, no Vulkan/GL ICD); the host has since been updated with a
-  working GPU stack. The sample command in CLAUDE.md ("Build & run") produces a
+  working GPU stack. The sample command in `.claude/CLAUDE.md` ("Build & run") produces a
   correct frame (day side, night-side city lights, atmosphere, stars). Harmless
   noise: two `XDG_RUNTIME_DIR is invalid or not set` lines print to stderr from
   the GPU stack init and do **not** affect the render. Debug note for any future
@@ -1639,7 +1639,7 @@ accuracy; this is a consistency nicety for the backdrop, not a visible fix.
   KB each, negligible binary cost) via `build.rs EMBEDS` table → `OUT_DIR`;
   `include_bytes!` them in `celestial_sphere.rs`.
 - Flip the two transform calls to the non-`approx` versions; update every
-  "celestial sphere is `*_approx`" claim in `CLAUDE.md`, `MEMORY.md`, and the
+  "celestial sphere is `*_approx`" claim in `.claude/CLAUDE.md`, `.claude/MEMORY.md`, and the
   `celestial_sphere.rs`/`init_satkit` doc-comments in the same change.
 
 ### wgsl-analyzer (secondary linter, verified 2026-06-20)
@@ -1995,7 +1995,7 @@ frame by `CelestialSphere::at(time)`:
 The shader's star/sun passes (§10) are **unchanged** — only the uniform
 *values* (`sun_dir`, `star_rot_inv`) became ephemeris-driven; both are still
 functions of the **camera-relative** view direction (the backdrop-anchoring
-invariant in `CLAUDE.md`).
+invariant in `.claude/CLAUDE.md`).
 
 The camera (§4) is built in the **celestial frame** and rotated into the world
 by **`celestial_to_world = star_rot_inv.transpose()`** (`= P · R_gcrf2itrf ·
@@ -2055,7 +2055,7 @@ Sun consistency) is physically correct.
     satkit does constant extrapolation (silent degradation).
   - **Discipline:** when a scenario is added, validate its `[start, end]`
     epochs against the bundled file's first/last MJD (and 1962). Out-of-range =
-    does not meet the accuracy bar; flag it. See CLAUDE.md "Scenarios & valid
+    does not meet the accuracy bar; flag it. See `.claude/CLAUDE.md` "Scenarios & valid
     time range." Because dates are past-only, a bundled EOP file stays correct
     forever (history doesn't change).
 - **SGP4**: TLE valid ~days around epoch.
