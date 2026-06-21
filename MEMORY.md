@@ -1618,6 +1618,52 @@ Other standing items:
   (a paused clock pinned to `instant`) feeding `frame_state`, instead of the
   current direct `RenderState` construction in `snapshot::run`.
 
+### Full IERS-2010 Earth orientation for the celestial sphere (backlog)
+
+Switch `src/simulation/celestial_sphere.rs` from the `*_approx` transforms
+(`qgcrf2itrf_approx`/`qitrf2gcrf_approx`) to full `qgcrf2itrf`/`qitrf2gcrf`.
+Closes the residual ~1" error (real polar motion + IERS-2010 nutation instead of
+approximate nutation / neglected polar motion). Satellite is already full-
+accuracy; this is a consistency nicety for the backdrop, not a visible fix.
+
+**Feasibility (verified against satkit 0.18.1):**
+- Seed three IERS nutation table singletons in `init_satkit()` **before** the
+  first celestial-sphere transform, using
+  `frametransform::init_iers_table_from_bytes(id, bytes)` (re-export of
+  `ierstable::init_from_bytes`) for each of
+  `IersTableId::{Tab5A, Tab5B, Tab5D}`. Without seeding, `table()`'s lazy
+  `get_or_init` calls `IERSTable::from_file(...).unwrap()`, which resolves the
+  data dir (recreating the stray `satkit-data` dir) and panics if absent — the
+  same failure mode the EOP seed already prevents.
+- Bundle three small text files (`tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt`,
+  KB each, negligible binary cost) via `build.rs EMBEDS` table → `OUT_DIR`;
+  `include_bytes!` them in `celestial_sphere.rs`.
+- Flip the two transform calls to the non-`approx` versions; update every
+  "celestial sphere is `*_approx`" claim in `CLAUDE.md`, `MEMORY.md`, and the
+  `celestial_sphere.rs`/`init_satkit` doc-comments in the same change.
+
+### wgsl-analyzer (secondary linter, verified 2026-06-20)
+
+Secondary spec-strict linter for `shaders/globe.wgsl`. The naga CLI is the
+authoritative check; reach for this only when you want an editor-grade second
+opinion. Verified gotchas:
+
+- **CLI subcommands are stubs.** `wgsl-analyzer parse` / `diagnostics` /
+  `unresolved-references` panic with "subcommand not implemented";
+  `--print-config-schema` prints nothing. Do not use them.
+- **Only working path: the LSP server** (`wgsl-analyzer` with no subcommand,
+  JSON-RPC over stdio). Uses **pull** diagnostics (`textDocument/diagnostic`),
+  NOT push (`publishDiagnostics` is never sent). Protocol: `initialize` →
+  `initialized` → `textDocument/didOpen` → request `textDocument/diagnostic`,
+  read `items`. A `didOpen`-and-wait approach sees nothing (dead end already
+  hit). The editor LSP tooling here is not wired for `.wgsl`, so this is a
+  hand-driven-client task.
+- **Spec-stricter than naga** — expect false positives. Example: the `hash3`
+  bit-mix (`a*b ^ c*d ^ e*f`) was flagged until multiplications were wrapped in
+  `()` (naga accepts it unparenthesized). Treat its errors as worth
+  investigating but confirm against an actual run before assuming the shader is
+  broken.
+
 ### wgpu 27 → 29 churn (reference, in case of a future bump)
 From the phase-2 migration: `Instance::new` takes `InstanceDescriptor` by
 value, no `Default` (use `new_without_display_handle()`); `DeviceDescriptor`

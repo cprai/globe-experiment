@@ -2,745 +2,289 @@
 
 Project rules, conventions, and constraints for **Globe**, an
 astronomically-accurate satellite simulation tool (past scenarios only).
-Companion file: `MEMORY.md` holds the technical reference (how each
-subsystem works, the rendering/atmosphere math, the orbital & ephemeris
-math — see its §16 for the full satellite/Sun/planet computation and how the
-satkit crate is used — exact constants, file map, phase history). Read both. When `MEMORY.md` and the source disagree,
-**the source wins** — the look-tuning constants in particular drift
-between sessions.
-
-This file supersedes the old `claude/phase{1,2,3}/*.md` docs, which have
-been deleted and folded into here and `MEMORY.md`.
+Companion: `MEMORY.md` holds the technical reference (architecture, math,
+phase history, file map, satkit API, exact constants). Read both. When
+`MEMORY.md` and the source disagree, **the source wins** — look-tuning
+constants in particular drift between sessions.
 
 ---
 
-## What this is (one paragraph)
+## What this is
 
-An **astronomically-accurate satellite simulation tool**, built on a
-Google-Earth-style physically-lit 3D globe renderer. Rust (edition 2024),
-**winit 0.30** window/event loop, **wgpu 29** (direct dependency) for
-rendering, **egui 0.34** for the control overlay. It renders a
-physically lit Earth (day/night, procedural city lights, normal-mapped
-relief, GGX ocean glint), a Hillaire-2020 precomputed-LUT atmosphere, and
-a star/sun backdrop, with an orbital pan/tilt/zoom camera that lives in an
-**inertial (star-fixed) frame** — it holds still relative to the stars while
-the Earth rotates beneath it. The geometry is
-**physical**: the globe is the WGS84 reference ellipsoid and **world space is
-in kilometers** (real-scale orbital simulation). The Sun
-direction, Earth's orientation, and the star-map orientation are computed from
-the **satkit** crate's **JPL DE440 ephemeris** + Earth-orientation transforms
-for the current time (no more sun sliders). It tracks satellites: each
-TLE is propagated with satkit's SGP4 (the tracked array is built by a scenario
-and passed to the simulation). All of this is driven by a
-**simulation clock** (play/pause, exponential 1x-100x real-time speed); each
-satellite is drawn as a marker circle and everything animates as time
-advances, with the clock's datetime shown in the UI.
-
-**Scope & accuracy intent (load-bearing):** the goal is astronomical
-accuracy, and the tool **only ever simulates scenarios that happened in the
-past, before the build date** — never live or future times. That past-only
-constraint is what makes full Earth-orientation accuracy achievable: real
-Earth-orientation-parameter (EOP) data is a fixed, never-changing record for
-any past date (see the EOP rules below and `MEMORY.md` §16.8). Treat any
-accuracy regression (e.g. silently widening error, drifting frames) as a bug,
-not a cosmetic issue. The crate is
-named `globe-experiment`; **iced is no longer a dependency** (removed in
-phase 2) — do not reintroduce it.
+Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
+globe in world-space km, Hillaire-2020 atmosphere, star/sun from JPL DE440
+ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
+(star-fixed) camera, simulation clock (1x-100x, plays from launch).
+**Past scenarios only** (before build date) — what makes full EOP accuracy
+attainable. The crate is named `globe-experiment`; `iced` is gone, do not
+reintroduce it. See `MEMORY.md` §1 for the full stack and file map.
 
 ## Build & run
 
 ```sh
-cargo run --release                       # default: runs a scenario in a window
+cargo run --release
 cargo run --release -- render --datetime 2024-01-15T12:30:00Z \
     --longitude -75 --latitude 40 --distance 12742 --tilt 0 --output frame.png
 ```
 
-The CLI has two modes: a `scenario` subcommand (interactive window, the default
-focus of this project) and a **`render` subcommand** (headless single-frame mode
-- draws one frame to a PNG and exits, no window/input/UI; see the `snapshot`
-module and the "Render mode" notes throughout). The runtime **`image`**
-dependency (decode features `jpeg`/`tiff` for the embedded Earth/star textures,
-plus `png` for the `render` output) and **`humantime`** (RFC3339 datetime
-parsing) cover both. `image` is **no longer** a build-dependency - the build
-script does not decode anything now.
+First build: slow (~1.5 min extra), needs network. `build.rs` downloads 5
+textures (JPEG/TIFF verbatim), the JPL ephemeris (~98 MB), and
+`EOP-All.csv` into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2.
+Subsequent builds reuse cached files. Delete a file in `OUT_DIR` to
+re-download it.
 
-- **First build needs a network connection** and is slow (~1.5 min extra):
-  `build.rs` downloads five textures (original JPEG/TIFF) **verbatim** into
-  `OUT_DIR` - no transcode, no BC7 - alongside the ~98 MB JPL ephemeris +
-  CelesTrak's `EOP-All.csv` (~2-3 MB Earth-orientation params), all of which the
-  runtime `include_bytes!`-es. The Earth/star textures are decoded with the
-  `image` crate and uploaded **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`) at
-  startup, so there is **no GPU texture-compression feature requirement** and the
-  app runs on every backend/GPU (including those without BC/ASTC: Apple Silicon,
-  ARM SoCs). `build.rs` still bakes the three atmosphere LUTs to f16 KTX2.
-  Subsequent builds reuse the cached `OUT_DIR` files (`rerun-if-changed` points
-  at each), so a present file is never re-downloaded. No `assets/` directory is
-  created. (Delete a cached texture in `OUT_DIR` to re-download it, or
-  `OUT_DIR/EOP-All.csv` to pull a fresher EOP snapshot.)
-- Smoke test: `timeout <n> cargo run 2>&1 | head` (or redirect to a file —
-  pipe buffering can swallow output). wgpu validation errors panic in the
-  first frames, so a clean 15-25 s run means pipelines/bindings are valid.
-- **WGSL is compiled by naga at runtime** in `create_shader_module`, *not*
-  during `cargo build`. A clean `cargo build` proves nothing about the
-  shader. Statically validate it with the **naga CLI**
-  (`naga --compact --capabilities none shaders/globe.wgsl` — same naga the
-  app links; see Testing & verification) after every shader edit; that
-  catches all compile/validation errors, but you still must actually run the
-  app to check look and pipeline-binding correctness.
+**WGSL is compiled by naga at runtime, not during `cargo build`.** A clean
+build proves nothing about the shader. Validate with:
+
+```sh
+naga --compact --capabilities none shaders/globe.wgsl
+```
+
+after every shader edit (see Testing & verification).
 
 ---
 
 ## Golden rules (do not violate without asking the owner)
 
-### Platform compatibility (maximize it - load-bearing)
-- **Always keep maximum platform compatibility.** The supported target matrix is
-  **Windows, Linux, and macOS, each on both x86_64 and aarch64** (six
-  combinations, including Apple Silicon and ARM Linux). Every change must keep
-  building and running across all six - treat a regression here as a bug, the
-  same as an accuracy regression.
-- **Prefer the broadest-support option, even at a cost.** When a feature, format,
-  or dependency would narrow the matrix, choose the portable alternative and
-  accept reasonable overhead (memory, binary size, startup time) rather than
-  cutting a platform. The canonical example: GPU textures are uploaded
-  **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`) and the device requests
-  `Features::empty()` - no BC/ASTC compression feature - specifically so it runs
-  on GPUs without BC (Apple Silicon, ARM SoCs). The ~4x VRAM cost was accepted
-  for that reach (see Hard constraints + `MEMORY.md` §14). Do not re-add a GPU
-  feature requirement, a host-arch-specific build dependency (e.g. an x86_64-only
-  encoder), or platform-gated link flags without owner sign-off.
-- **No host-arch or OS assumptions in the build.** `build.rs`, dependencies, and
-  any link config must work when *compiled natively* on any supported host
-  (notably aarch64 - users build from source). Avoid build-time tools that ship
-  prebuilt single-arch binaries; if a dependency forces an OS/arch assumption,
-  flag it.
-- **Verify portability when you touch GPU features, build deps, formats, or
-  linkage.** The dev sandbox here is x86_64 Linux + lavapipe and cannot prove
-  macOS/aarch64 behavior, so reason it through against this rule and call out
-  what still needs hardware confirmation. When in doubt, pick the option that
-  needs no per-platform branch.
+### Platform compatibility (load-bearing)
+- **Supported matrix: Windows/Linux/macOS x both x86_64 and aarch64** (six
+  targets). Regressions here are bugs, same as accuracy regressions.
+- **`Features::empty()`** — no optional GPU features. Textures upload
+  **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`); no BC/ASTC requirement.
+  Do not re-add `TEXTURE_COMPRESSION_BC` — it panics on Apple Silicon.
+- **No host-arch or OS assumptions in the build.** `build.rs` and deps must
+  compile natively on all six targets (including aarch64). No single-arch
+  prebuilt build tools or platform-gated link flags without owner sign-off.
+- Dev sandbox is x86_64 Linux + lavapipe — cannot prove macOS/aarch64
+  behavior. Reason portability through against this rule; call out what
+  needs hardware confirmation.
 
 ### Source format
-- **All `.rs` files and `shaders/globe.wgsl` are pure ASCII**, comments and
-  strings included (`—`→`-`, `°`→`deg`, `±`→`+/-`, `≈`→`~`, `×`→`x`/`*`).
-  Keep new source ASCII-only. (Markdown docs like this one and `MEMORY.md`
-  may use Unicode for math readability.)
+- **All `.rs` files and `shaders/globe.wgsl` are pure ASCII**: `—` → `-`,
+  `°` → `deg`, `±` → `+/-`, `≈` → `~`, `×` → `x`/`*`. Markdown docs may
+  use Unicode.
 
-### Constants that are duplicated and MUST stay in sync
-- The **atmosphere medium + geometry constants exist twice**: in
-  `build.rs`'s inline `mod atmosphere` (the LUT bake) and in
-  `shaders/globe.wgsl` (the geometric twins + `MIE_G`). Change one, change
-  the other, or the baked LUTs and the shader that samples them diverge.
-- The **inscatter LUT parameterization is implemented independently twice**
-  and must match exactly: the **split row mapping** (`v`: lower half =
-  ground-hitting rays, upper half = limb rays), the **reference-point
-  choice** (ground hit vs. closest approach), and the **Bruneton
-  transmittance mapping** all appear in both `build.rs::bake_inscatter` /
-  `bake_transmittance` / `sample_transmittance` and in
-  `globe.wgsl::fs_atmosphere` / `sun_transmittance`. A change on one side
-  silently corrupts the atmosphere.
+### Constants that must stay in sync
+- **Atmosphere medium + geometry constants** exist in `build.rs mod
+  atmosphere` (LUT bake) AND `shaders/globe.wgsl` (geometric twins +
+  `MIE_G`). Change one, change the other — a mismatch silently corrupts
+  the atmosphere.
+- **Inscatter LUT parameterization** (split row mapping, reference-point
+  choice, Bruneton transmittance mapping) is independently implemented in
+  both `build.rs` and `globe.wgsl`. A mismatch silently corrupts the
+  atmosphere.
 
 ### Surface / display
-- **Surface format must be non-sRGB** (`Gfx::init` picks `find(|f|
-  !f.is_srgb())`) and **present mode `AutoVsync`**. `get_default_config`'s
-  defaults are *not* correct here (it picks an sRGB format and Mailbox on
-  DX12) — these two overrides are deliberate. See `MEMORY.md` for why.
-- **Every look-tuning constant in `globe.wgsl` is calibrated to the
-  non-sRGB surface.** Moving to a colorimetrically correct sRGB target
-  invalidates all of them and requires re-tuning the entire shader.
-- **The headless render target must be non-sRGB for the same reason.**
-  `HeadlessRenderer` (the `render` CLI mode) renders to an offscreen
-  `Rgba8Unorm` (non-sRGB) texture, not `Rgba8UnormSrgb`. On a non-sRGB target
-  the shader's 8-bit output is stored raw, and those bytes already equal the
-  sRGB-encoded pixels a display shows - so they are written verbatim into the
-  PNG (read back as-is, no gamma/sRGB transform), reproducing the on-screen
-  look. An sRGB offscreen target would hardware-encode the output and diverge
-  from the window - the headless twin of the surface-format rule above. Do not
-  "fix" it to sRGB.
-- **No HDR, no bloom.** Output is LDR straight to the swapchain. "Glow" and
-  "brightness" everywhere (sun disc, city lights) are the LDR cheat: a
-  clipped-white core inside an additive soft falloff. A real bloom pass is
-  an explicitly **declined** follow-up — do not assume it exists.
+- **Surface format: non-sRGB** (`Gfx::init` picks `find(|f| !f.is_srgb())`);
+  **present mode: `AutoVsync`**. `get_default_config` defaults are wrong on
+  both (sRGB format + Mailbox on DX12). Both overrides are deliberate.
+- Every look-tuning constant in `globe.wgsl` is calibrated to the non-sRGB
+  surface. Do not switch to sRGB.
+- **Headless render target must also be non-sRGB** (`Rgba8Unorm`). Do not
+  "fix" `HeadlessRenderer` to `Rgba8UnormSrgb`.
+- **No HDR, no bloom.** LDR only. A real bloom pass is explicitly declined.
 
 ### Rendering invariants
-- **No depth buffer anywhere.** Draw order does all occlusion: stars →
-  surface → atmosphere → satellite markers, in that order, into one render
-  pass. This only works because the scene is convex spheres. Do not add
-  geometry that breaks that assumption without also adding a depth
-  attachment. The **markers are screen-space overlays** drawn last as a single
-  **instanced** draw (one instance per tracked satellite): each is a
-  constant-pixel circle whose quad is generated from the vertex index and whose
-  world position + visibility come from a per-instance marker buffer,
-  alpha-blended. They have no depth, so occlusion behind the globe is decided
-  **on the CPU** per marker (`marker_occluded` in `src/simulation/mod.rs`, a ray
-  vs. mean-radius sphere; one `SatelliteMarker { position_km, visible }` per
-  object in `RenderState.markers`) and passed to the shader as a per-instance
-  visible flag.
-- **Idle = zero GPU work.** `application::run` sets `ControlFlow::Wait`; frames are
-  driven *only* by targeted `window.request_redraw()` (input changed the
-  camera, inertia/zoom glide coasting, **the simulation clock running**, egui
-  repaint, resize, surface recovery). **Never add an unconditional vsync
-  render loop.** Note: the clock is another "animating" source and **starts
-  playing** (owner's choice), so the app renders continuously from launch and
-  is only idle once the clock is **paused** — this is still condition-gated
-  `request_redraw`, not an unconditional loop.
-- **The terminator / night-side darkening must use the GEOMETRIC normal**
-  (`cos_sun = dot(n_geo, sun)`, the `daylight` smoothstep), never the
-  bump-mapped normal `n`. Bump detail on the day/night edge speckles it.
-- **Star map and Sun are ephemeris-driven** (`src/simulation/celestial_sphere.rs`). The Sun's
-  direction comes from the JPL DE440 ephemeris and the star map is oriented by
-  Earth's real GCRF↔ITRF attitude, both for the current clock time. (This
-  reverses the earlier deliberately-non-physical "celestial sphere rigidly attached to the
-  sun" model — the owner asked for the astronomically-correct version on
-  2026-06-18. The old slider-driven `Sun` struct is gone.) `star_rot_inv`
-  uploaded to the shader is now `P · R_itrf→gcrf · Pᵀ` (P = the standard-ECEF
-  → world-frame permutation); do not replace it with a sun-attached rotation.
-- **`init_satkit()` must seed satkit's EOP table at startup, not just the
-  ephemeris.** Every satkit frame transform reads its global
-  Earth-orientation-parameter (EOP) table on first use — even the `*_approx`
-  ones, because `gmst` does a UT1 conversion that consults it, and `qteme2itrf`
-  reads polar motion. satkit's default EOP loader *resolves a data directory
-  and creates an empty `satkit-data` dir next to the binary* as a side effect.
-  So `init_satkit` pre-seeds the EOP singleton via
-  `earth_orientation_params::init_from_bytes(...)` (plus
-  `disable_eop_time_warning()`); this consumes satkit's one-shot lazy load so
-  the dir is never created. **Do not drop the EOP seed** — the stray
-  `satkit-data` dir comes back. (Run from a clean dir to verify none appears.)
-  - **Content: real EOP, bundled** — CelesTrak's `EOP-All.csv`, embedded the
-    same way as the ephemeris (`build.rs` downloads it straight into `OUT_DIR`;
-    `celestial_sphere.rs` `include_bytes!`-es it as `EOP` and feeds it to
-    `init_from_bytes`). So polar motion + UT1-UTC are real, not zeros.
-  - **What consumes it.** The **satellite** path (`qteme2itrf`) is the full,
-    non-`approx` transform: it applies real polar motion (via `qitrf2tirs`) and
-    real UT1-UTC (via `gmst`), so the simulated ground track is sub-arcsec. The
-    **celestial-sphere** path still uses the `*_approx` transforms; those pick up real
-    UT1-UTC through `gmst` but still neglect polar motion (~0.3") and use
-    approximate nutation (~1"). That residual is sub-arcsec and only affects the
-    Sun/star *backdrop*, so it's left as-is.
-  - **Going fully IERS-2010 for the celestial sphere is a bigger job — don't assume it's a
-    one-liner.** Switching the celestial sphere to `qgcrf2itrf`/`qitrf2gcrf` additionally
-    needs satkit's IERS nutation tables (Tab5A/5B/5D), which it reads from the
-    data dir via `ierstable` and **`.unwrap()`s** — i.e. it would `panic` (and
-    re-create `satkit-data`) unless those tables are *also* bundled and seeded
-    (`ierstable::init_from_bytes`). Not done; not needed for the satellite.
-  - **Validity:** EOP is bounded (≈1962 → build date); see the scenario-bounds
-    note under Conventions and `MEMORY.md` §16.8/§16.9. Past-only scenarios make
-    the bundled snapshot permanently valid (history doesn't change).
-- **The camera is in the inertial (star-fixed) frame** (owner-requested
-  2026-06-18). The `Camera` rig (in `src/application/camera.rs`) is built around
-  the origin as before but interpreted in the celestial frame, then rotated into
-  the Earth-fixed world by **`celestial_to_world = celestial_sphere.star_rot_inv.transpose()`**.
-  That rotation is produced by `SimulationState::celestial_to_world()` and applied
-  in `ApplicationState::redraw` (the camera lives in `application`, so it resolves
-  `camera.eye`/`camera.view_proj` there and passes the finished `eye`/`view_proj`
-  into `SimulationState::frame_state`). Net effect: the camera does not rotate
-  with the Earth — the globe spins under a star-locked view, so
-  `Camera.longitude/latitude` are an **inertial** look direction, not geography.
-  Don't move the camera back into the ECEF/world frame.
-- **Backdrop anchoring**: both the star lookup and the sun disc are
-  functions of the **camera-relative view direction** (`world − camera_pos`),
-  not of position on the celestial sphere. Anchoring either to the celestial-sphere
-  surface reintroduces parallax between sun and stars (a fixed bug). Do not
-  regress it.
+- **No depth buffer.** Draw order handles all occlusion: stars → surface →
+  atmosphere → markers, one render pass. Convex-sphere assumption; don't
+  add geometry that breaks it without adding a depth attachment.
+- **Markers are instanced screen-space overlays** drawn last. CPU occlusion
+  per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth.
+- **Idle = zero GPU work.** `ControlFlow::Wait` + targeted
+  `request_redraw`. Never add an unconditional vsync loop. The clock starts
+  playing, so the app is non-idle from launch until paused.
+- **Terminator / night-side darkening must use the GEOMETRIC normal**
+  (`dot(n_geo, sun)`), never the bump-mapped normal `n`. Bump detail on
+  the day/night edge speckles it.
+- **Star map and Sun are ephemeris-driven** (`src/simulation/celestial_sphere.rs`).
+  `sun_dir` from JPL DE440; `star_rot_inv = P · R_itrf→gcrf · Pᵀ`. Do not
+  replace with a sun-attached rotation.
+- **`init_satkit()` must seed both the ephemeris and the EOP table** before
+  any satkit use (called once at the start of each scenario's `run()`).
+  Without the EOP seed, satkit creates a stray `satkit-data` dir next to
+  the binary and every frame transform silently falls back to zeros for
+  EOP. Also call `disable_eop_time_warning()`. Going full IERS-2010 for the
+  celestial sphere additionally needs the IERS nutation tables (Tab5A/5B/5D)
+  bundled and seeded — see `MEMORY.md` §14. **Do not drop the EOP seed.**
+- **Camera is in the inertial (star-fixed) frame.** Built in the celestial
+  frame, rotated into world by
+  `celestial_to_world = star_rot_inv.transpose()` (via
+  `SimulationState::celestial_to_world()`, applied in
+  `ApplicationState::redraw`). `Camera.longitude/latitude` are inertial
+  directions, not geography. Don't move the camera into the ECEF/world frame.
+- **Backdrop anchoring**: star lookup and sun disc are functions of the
+  camera-relative view direction, not position on the celestial sphere.
+  Changing this reintroduces parallax between sun and stars (a fixed bug).
 
 ### Startup / window
-- **The first frame must render via a direct `self.redraw()` call** from
-  `ApplicationState::resumed()` (in `src/application/mod.rs`), never
-  `request_redraw()`. The window starts hidden (`with_visible(false)`) and is
-  revealed after the first `present()`; Windows does not deliver
-  `RedrawRequested` to a hidden window, so a requested redraw would never fire
-  and the window would stay invisible forever. The reveal is now driven by the
-  `FrameOutcome` that `Gfx::update` returns (`Presented`/`Occluded` reveal the
-  window; the `Occluded` first-frame guard also re-requests a redraw) — the
-  renderer never touches the window. **Do not "simplify" either.**
-- **egui's `textures_delta.set` must be applied BEFORE the surface acquire in
-  `Gfx::update`, never after.** egui's `Context` emits each texture delta
-  (font-atlas allocation, per-glyph updates) exactly once and then forgets it —
-  it assumes the renderer applied it and never resends. So a delta dropped by a
-  frame that does not present desyncs `egui_renderer` permanently. If the set
-  deltas ran after the `get_current_texture()` match and that match took an
-  early-return arm (`Occluded`/`Lost`/`Outdated`/`Timeout`), the **first** frame's
-  full font-atlas *allocation* would be lost, and a later *partial* atlas update
-  (a newly rasterized glyph) would panic in egui-wgpu with **"Tried to update a
-  texture that has not been allocated yet."** This bit on macOS specifically,
-  where the hidden-until-ready startup makes the first acquire come back
-  `Occluded` (above). `update_texture` needs only the device/queue, not the
-  swapchain frame, so the loop is hoisted to the top of `update`. The matching
-  `free` deltas deliberately stay *after* present (those textures may be in use
-  by the frame's draw; a dropped `free` is a benign delayed cleanup, not a
-  panic). **Do not move the set-delta loop back below the acquire.**
+- **First frame: `self.redraw()` directly from `ApplicationState::resumed()`**,
+  never `request_redraw()`. Windows does not deliver `RedrawRequested` to a
+  hidden window. The reveal is driven by `FrameOutcome` from `Gfx::update`.
+  **Do not "simplify" either.**
+- **`egui textures_delta.set` must apply BEFORE the surface acquire in
+  `Gfx::update`.** egui emits each texture delta exactly once; a missed
+  allocation delta causes a panic ("Tried to update a texture that has not
+  been allocated yet") on the next partial atlas update. The `free` deltas
+  deliberately stay after present. See `MEMORY.md` §3.
 
 ### Input feel
-- **Do not restructure the smoothed-zoom glide/coast in `input.rs`.** It
-  was iterated ~5 times with the owner (including a full remove-then-revert).
-  Tune only the named constants (`ZOOM_HALF_LIFE_MIN/MAX`,
-  `ZOOM_COAST_HALF_LIFE`, `ZOOM_STOP_RATE`). Rejected designs that must not
-  be reintroduced: fixed-half-life always-glide, and a fixed burst-gap
-  split (instant if gap < threshold, glide otherwise). See `MEMORY.md`.
-- **macOS input feel is unvalidated (no native hardware here).** Two spots
-  follow the OS but have only ever been felt on Windows/X11, so treat them like
-  the look-tuning constants - validate on a real Mac before changing:
-  - The scroll path converts trackpad/precision `MouseScrollDelta::PixelDelta`
-    to wheel "ticks" with a magic `/ 60.0` (`input.rs`, the `MouseWheel` arm).
-    `LineDelta` (Windows/X11 notched wheels) and `PixelDelta` (macOS, precision
-    trackpads) are **both** handled - do not drop either - but the `60.0` divisor
-    that sets trackpad zoom *rate* is uncalibrated against real macOS momentum.
-  - **Tilt is bound to right-drag** (`MouseButton::Right`). On a trackpad-only
-    Mac, secondary-click is ctrl-/two-finger-click, so right-drag-to-tilt can be
-    awkward to perform. A UX gap, not a bug; flagged so a future touch/gesture
-    pass knows to revisit it. There is intentionally **no `Touch`/pinch-gesture
-    path** (desktop-only by design).
+- **Do not restructure the smoothed-zoom glide/coast in `input.rs`.** Tune
+  only the named constants (`ZOOM_HALF_LIFE_MIN/MAX`, `ZOOM_COAST_HALF_LIFE`,
+  `ZOOM_STOP_RATE`). Rejected designs that must not return: fixed-half-life
+  always-glide; fixed burst-gap split. See `MEMORY.md` §5.
+- **macOS input feel is unvalidated** (no native hardware here). Validate on
+  a real Mac before changing the trackpad `/ 60.0` divisor or tilt
+  (right-drag) binding.
 
 ### Tuning discipline
-- **Look-tuning constants drift between sessions.** Always read
-  `globe.wgsl` for current values; never trust a doc's numbers. The
-  `MEMORY.md` snapshot is dated and will go stale.
+- **Look-tuning constants drift between sessions.** Always read `globe.wgsl`
+  for live values; `MEMORY.md` §13 is a dated snapshot.
 - **Tune and feel-test on a native Windows release build.** The WSLg dev
-  environment here cannot validate exact colors or interaction feel.
+  environment cannot validate exact colors or interaction feel.
 
 ### Documentation
-- **Keep all documentation current with the code, in the same change** —
-  code comments, `CLAUDE.md`, `MEMORY.md`, and `README.md`. When you change
-  behavior, structure, an interface, or a documented constant, update the
-  matching comment and doc section as part of that change, not "later."
-  Stale docs are treated as bugs (this repo has had several — e.g. comments
-  that pointed at a deleted `atmosphere.rs`, or a "sequential loading" note
-  that survived the switch to rayon).
-- **One allowed exception**: the dated live-constant snapshot in `MEMORY.md`
-  §13 (and specific look-tuning numbers) may lag owner tuning — for live
-  values the **source is authoritative** (see Tuning discipline above).
-  Everything else — architecture, behavior, the rules/conventions here, the
-  file map — must stay accurate.
+- **Keep all docs current in the same change**: code comments, `CLAUDE.md`,
+  `MEMORY.md`, and `README.md`. Stale docs are bugs.
+- One exception: `MEMORY.md` §13 (live constant snapshot) may lag owner
+  tuning — for live values the source is authoritative.
 
 ---
 
-## Deliberately reverted / rejected — do not re-add without asking
+## Deliberately reverted / rejected — do not re-add
 
-These were implemented and then removed (or considered and declined) by
-the owner. Re-introducing them silently is a regression.
-
-- **Animated/time-varying ocean wave noise** — made static on purpose
-  (temporal stability + idle-is-free). The wave noise is fixed.
-- **Day-side albedo saturation boost** and an **`OCEAN_TINT`
-  water-darkening tint** — both reverted; albedo is used as sampled.
-- **The astronomically-correct star model** — was rejected during the
-  slider era, but **adopted on 2026-06-18** via the JPL ephemerides (see the
-  "Star map and Sun are ephemeris-driven" rule above). The old non-physical
-  sun-attached celestial sphere is the thing not to reintroduce now.
-- **Noise *frequency* ramp toward the terminator** for the city-light
-  dissolve — rejected because it boils/fizzes under sun motion. The dither
-  uses a **fixed** `DITHER_SCALE` for a coherent wipe.
-- **Terminator-varying emissive threshold** — rejected (night-map city
-  cores are clipped plateaus, so a rising threshold pops whole blobs
-  instead of shrinking them). Use the uniform threshold + dither.
-- **Per-brightness glow scaling** — rejected; surviving city pixels glow at
-  uniform strength.
-- A **`thread::scope` parallel texture *decode* + LUT bake** at startup —
-  the `thread::scope` *implementation* was reverted in phase 1. NOTE: runtime
-  texture **decode itself is back** (the multiplatform change embeds the
-  original JPEG/TIFF and decodes them at startup instead of baking BC7 at build
-  time), but it runs on the **rayon** pool inside `GlobeRenderer::new` (the
-  private scene builder inside `Gfx::init`: module compile + texture
-  decode/upload + LUT upload + pipeline compiles), **not** a hand-rolled
-  `thread::scope`. The LUT *bake* stays at build time. So: the sanctioned rayon
-  parallelization is intentional (do not "re-revert" it); the rejected thing is
-  specifically the `thread::scope` design, not runtime decode.
+- **Animated/time-varying ocean wave noise** — static by design (temporal
+  stability + idle-is-free).
+- **Day-side albedo saturation boost** and **`OCEAN_TINT`** water-darkening
+  tint — both reverted; albedo is used as sampled.
+- **Sun-attached celestial sphere** (the slider-era model) — replaced by
+  ephemeris-driven on 2026-06-18. Do not reintroduce the old non-physical
+  model.
+- **Noise frequency ramp toward the terminator** for the city-light dissolve
+  — boils/fizzes under sun motion. `DITHER_SCALE` is fixed.
+- **Terminator-varying emissive threshold** — rejected (blob popping). Use
+  the uniform threshold + dither.
+- **Per-brightness glow scaling** — rejected; uniform glow strength.
+- **`thread::scope` parallel texture decode** — reverted in phase 1. The
+  sanctioned runtime decode is rayon inside `GlobeRenderer::new`; the
+  rejected thing is specifically the `thread::scope` design.
 
 ---
 
-## TODO / backlog (not scheduled — optional, pick up later)
+## TODO / backlog (confirm with owner before starting)
 
-Deliberate "someday, maybe" items. None of these is committed work or a bug;
-they're parked here so we can refer back when looking for extra things to do.
-Adding to this list does **not** authorize doing it — confirm with the owner
-first. (Concrete engineering follow-ups also live in `MEMORY.md` §14; this
-section is for the larger, explicitly-deferred ideas.)
+None is scheduled work or a bug. See `MEMORY.md` §14 for engineering
+details on each.
 
-- **Full IERS-2010 Earth orientation for the celestial sphere.** Switch the Sun/star
-  backdrop in `src/simulation/celestial_sphere.rs` from the `*_approx` transforms
-  (`qgcrf2itrf_approx` / `qitrf2gcrf_approx`) to the full
-  `qgcrf2itrf` / `qitrf2gcrf`, closing the residual ~1" error (real polar
-  motion + IERS-2010 nutation instead of approximate nutation / neglected
-  polar motion). The satellite path is already full-accuracy; only the
-  backdrop is approximate, and at ~1" it's already sub-pixel, so this is a
-  consistency/correctness nicety, not a visible fix.
-  - **Feasibility (verified against satkit 0.18.1):** the nutation tables can
-    be seeded as singletons from baked-in bytes, exactly like the ephemeris
-    and EOP. satkit exposes `frametransform::init_iers_table_from_bytes(id,
-    bytes)` (re-export of `ierstable::init_from_bytes`) over three
-    `OnceLock<IERSTable>` singletons keyed by `IersTableId::{Tab5A, Tab5B,
-    Tab5D}`. Seed all three in `celestial_sphere::init_satkit()` *before* the first celestial-sphere
-    transform — otherwise `table()`'s lazy `get_or_init` wins and
-    `IERSTable::from_file(...).unwrap()` resolves a data dir (recreating the
-    stray `satkit-data` dir), tries to download from
-    `https://storage.googleapis.com/astrokit-astro-data/`, and panics if the
-    file is absent (same failure mode the EOP seed already prevents).
-  - **Real work beyond seeding:** bundle three small text files
-    (`tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` — KB each, negligible binary
-    cost) via `build.rs` (`EMBEDS` table → `OUT_DIR`) and
-    `include_bytes!` them in `celestial_sphere.rs`; flip the two transform calls to the
-    non-`approx` versions; and update every "celestial sphere is `*_approx`" claim in
-    `CLAUDE.md`, `MEMORY.md`, and the `celestial_sphere.rs` / `init_satkit` doc-comments in
-    the same change.
-
-- **Reconsider GPU texture compression (BC7 + ASTC).** Phase 14 removed all GPU
-  texture compression and now uploads the five Earth/star textures **uncompressed**
-  (`Rgba8Unorm`/`Rgba8UnormSrgb`, decoded at runtime), trading ~4x GPU memory
-  (~670 MB vs ~165 MB BC7) for "runs on every backend/GPU with no feature
-  requirement." If that VRAM cost ever bites (low-VRAM/integrated GPUs, or
-  wanting more/bigger textures), compression can come back **without** losing
-  cross-platform support, but it is a real chunk of work, not a revert: desktop
-  GPUs want BC7, **Apple Silicon has no BC** and needs ASTC, so a proper re-add
-  means baking **both** formats and selecting at runtime from adapter caps. The
-  full design (BC7 + ASTC, format selection, `cfg` gating, the
-  `intel_tex_2`-is-x86_64-only build-host problem and its pre-baked-download vs
-  portable-encoder fixes) and the exact pre-removal mechanics (BC7→KTX2 formats,
-  encoder call, `upload_ktx2` mapping, what to restore) are in `MEMORY.md` §14
-  "Re-adding GPU texture compression." A cheaper partial win that keeps the
-  uncompressed path is **downsizing the textures to 4K** (¼ the VRAM) — also in
-  `MEMORY.md` §14. Confirm with the owner before doing either.
+- **Full IERS-2010 Earth orientation for the celestial sphere**: switch
+  `*_approx` transforms to full `qgcrf2itrf`/`qitrf2gcrf`. Requires bundling
+  satkit's IERS nutation tables (Tab5A/5B/5D) and seeding them in
+  `init_satkit()`. Sub-pixel improvement; a consistency nicety, not a
+  visible fix. See `MEMORY.md` §14.
+- **Reconsider GPU texture compression (BC7 + ASTC)**: not a simple revert
+  — Apple Silicon has no BC, so the full re-add needs both formats baked,
+  runtime format selection from adapter caps, and a portable build-host
+  encoder solution. Cheaper partial win: downsize textures to 4K (quarter
+  VRAM, no feature needed). See `MEMORY.md` §14.
 
 ---
 
 ## Conventions
 
-### Coordinate & mapping (used consistently everywhere — see `MEMORY.md` for formulas)
-- Globe is the **WGS84 reference ellipsoid at the origin**; **world space is
-  kilometers** (camera distance, mesh vertices, `camera_pos` uniform — all
-  km). **+Y is north.** Longitude 0°, latitude 0° faces **+Z**; +X is east at
-  the prime meridian. The physical constants and the `surface_position` /
-  `geodetic_normal` helpers live in `src/earth.rs` (a top-level shared module,
-  the single source of truth; mesh **and** camera build their geometry from it).
-- **Load-bearing identity (post-WGS84)**: on an ellipsoid the surface normal
-  is **no longer** `normalize(position)`, so the mesh now carries an explicit
-  per-vertex **geodetic normal**. That normal happens to equal the old
-  unit-sphere direction (same lat/lon structure), which is what keeps the
-  shader's analytic east/north tangent frame and the surface-anchored
-  city-light noise (`n_geo * DITHER_SCALE`) valid unchanged. The atmosphere
-  and star passes **reuse that unit normal** (×`ATMOSPHERE_TOP_KM` /
-  ×`STARS_RADIUS_KM`) to build their spheres — they must stay spherical, so
-  they must **not** use the ellipsoid `position`.
+### Coordinate & mapping (see `MEMORY.md` for formulas)
+- **WGS84 ellipsoid at origin; world space in km; +Y north; lon0/lat0 →
+  +Z; +X east.** Constants and helpers in `src/earth.rs` (single source of
+  truth; mesh and camera both call it).
+- Mesh carries explicit **geodetic normals** (not `normalize(position)` on
+  an ellipsoid). Atmosphere and star shells use the unit normal x their
+  radii — spherical, not ellipsoid position.
 - Equirectangular UVs: `u = (lon+180)/360` (wraps; sampler repeats on U),
-  `v = 0` at north pole → `1` at south (sampler clamps on V). The mesh
-  duplicates the seam column so U wraps cleanly.
-- **All passes now work in kilometers.** The atmosphere fragment shader no
-  longer multiplies by `PLANET_RADIUS_KM` (world is already km). The
-  scattering model itself stays **spherical** (`PLANET_RADIUS_KM` 6360 /
-  `ATMOSPHERE_TOP_KM` 6460, baked into the LUTs); the visible surface is the
-  WGS84 ellipsoid (6357–6378 km), so it can poke a few km past the 6360 km
-  atmosphere "ground" near the equator — a small, intentional approximation
-  (the atmosphere was always spherical). Do not try to make the LUT model
-  ellipsoidal; it relies on spherical symmetry.
+  `v = 0` at north → 1 at south (sampler clamps on V). Seam column
+  duplicated.
+- Atmosphere stays spherical (`PLANET_RADIUS_KM 6360`, `ATMOSPHERE_TOP_KM
+  6460`). Do not try to make the LUT model ellipsoidal.
 
 ### Code style
-- Match the surrounding code: dense, explanatory comments that capture
-  *why* (especially the non-obvious GPU/winit/precision reasons), small
-  focused structs, descriptive names. The existing files are the style
-  guide.
-- The code is organized into six top-level modules plus a shared `earth`:
-  **`application`** (windowing, the winit event loop, the camera + input, and
-  per-frame redraw orchestration; owns the `SimulationState` and the renderer),
-  **`simulation`** (`SimulationState` + the astronomical math; produces a
-  `RenderState`; no winit/wgpu/egui and no `Camera` type), **`renderer`** (the
-  `Gfx` struct: GPU setup + per-frame `update`; **and** the headless
-  `HeadlessRenderer`, an offscreen-texture + readback target that shares the
-  scene core), **`ui`** (the egui panel logic), **`earth`** (`src/earth.rs`:
-  shared WGS84 constants/helpers), **`scenarios`** (`src/scenarios/`: one module
-  per past scenario, each with a `run()` that seeds satkit, assembles the
-  tracked objects, builds the `SimulationState`/`ApplicationState`, and hands off
-  to `application::run`), and **`snapshot`** (`src/snapshot.rs`: the headless
-  single-frame `render` CLI mode - no winit/input/egui; builds a `RenderState`
-  directly from a datetime + camera and drives `HeadlessRenderer`).
-  `main.rs` is tiny: it uses **clap** to parse the CLI (a `scenario <name>`
-  subcommand **and** a `render` subcommand) and dispatches to the matching
-  `scenarios::*::run` or `snapshot::run`; it does no setup itself. The
-  interactive windowed `Gfx` and the `HeadlessRenderer` share one device-creation
-  path (`renderer::request_adapter_device`) and the same scene core
-  (`GlobeRenderer`); they differ only in the presentation target (swapchain
-  surface + egui vs. offscreen texture + readback, no UI). The `Camera` rig stays
-  in `application` (the input `Controller` stays private there) but is re-exported
-  `pub(crate)` so `snapshot` can build the same rig.
-- **Run `cargo +nightly fmt` after every code change** (`.rs` edits).
-  rustfmt (with the checked-in `rustfmt.toml`) is the sole formatting
-  authority — don't hand-format, and keep diffs limited to real changes.
-  **Always reflow comments and let rustfmt's `wrap_comments` do the
-  wrapping** — never hand-wrap `//` / `///` / `//!` comment text. Because
-  `wrap_comments` is an **unstable** rustfmt option, formatting **must** run
-  on nightly (`cargo +nightly fmt`); plain stable `cargo fmt` ignores it
-  (emitting a warning) and leaves comments unwrapped, so don't use it. The
-  nightly requirement is formatting-only — the build/run toolchain stays
-  stable (`cargo run --release`). (`cargo +nightly fmt` does not touch
-  `shaders/globe.wgsl` — see the next bullet for WGSL.)
-- **Format WGSL with `wgslfmt`, not by hand.** Run `wgslfmt
-  shaders/globe.wgsl` (or `wgslfmt --check` to verify) after editing the
-  shader; it is the formatting authority for `.wgsl`, just as rustfmt is for
-  `.rs`. Don't hand-format WGSL. `wgslfmt` keeps output ASCII-only (the
-  golden rule still holds) and only touches whitespace/layout, never tokens,
-  so it is safe to run on the look-tuning `const` block. It does **not** wrap
-  comments, so the math-reflow caution above is rust-only; WGSL comment
-  wrapping is still manual.
-- **Watch reflow on math.** `wrap_comments` re-wraps purely on width and is
-  blind to meaning, so it will happily insert a line break in the middle of a
-  mathematical formula or equation (e.g. splitting `cos_sun = dot(n_geo,
-  sun)`, an integral, or a chain of terms across lines), which hurts
-  readability and can make an expression ambiguous. After every reflow, **scan
-  the diff for any line break that lands inside a formula/equation and flag
-  it.** Whenever possible, **reword the surrounding comment so the formula
-  stays on a single line** (move it to its own short line, shorten the prose
-  around it, or split the sentence) rather than letting the wrap fall in the
-  middle of the math. Treat a formula split across a wrap as something to fix,
-  not accept.
+- Match surrounding code: dense explanatory comments on *why* (the non-
+  obvious GPU/winit/precision reasons), small focused structs, descriptive
+  names.
+- Six top-level modules + `earth`: `application` (window, camera, input,
+  egui logic), `simulation` (clock, satellites, celestial sphere — no
+  winit/wgpu/egui, no `Camera` type), `renderer` (`Gfx` +
+  `HeadlessRenderer`), `ui`, `earth`, `scenarios`, `snapshot`. See
+  `MEMORY.md` §1 for the full file map.
+- **`cargo +nightly fmt` after every `.rs` edit.** Nightly is required for
+  `wrap_comments`; plain stable `cargo fmt` silently skips it. Never
+  hand-format. After reflow, **scan diffs for formula-breaking line breaks
+  and reword** to keep formulas on one line.
+- **`wgslfmt shaders/globe.wgsl` after every shader edit.** Don't
+  hand-format WGSL.
 
 ### Where things live
-- **Shader look knobs**: top of `shaders/globe.wgsl` (`const` block).
-- **Atmosphere medium constants**: `build.rs` `mod atmosphere` (bake side)
-  *and* `shaders/globe.wgsl` (geometric twins).
-- **Input feel constants**: top of `src/application/input.rs`.
-- **Earth physical constants** (WGS84 axes, eccentricity, mean radius, GM,
-  rotation rate) + the `surface_position`/`geodetic_normal` helpers:
-  `src/earth.rs` (top-level shared module).
-- **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
-  (in km, expressed as `<radii> * earth::MEAN_RADIUS_KM` to preserve the feel).
-- **Render orchestration / windowing**: `src/application/mod.rs`
-  (`ApplicationState` + the winit `ApplicationHandler` + `run`). It resolves the
-  camera, calls `SimulationState::frame_state` (which returns the frame's
-  `RenderState` + `TelemetryState` together), runs the egui panel from that
-  telemetry, then calls `Gfx::update`.
-- **Renderer**: `src/renderer/mod.rs` (`Gfx`: `init`/`resize`/`viewport`/
-  `update`; `FrameOutcome`; `UiFrame`; the private `GlobeRenderer` scene + the
-  `Uniforms` packing; `MARKER_RADIUS_PX`; the shared `request_adapter_device`
-  helper; `MAX_FRAME_DIMENSION`). Mesh in `src/renderer/mesh.rs`. **Headless
-  renderer** in `src/renderer/headless.rs` (`HeadlessRenderer`: offscreen
-  `Rgba8Unorm` target + 256-aligned readback -> `image::RgbaImage`; no
-  surface/egui).
-- **Single-frame render mode**: `src/snapshot.rs` (`snapshot::run` +
-  `RenderParams`: parse the RFC3339 datetime via `humantime` ->
-  `Instant::from_unixtime`, build a `RenderState` from `CelestialSphere` + a
-  `Camera`, drive `HeadlessRenderer`, save the PNG, print a stdout summary; no
-  EOP range check - see the Scenarios section).
-- **Simulation state / RenderState / TelemetryState**: `src/simulation/mod.rs`
-  (`SimulationState` composes clock / `Vec<Satellite>` / celestial_sphere; `advance`,
-  `celestial_to_world`, `frame_state` -> `(RenderState, TelemetryState)` where
-  both carry a per-satellite `Vec` (`markers` / `satellites`); `marker_occluded`).
-  `SimulationState::new(satellites)` takes the tracked list and starts the clock
-  at the **first** satellite's epoch (panics if the list is empty).
-- **Satellite tracking**: `src/simulation/satellite.rs` (TLE parse + SGP4 +
-  frame conversion to a world-space km point). Each `Satellite` is one tracked
-  object storing only the `tle` + `name`; the position is **not** stored -
-  `state_at(time)` propagates it on demand (returning a `SatelliteState`)
-  wherever it's needed, so nothing goes stale as the clock advances. This module
-  is element-set agnostic - it carries no TLE data; `Satellite::from_tle(text)`
-  parses whatever a scenario hands it. **The TLEs live in the scenario** that
-  uses them: the `ISS_TLE`/`HST_TLE` **inline source literals** (`concat!` of
-  the three TLE lines each; not `include_str!`, so a fresh checkout needs no
-  data file) are `const`s in `src/scenarios/iss_and_hubble.rs`, which assembles
-  the tracked array (`vec![Satellite::from_tle(ISS_TLE), ...]`) and passes it
-  into `SimulationState::new`, not built inside the simulation. The HST set is
-  flagged in-source as approximate (real orbit shape, made-up phase). Marker
-  colors live in the marker shader.
-- **Simulation clock**: `src/simulation/clock.rs` (`Clock`: advances by
-  wall-clock dt x multiplier, play/pause, speed bounds `MIN/MAX_MULTIPLIER`).
-  Starts at the TLE epoch.
-- **Sun / Earth orientation / star map**: `src/simulation/celestial_sphere.rs`
-  (`CelestialSphere::at(time)` → `sun_dir`, `star_rot_inv`, subsolar lat/lon) via satkit's
-  JPL ephemeris + `qgcrf2itrf_approx`/`qitrf2gcrf_approx`. `celestial_sphere::init_satkit()`
-  (called once via the `simulation::init()` wrapper at the start of a scenario's
-  `run`, before any `CelestialSphere` is built) seeds satkit's global state from
-  embedded bytes: the JPL ephemeris (`jplephem::init_from_bytes`) **and** the
-  real EOP table (`earth_orientation_params::init_from_bytes` of the bundled
-  `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
-  rule above. The EOP file lives alongside the ephemeris in `OUT_DIR`
-  (`OUT_DIR/EOP-All.csv`).
-- All build assets land in `OUT_DIR` and are `include_bytes!`-ed. Most are
-  bundled **verbatim** via the `EMBEDS` table: the two satkit data files - the
-  JPL ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB) -
-  **and** the five Earth/star textures (original JPEG/TIFF, ~21 MB total). The
-  only *built* assets are the three atmosphere LUTs (`*.ktx2`, f16), baked by
-  `build.rs`. `celestial_sphere.rs` embeds the ephemeris/EOP and `renderer/mod.rs`
-  the textures/LUTs, each with `include_bytes!`. No `assets/` dir, no runtime
-  data file.
+- **Shader look knobs**: `shaders/globe.wgsl` top `const` block.
+- **Atmosphere medium constants**: `build.rs mod atmosphere` (bake) AND
+  `shaders/globe.wgsl` (shader twins) — both.
+- **Input feel constants**: `src/application/input.rs` top.
+- **Earth physical constants + helpers**: `src/earth.rs`.
+- **Camera limits**: `Camera` associated consts in
+  `src/application/camera.rs` (in km).
+- **All build assets** land in `OUT_DIR`, `include_bytes!`-ed. No `assets/`
+  dir.
+- Full file map: `MEMORY.md` §1.
 
-### Scenarios & valid time range (read before adding a scenario)
-- **Scenarios live in `src/scenarios/`** — one module per scenario, each with a
-  `run()` that pins the simulation to a specific **past** event (a satellite/TLE
-  + a time window). `main.rs` parses the CLI with **clap** and dispatches to one
-  (`globe-experiment scenario <name>`); the name is an **optional** positional,
-  so a bare `scenario` lists the available scenarios (via `list_scenarios`,
-  driven off the `ScenarioName` `ValueEnum` so it can't drift) instead of
-  erroring. Today there are two: `scenarios::iss_and_hubble` (CLI token
-  `iss_and_hubble`: ISS + HST) and `scenarios::iss` (CLI token `iss`: ISS only).
-  Each **owns its own inline TLE element set `const`s** and assembles them into
-  the tracked array, with a clock that starts at the first satellite's epoch; the
-  `ISS_TLE` literal is **deliberately duplicated** across the two files (each
-  scenario owns its TLE data — do not factor it into a shared const). Add a
-  scenario by adding a module and a `ScenarioName` variant in `main.rs`.
-- **Every scenario's time window must fall inside the valid EOP range** so the
-  astronomical accuracy goal actually holds. That range is bounded on **both**
-  ends:
-  - **Lower bound: 1962-01-01.** Measured EOP simply does not exist before
-    then (it's the start of the IERS series, not a satkit limitation). For
-    earlier dates satkit returns no EOP and silently falls back to zeros — i.e.
-    accuracy quietly degrades to the `*_approx` level, *and the satellite era
-    starts in 1957*, so most realistic scenarios are fine, but verify.
-  - **Upper bound: the build date** (more precisely, the last entry of the
-    bundled `EOP-All.csv`). Past dates only — never live/future. Beyond the
-    last entry satkit does **constant extrapolation** of the final value, which
-    silently degrades. The "past-only, before build date" rule keeps you below
-    this bound by construction.
-- **So: when you add a scenario, check its start and end epochs against the
-  bundled EOP file's `[first_entry .. last_entry]` MJD range** (and against
-  1962 for the lower bound). The bundled `EOP-All.csv`'s last data row is
-  the concrete upper bound; the first row (1962-01-01, MJD 37665) is the lower.
-  If a scenario can't be brought in-range, it does not meet the accuracy bar —
-  flag it rather than shipping a silently-degraded result.
-- **Render mode (`snapshot`) deliberately does NOT enforce this.** The headless
-  `render` CLI mode is a debugging entry point where the caller owns the time, so
-  it intentionally skips the EOP range check that scenarios must pass — there is
-  no runtime EOP logic in `snapshot` at all (not even a warning). An out-of-range
-  datetime renders anyway and silently degrades (satkit falls back to zeros below
-  1962 and constant-extrapolates past the last entry). This is a conscious
-  deviation from the accuracy rules above, documented in `snapshot.rs`, the
-  `analyze-render` skill, and here; do not "fix" it by adding a check.
+### Scenarios & valid time range
+- **Scenarios in `src/scenarios/`** — one module per past scenario with a
+  `run()`. Add one by adding a module and a `ScenarioName` variant in
+  `main.rs`. Each scenario owns its inline TLE `const`s; the `ISS_TLE`
+  literal is **deliberately duplicated** across scenarios — do not factor it
+  into a shared const.
+- **Every scenario's epoch window must fall inside `[1962-01-01, last
+  EOP-All.csv entry]`**:
+  - Below 1962: EOP doesn't exist, satkit silently falls back to zeros.
+  - Above last entry (the build date): satkit does constant extrapolation,
+    silently degrading. Past-only keeps scenarios below this by construction.
+  - Out-of-range = does not meet the accuracy bar. Flag it rather than
+    shipping a silently-degraded result.
+- **Render mode (`snapshot`) deliberately does NOT enforce the EOP range.**
+  Do not add a check there.
 
 ---
 
-## Hard constraints (environment & platform)
+## Hard constraints
 
-- **Device requires no optional features** (`Features::empty()`). The
-  Earth/star textures are uploaded **uncompressed** (`Rgba8Unorm`/
-  `Rgba8UnormSrgb`), so no BC/ASTC texture-compression support is needed - the
-  app runs on every backend and GPU, including those without BC (Apple Silicon,
-  ARM SoCs) and WSLg lavapipe. This is what makes it cross-platform across
-  Windows/Linux/macOS on x86_64 **and** aarch64. (Do **not** re-add a
-  `TEXTURE_COMPRESSION_BC` requirement - it would panic on Apple Silicon.)
-- **No mipmaps** (`mip_level_count 1` on every texture). Known shimmer at
-  far zoom; the city-light dither can twinkle/alias when blobs shrink
-  sub-pixel at low zoom (no MSAA either). Mitigations are documented but
-  not implemented.
-- **Large binary, larger VRAM**: the embedded `include_bytes!` payload is
-  ~98 MB JPL ephemeris + ~2-3 MB EOP + ~21 MB of original JPEG/TIFF textures +
-  ~0.6 MB LUTs (the textures now embed *smaller* than the old ~160 MB of BC7,
-  since they are still compressed JPEG/TIFF on disk). The trade is **GPU
-  memory**: the five 8K textures are decoded to uncompressed RGBA8 at startup
-  (~134 MB each, ~670 MB total) vs ~165 MB as BC7 - an accepted cost of the
-  no-compression-feature portability. Runtime file loading is a known,
-  unimplemented follow-up.
-  - **Texture size sits exactly at the portable limit.** The five textures are
-    8192x8192 and the device requests `Limits::default()`, whose
-    `max_texture_dimension_2d` is **8192** - so they fit on the edge of what
-    every conformant backend guarantees, with no headroom. Do **not** grow a
-    texture past 8192 without either raising the limit (which narrows the
-    matrix above the WebGPU baseline) or downsizing (the "downsize to 4K"
-    backlog item, which also relieves the VRAM cost above). Inclusive, so 8192
-    passes everywhere today.
-- **JPL ephemeris and EOP are embedded, not runtime files.** `build.rs`
-  downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
-  (Earth-orientation params) from CelesTrak on the first build straight into
-  `OUT_DIR` (adds to the already-network-dependent first build);
-  `celestial_sphere.rs` embeds each with `include_bytes!` and
-  loads them via `jplephem::init_from_bytes` / `earth_orientation_params::
-  init_from_bytes`. So there is **no runtime data file** - the binary is
-  self-contained - but a fresh checkout still needs network for the first build.
-  The `linux_` in the ephemeris file name is the **byte order, not the OS**: it
-  is JPL's little-endian DE440 build, and every supported target (x86_64 and
-  aarch64, on all three OSes) is little-endian, so the same embedded bytes work
-  across the whole matrix. Do not assume it is Linux-only or try to OS-gate it.
-- **Earth orientation: satellite is full EOP; celestial sphere is `*_approx` (~1").** With
-  real EOP bundled, the satellite's `qteme2itrf` applies real polar motion +
-  UT1-UTC (sub-arcsec). The Sun/star backdrop still uses the `*_approx`
-  transforms (real UT1-UTC via `gmst`, but polar motion neglected + approximate
-  nutation, ~1") — fine for a backdrop. Going full IERS-2010 for the celestial sphere would
-  *additionally* require bundling satkit's IERS nutation tables (Tab5A/5B/5D,
-  which `ierstable` `.unwrap()`s from the data dir) — not done. Because the tool
-  is **past-only**, the bundled EOP is valid forever for in-range dates. Keep
-  `init_satkit`'s EOP seed regardless: satkit would otherwise resolve an EOP
-  data dir on first use and create a stray `satkit-data` dir.
-- **No `.cargo/config.toml`.** It previously linked `-lstdc++` for
-  `intel_tex_2`'s ISPC objects; with the BC7 encoder gone (textures embed
-  verbatim, decode at runtime) nothing pulls in a C++ runtime, so the file was
-  deleted. There is no longer any host-arch-specific link flag - native builds
-  work on every supported platform/arch (Windows/Linux/macOS x86_64 + aarch64).
-  Do not re-add it.
-- **Building from source needs a C compiler.** The only non-pure-Rust piece in
-  the tree is `ring` (pulled in transitively as a **build-dependency** through
-  `ureq`, which `build.rs` uses to download the embedded assets): it compiles
-  C/asm via `cc` at build time. `ring` supports all six targets, so this is not
-  a matrix regression - but a from-source build (the expected path, incl. native
-  aarch64) requires a working C toolchain on the host, not just rustc. It is
-  build-time only; nothing C ends up at runtime. If you ever want a pure-Rust
-  build, note that swapping `ureq`'s TLS to rustls-`aws-lc-rs` does **not** help
-  (also C) - there is no drop-in pure-Rust replacement, so leave it.
-- **WSLg flakiness**: app launch intermittently fails with libEGL/MESA
-  errors — transient, retry; not a code bug. Not present on native Windows.
-- **Windows mount tooling**: `cargo add` can emit a bogus "found cargo.toml
-  please rename" error on the case-insensitive mount — edit `Cargo.toml`
-  directly and trust `cargo metadata`.
+- **`Features::empty()`** — no optional GPU features; textures uncompressed.
+  Do not re-add any feature requirement.
+- **No mipmaps** (`mip_level_count 1`). Known shimmer at far zoom; accepted.
+- **8K textures at the portable limit**: `Limits::default()` guarantees
+  `max_texture_dimension_2d = 8192` with zero headroom. Don't grow a texture
+  past 8192 without raising the limit (narrows the matrix) or downsizing.
+- **~670 MB VRAM** for 5 uncompressed 8K textures — accepted cost of the
+  no-feature portability.
+- **No `.cargo/config.toml`** — deleted when `intel_tex_2` was removed; its
+  `-lstdc++` was its only purpose. Do not re-add.
+- **Build requires a C compiler** (`ring` via `ureq` in `build.rs`, build-
+  time only). Portable across all six targets. No pure-Rust workaround.
+- **WSLg flakiness**: transient libEGL/MESA errors on app launch — retry,
+  not a code bug.
+- **Windows `cargo add`**: can emit a bogus "found cargo.toml please rename"
+  error — edit `Cargo.toml` directly and trust `cargo metadata`.
 
 ---
 
 ## Testing & verification
 
-- There is **no test suite and no CI**. Verification is the smoke test
-  above plus manual interaction on native Windows.
-- **Check correctness with `cargo clippy`, not just `cargo build`** — run
-  it heavily and aim for warning-free. clippy catches misuse, redundancy,
-  and footguns the bare compiler misses. Caveat: neither command validates
-  `shaders/globe.wgsl` — `cargo build`/clippy never compile the WGSL (naga
-  only runs at app runtime), so a clean build says nothing about the shader.
-  Statically validate it with the **naga CLI** (next bullet) after every
-  shader edit; an actual run is still required for look/pipeline-binding
-  correctness, which validation can't see.
-- **Verify `shaders/globe.wgsl` with the `naga` CLI after every shader
-  change.** This is the authoritative static check: the CLI is the *same
-  naga* the app links through wgpu (CLI 29.x ↔ the `wgpu`/`naga` 29.x in
-  `Cargo.lock`), so it runs the exact frontend + IR validator that would
-  otherwise only fire at runtime — full type checking, all entry points, all
-  validation flags. Use the strictest invocation:
-
-  ```sh
-  naga --compact --capabilities none shaders/globe.wgsl
-  ```
-
-  - **What the flags buy.** No output file means *validate only* (don't emit
-    a translation). Default `--validate` is already every `ValidationFlags`
-    bit, so it's left implicit (so it auto-tracks any flags naga adds — don't
-    hardcode the `63` bitmask). `--compact` runs a second validation pass over
-    the compacted IR. `--capabilities none` forbids every *optional* capability
-    (float16, subgroup ops, dual-source blending, ...) — the shader uses only
-    baseline features, so `none` passes today and turns any future
-    capability-gated feature into a deliberate, visible decision (relax it by
-    naming the capability if you ever add one).
-  - **Reading the result:** `Validation successful` + exit 0 = good;
-    parse/type/validation errors print with a line+caret and exit 1. It
-    catches real semantics, not just syntax (e.g. a `let x: f32 = 1u;` type
-    mismatch is reported).
-  - **Keep the CLI version aligned** with the linked naga (bump it when wgpu
-    bumps) so the static check can't disagree with the runtime compiler.
-- **`wgsl-analyzer` is a *secondary*, spec-strict linter** — the naga CLI
-  above is the authoritative check (it's the real compiler); reach for
-  wgsl-analyzer only when you want an editor-grade second opinion, and it can
-  only be driven via its LSP server. Gotchas, all verified here (2026-06-20):
-  - **The CLI subcommands are stubs.** `wgsl-analyzer parse` / `diagnostics`
-    / `unresolved-references` panic with "subcommand not implemented", and
-    `--print-config-schema` prints nothing. Don't reach for them.
-  - **The only working path is the LSP server** (`wgsl-analyzer` with no
-    subcommand, JSON-RPC over stdio), and it uses **pull** diagnostics
-    (`textDocument/diagnostic`), *not* push (`publishDiagnostics` is never
-    sent). So: `initialize` -> `initialized` -> `textDocument/didOpen` ->
-    request `textDocument/diagnostic` and read the `items` from the response.
-    A `didOpen`-and-wait-for-push client sees nothing (a dead end already
-    hit). The editor `LSP` tooling here is **not** wired for `.wgsl` either,
-    so this is a hand-driven-client task.
-  - **It is spec-stricter than naga**, so expect false positives relative to
-    what actually compiles. Concretely, it enforces WGSL's rule that the
-    operands of `&`/`|`/`^` be unary or parenthesized: the `hash3` bit-mix
-    (`a*b ^ c*d ^ e*f`) was flagged until the multiplications were wrapped in
-    `()` (naga had accepted it unparenthesized). Treat its errors as worth
-    investigating, but confirm against an actual run before assuming the
-    shader is broken.
-- Manual pass to run after risky changes: pan, flick (inertia), zoom to
-  min/max, tilt to clamp, play/pause + speed slider (watch the Sun, stars,
-  and satellite advance together), window resize, minimize/restore. Confirm
-  idle (paused) renders **zero** frames.
-- After atmosphere-constant or mapping changes, verify **both** the bake
-  (`build.rs`) and shader (`globe.wgsl`) sides and re-run — bit-identical
-  output is the goal when the change is meant to be neutral.
+- **No test suite, no CI.** Verification is the smoke test above plus manual
+  interaction on native Windows.
+- **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
+- **After every shader edit**: `naga --compact --capabilities none
+  shaders/globe.wgsl`. This is the same naga the app links — authoritative.
+  No output file = validate only. `Validation successful` + exit 0 = good.
+  Keep the CLI version aligned with the wgpu/naga version in `Cargo.lock`.
+- **`wgsl-analyzer`** is a secondary spec-strict linter (LSP only — CLI
+  subcommands are stubs). See `MEMORY.md` §14 for verified gotchas.
+- **Manual pass after risky changes**: pan, flick (inertia), zoom to
+  min/max, tilt to clamp, play/pause + speed slider (watch Sun, stars, and
+  satellite advance together), window resize, minimize/restore. Confirm idle
+  (paused) renders **zero** frames.
+- After atmosphere-constant or mapping changes, verify **both** the bake and
+  shader sides and re-run — bit-identical output is the goal for neutral
+  changes.
