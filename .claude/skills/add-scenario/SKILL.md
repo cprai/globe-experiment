@@ -13,17 +13,24 @@ time window) and wires it into the clap CLI.
 - `cargo` (build/run), plus the `format-rust` and `clippy-lint` skills
 
 ## Steps
-1. **Add a module** `src/scenarios/<name>.rs` with a `run()` that:
-   - calls `simulation::init()` (seeds satkit's globals — ephemeris + real
-     EOP — before any ephemeris/frame-transform use),
+1. **Add a module** `src/scenarios/<name>.rs` that:
    - owns its **inline TLE `const`s** (e.g. `ISS_TLE`), assembled with
      `concat!` of the three TLE lines (name + two element lines). TLE data is
      **deliberately duplicated** per scenario — do not factor it into a
      shared const.
-   - assembles the tracked array `vec![Satellite::from_tle(...), ...]`,
-   - builds `SimulationState::new(satellites)` (clock starts at the **first**
-     satellite's epoch; an empty list panics),
-   - builds `ApplicationState::new(simulation)` and calls `application::run`.
+   - defines a `pub struct <Name>Simulation { simulation: SimulationState, satellites: Vec<Satellite> }`.
+   - implements `Simulation` for it (`advance`, `celestial_to_world`,
+     `frame_state`, `clock_mut`). The `frame_state` impl propagates
+     `self.satellites` using `self.simulation.clock.now()` and fills in
+     `RenderState`/`TelemetryState` from `self.simulation.celestial_sphere`.
+     Use `marker_occluded` from `crate::simulation` for visibility testing.
+   - has a `run()` function that: calls `simulation::init()` (seeds satkit's
+     globals — ephemeris + real EOP — before any ephemeris/frame-transform
+     use), then calls
+     `application::run(ApplicationState::new(<Name>Simulation::new()))`.
+   - In `<Name>Simulation::new()`: build `satellites` first (for the epoch),
+     take `satellites.first().expect(...).epoch()` as the clock start, and
+     construct `SimulationState::new(epoch)`.
 2. **Wire the CLI** in `src/main.rs`: add a `ScenarioName` `ValueEnum`
    variant (use `#[value(name = "<token>")]` to keep the token snake_case)
    and dispatch to the new `run`. `list_scenarios` iterates

@@ -12,7 +12,8 @@
 //! ~1962-01-01 satkit falls back to zero EOP, and past the last bundled EOP
 //! entry it constant-extrapolates. Choosing an in-range past datetime for an
 //! accurate frame is the caller's responsibility. This deliberate deviation is
-//! also documented in `.claude/rules/scenarios.md` and the `analyze-render` skill.
+//! also documented in `.claude/rules/scenarios.md` and the `analyze-render`
+//! skill.
 
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;

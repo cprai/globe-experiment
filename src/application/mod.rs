@@ -1,7 +1,7 @@
 //! The application layer: windowing, the winit event loop, per-frame redraw
-//! orchestration, and the camera (rig + all input/animation). It owns the
-//! `SimulationState` and the `Gfx` renderer, updates the camera from window
-//! input, advances the simulation, and drives each render.
+//! orchestration, and the camera (rig + all input/animation). It is generic
+//! over any `S: Simulation`, owns the `Gfx` renderer, updates the camera from
+//! window input, advances the simulation, and drives each render.
 //!
 //! The camera and its input controller live here so that swapping the input
 //! scheme (e.g. adding touch controls) stays local to this module; the
@@ -18,7 +18,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::renderer::{FrameOutcome, Gfx, UiFrame};
-use crate::simulation::SimulationState;
+use crate::simulation::Simulation;
 use crate::ui;
 // Re-exported crate-wide so the headless `render` mode (`crate::snapshot`) can
 // build the same camera rig; only the input `Controller` stays private here.
@@ -28,7 +28,7 @@ use input::Controller;
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
-pub fn run(mut app: ApplicationState) {
+pub fn run<S: Simulation>(mut app: ApplicationState<S>) {
     let event_loop = EventLoop::new().expect("create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
@@ -37,11 +37,11 @@ pub fn run(mut app: ApplicationState) {
 /// The application: owns the window, the egui logic side (`Context` +
 /// `egui_winit::State`), the camera and its input controller, the simulation,
 /// and the renderer. The window/egui_state/gfx are created on `resumed`.
-pub struct ApplicationState {
+/// Generic over `S: Simulation` so any scenario can be plugged in without
+/// changing the application layer.
+pub struct ApplicationState<S: Simulation> {
     camera: Camera,
-    /// All simulation state: clock, tracked satellite, ephemeris-driven
-    /// celestial sphere.
-    simulation: SimulationState,
+    simulation: S,
     controller: Controller,
     /// The window, created on `resumed`. Shared with the renderer's surface.
     window: Option<Arc<Window>>,
@@ -54,11 +54,11 @@ pub struct ApplicationState {
     shown: bool,
 }
 
-impl ApplicationState {
+impl<S: Simulation> ApplicationState<S> {
     /// Builds the application around an already-constructed simulation. The
     /// window, egui platform state, and renderer are created later, on the
     /// first `resumed`.
-    pub fn new(simulation: SimulationState) -> Self {
+    pub fn new(simulation: S) -> Self {
         Self {
             camera: Camera::default(),
             simulation,
@@ -72,7 +72,7 @@ impl ApplicationState {
     }
 }
 
-impl ApplicationHandler for ApplicationState {
+impl<S: Simulation> ApplicationHandler for ApplicationState<S> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -138,7 +138,7 @@ impl ApplicationHandler for ApplicationState {
     }
 }
 
-impl ApplicationState {
+impl<S: Simulation> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
     /// hover); whatever it doesn't consume drives the globe camera.
     fn handle_input(&mut self, event: WindowEvent) {
@@ -210,7 +210,7 @@ impl ApplicationState {
         // and tessellation live here (the renderer only draws the primitives).
         let raw_input = egui_state.take_egui_input(&window);
         let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
-            ui::control_panel(ui.ctx(), &telemetry, &mut self.simulation.clock)
+            ui::control_panel(ui.ctx(), &telemetry, self.simulation.clock_mut())
         });
         egui_state.handle_platform_output(&window, full_output.platform_output);
 

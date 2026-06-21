@@ -8,8 +8,19 @@ paths:
 
 ## Adding a scenario
 
-- One module per past scenario under `src/scenarios/`, each with a `run()`.
-  Add a module and a `ScenarioName` variant in `src/main.rs`.
+- One module per past scenario under `src/scenarios/`, each defining a
+  `<Name>Simulation` struct that implements the `Simulation` trait, plus a
+  `run()`. Add a module and a `ScenarioName` variant in `src/main.rs`.
+- Each scenario struct holds a `SimulationState` (clock + celestial sphere)
+  by composition, plus its own `Vec<Satellite>`. Name the struct
+  `<Name>Simulation` (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
+- The `Simulation` impl's `frame_state` propagates `self.satellites` using
+  `self.simulation.clock.now()`, calls `marker_occluded` from
+  `crate::simulation` for visibility, and reads sun/star values from
+  `self.simulation.celestial_sphere`. The near-identical propagation loop
+  across scenarios is **intentional** — each may diverge (marker style,
+  visibility logic, non-satellite objects); premature factoring adds
+  indirection before any variant exists.
 - Each scenario owns its inline TLE `const`s. The `ISS_TLE` literal is
   **deliberately duplicated** across scenarios that need it — do not factor
   into a shared const.

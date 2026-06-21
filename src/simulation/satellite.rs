@@ -1,10 +1,9 @@
 //! Satellite tracking: parse a TLE and propagate it with the satkit SGP4
 //! implementation to a given datetime, exposing the result in the renderer's
-//! world frame (km). Each [`Satellite`] is one tracked object; the simulation
-//! holds a `Vec<Satellite>` (see `SimulationState`) and the array is assembled
-//! by a scenario (see `crate::scenarios`) from that scenario's own inline TLE
-//! literals (this module is element-set agnostic - it propagates whatever TLEs
-//! a scenario hands it). Only the TLE is retained; the
+//! world frame (km). Each [`Satellite`] is one tracked object; scenario structs
+//! (see `crate::scenarios`) own a `Vec<Satellite>` assembled from that
+//! scenario's own inline TLE literals (this module is element-set agnostic - it
+//! propagates whatever TLEs a scenario hands it). Only the TLE is retained; the
 //! position state is a pure function of (TLE, datetime), so it is recomputed on
 //! demand via `state_at` rather than stored - nothing in the struct goes stale
 //! as the simulation clock advances.

@@ -16,15 +16,19 @@ paths:
 
 Six top-level modules + `earth`:
 - **`application`** — window, camera, input, egui logic. Owns `Camera` +
-  `Controller`. Nothing outside this module names the `Camera` type.
-- **`simulation`** — clock, satellites, celestial sphere. **No winit/wgpu/
-  egui dependency. No `Camera` type.** Takes resolved `Vec3`/`Mat4`; returns
-  `RenderState`/`TelemetryState`.
+  `Controller`. `ApplicationState<S: Simulation>` is generic over the
+  simulation — nothing outside this module names the `Camera` type.
+- **`simulation`** — the `Simulation` trait, `SimulationState` (clock +
+  celestial sphere; **no satellites**), `RenderState`/`TelemetryState`, and
+  helpers. **No winit/wgpu/egui dependency. No `Camera` type.** Takes
+  resolved `Vec3`/`Mat4`; returns `RenderState`/`TelemetryState`.
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
 - **`ui`** — egui control panel.
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
-- **`scenarios`** — one module per past scenario with a `run()`.
+- **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per
+  past scenario, each with a `run()`. Satellites live here, not in
+  `simulation`.
 - **`snapshot`** — headless single-frame render mode.
 
 ## Where things live
