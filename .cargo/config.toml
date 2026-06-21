@@ -1,6 +1,0 @@
-# intel_tex_2 (build script BC7 encoder) ships prebuilt ISPC objects that
-# reference the GCC C++ exception personality; Rust links without
-# libstdc++ by default on Linux, so pull it in explicitly. Linux-only -
-# MSVC builds on Windows resolve their C++ runtime automatically.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-lstdc++"]

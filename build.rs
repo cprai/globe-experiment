@@ -1,52 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use intel_tex_2::{RgbaSurface, bc7};
-
-/// Remote textures transcoded to BC7 in a KTX2 container in `OUT_DIR` so the
-/// runtime can upload the bytes straight to the GPU with no decode step. Each
-/// is downloaded into memory and encoded in a single pass - the source image
-/// is never written to disk; the `.ktx2` output is the only artifact and the
-/// rebuild cache.
-///
-/// `srgb` marks color textures (encoded as `BC7_SRGB_BLOCK`); the normal
-/// and specular maps are data and stay linear (`BC7_UNORM_BLOCK`).
-const ASSETS: &[Asset] = &[
-    Asset {
-        url: "https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg",
-        srgb: true,
-    },
-    Asset {
-        url: "https://www.solarsystemscope.com/textures/download/8k_earth_nightmap.jpg",
-        srgb: true,
-    },
-    Asset {
-        url: "https://www.solarsystemscope.com/textures/download/8k_earth_normal_map.tif",
-        srgb: false,
-    },
-    Asset {
-        url: "https://www.solarsystemscope.com/textures/download/8k_earth_specular_map.tif",
-        srgb: false,
-    },
-    Asset {
-        url: "https://www.solarsystemscope.com/textures/download/8k_stars_milky_way.jpg",
-        srgb: true,
-    },
-];
-
-struct Asset {
-    url: &'static str,
-    srgb: bool,
-}
-
-/// Generous cap per download; the largest texture is ~10 MB.
-const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
-
 /// Files downloaded once and embedded into the binary verbatim (no transcode),
-/// for satkit's astronomical computations. Each is downloaded straight into
-/// `OUT_DIR` so the runtime can `include_bytes!` it - giving a self-contained
-/// binary with no runtime data files:
+/// then `include_bytes!`-ed by the runtime - giving a self-contained binary
+/// with no runtime data files. Each is downloaded straight into `OUT_DIR` under
+/// its own file name. Two kinds live here:
 ///
+/// satkit astronomical data:
 /// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sun/planet
 ///   positions, loaded via `jplephem::init_from_bytes`.
 /// - CelesTrak's `EOP-All.csv` Earth-orientation parameters (~2-3 MiB): polar
@@ -55,6 +15,13 @@ const DOWNLOAD_LIMIT: u64 = 100 * 1024 * 1024;
 ///   (measured) plus a few months of predictions; since this is a past-only
 ///   simulation tool the frozen-at-build-time snapshot stays valid for every
 ///   in-range date (delete the cached file to refresh).
+///
+/// Earth/star textures (original JPEG/TIFF, embedded as-is):
+/// - The runtime decodes these with the `image` crate and uploads them as
+///   uncompressed RGBA8 (no GPU texture compression, for maximum platform
+///   compatibility), so there is no build-time transcode step. Whether each is
+///   a color map (sRGB) or a data map (linear) is decided at upload time in the
+///   renderer, not here.
 const EMBEDS: &[Embed] = &[
     Embed {
         url: "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440",
@@ -65,6 +32,28 @@ const EMBEDS: &[Embed] = &[
         url: "https://celestrak.org/SpaceData/EOP-All.csv",
         // A few MiB of text; generous cap.
         limit: 64 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg",
+        // Textures are JPEG (~MBs) or TIFF (can be ~100 MiB uncompressed);
+        // generous cap covers both.
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_earth_nightmap.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_earth_normal_map.tif",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_earth_specular_map.tif",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_stars_milky_way.jpg",
+        limit: 256 * 1024 * 1024,
     },
 ];
 
@@ -78,10 +67,6 @@ fn main() {
 
     for embed in EMBEDS {
         embed_verbatim(embed, &out_dir);
-    }
-
-    for asset in ASSETS {
-        transcode(asset, &out_dir);
     }
 
     bake_luts(&out_dir);
@@ -163,67 +148,6 @@ fn bake_luts(out_dir: &Path) {
         let dest = out_dir.join(format!("{name}.ktx2"));
         fs::write(&dest, ktx).unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
     }
-}
-
-/// Downloads `asset.url` into memory, BC7-compresses it, and writes
-/// `<stem>.ktx2` into `out_dir`. The source image is **never written to
-/// disk** - decode, compress, and KTX2-wrap all happen in one pass from the
-/// in-memory download.
-///
-/// The `.ktx2` output is the cache: `cargo::rerun-if-changed` points at it,
-/// and an existing output short-circuits the download+transcode. So a
-/// no-change rebuild skips the script entirely (cargo's rerun gate) and an
-/// already-encoded texture is never re-fetched. Because the source no longer
-/// lingers on disk, refreshing a texture (or changing this script's encoder
-/// settings) means deleting the stale `.ktx2` so the next build re-downloads
-/// and re-encodes it.
-fn transcode(asset: &Asset, out_dir: &Path) {
-    let name = asset
-        .url
-        .rsplit('/')
-        .next()
-        .unwrap_or_else(|| panic!("no file name in asset url {}", asset.url));
-    let stem = Path::new(name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_else(|| panic!("no file stem in asset url {}", asset.url));
-    let dest = out_dir.join(format!("{stem}.ktx2"));
-
-    println!("cargo::rerun-if-changed={}", dest.display());
-
-    if dest.exists() {
-        return;
-    }
-
-    // Format is guessed from the magic bytes, so decoding straight from the
-    // download (JPEG / TIFF) needs no on-disk file name.
-    let image = image::load_from_memory(&download(asset.url, DOWNLOAD_LIMIT))
-        .unwrap_or_else(|error| panic!("decode {name}: {error}"))
-        .to_rgba8();
-    let (width, height) = image.dimensions();
-    assert!(
-        width % 4 == 0 && height % 4 == 0,
-        "{name} is {width}x{height}; BC7 needs multiple-of-4 dimensions"
-    );
-
-    let surface = RgbaSurface {
-        data: image.as_raw(),
-        width,
-        height,
-        stride: width * 4,
-    };
-    // All textures are opaque. The basic profile is slower than the
-    // ultra-fast ones but this runs once per texture and then caches.
-    let blocks = bc7::compress_blocks(&bc7::opaque_basic_settings(), &surface);
-
-    let format = if asset.srgb {
-        ktx2::Format::BC7_SRGB_BLOCK
-    } else {
-        ktx2::Format::BC7_UNORM_BLOCK
-    };
-
-    let ktx = write_ktx2(format, width, height, &blocks);
-    fs::write(&dest, ktx).unwrap_or_else(|error| panic!("failed to write {dest:?}: {error}"));
 }
 
 /// Serializes a single-level 2D texture as a KTX2 file: 80-byte header,

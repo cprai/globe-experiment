@@ -42,14 +42,16 @@ Runtime:
 - `pollster = "0.4"` — blocks on the async wgpu adapter/device requests.
 - `glam = "0.33.1"` — camera/sun math (Mat3/Mat4/Quat/Vec3).
 - `bytemuck = "1.25" (derive)` — Pod casts for vertex/uniform data.
-- `ktx2 = "0.5"` — parses the build-produced KTX2 containers at runtime.
+- `ktx2 = "0.5"` — parses the build-produced **atmosphere LUT** KTX2 containers
+  at runtime (the Earth/star textures are plain JPEG/TIFF, decoded by `image`).
 - `rayon = "1.10"` — parallelizes `GlobeRenderer::new` (the scene builder inside `Gfx::init`).
 - `humantime = "2"` — parses the `render` CLI mode's RFC3339 UTC `--datetime`
   into a `SystemTime` (then `Instant::from_unixtime`). Render-mode only.
-- `image = "0.25"` (default-features off, **`png` only**) — PNG encoding for the
-  `render` single-frame output (`RgbaImage::from_raw` + `.save`). Distinct from
-  the build-dependency `image` below (which decodes source textures with
-  `jpeg`/`tiff`); this runtime entry carries only the `png` encoder.
+- `image = "0.25"` (default-features off, **`png` + `jpeg` + `tiff`**) — decodes
+  the embedded Earth/star source textures at startup (`jpeg`/`tiff` →
+  `to_rgba8()`, uploaded uncompressed) **and** encodes the `render` single-frame
+  output (`png`: `RgbaImage::from_raw` + `.save`). `image` is **no longer** a
+  build-dependency; all image decode is at runtime now.
 - `satkit = "0.18"` (`default-features = false`) — SGP4 propagation of the
   station TLE (`sgp4` + `qteme2itrf` + `ITRFCoord`) **and** the
   JPL DE440 ephemeris for the Sun (`jplephem::geocentric_pos`) + Earth
@@ -66,33 +68,31 @@ Runtime:
   transitively.
 
 Build-dependencies:
-- `ureq = "3.3"` — asset download.
-- `image = "0.25"` (default-features off, `jpeg` + `tiff`) — decodes the
-  downloaded source textures for transcoding.
-- `intel_tex_2 = "0.5"` — ISPC BC7 encoder.
-- `ktx2 = "0.5"` — writes the KTX2 containers (same crate as runtime, so
-  writer and reader cannot drift).
+- `ureq = "3.3"` — asset download (textures, ephemeris, EOP, all verbatim).
+- `ktx2 = "0.5"` — writes the atmosphere-LUT KTX2 containers (same crate as
+  runtime, so writer and reader cannot drift).
 - `half = "2.7" (bytemuck)`, `bytemuck = "1.25"` — the atmosphere LUT bake
   produces f16 texels.
 
-`half` is **build-only** (the LUT bake). `image` is now used on **both** sides:
-build-side decoding (`jpeg`/`tiff`) and a separate runtime entry for `png`
-encoding in `render` mode — the two `[dependencies]`/`[build-dependencies]`
-entries carry different feature sets. Runtime still decodes no textures.
+No `intel_tex_2` and no build-side `image`: the build script no longer decodes
+or BC7-encodes anything - it downloads the original JPEG/TIFF textures verbatim
+and bakes only the LUTs. `half`/`bytemuck`/`ktx2` are build-only (the LUT bake).
+`image` is a **runtime-only** dependency now (decode the textures + encode the
+`render` PNG).
 
 Profile overrides: `[profile.dev.package.X] opt-level = 3` for `image`,
-`zune-jpeg`, `zune-core`, `tiff`, `miniz_oxide`, `weezl` — they speed up
-the build-script transcode decode (5 × 33 MP images). They no longer
-affect runtime.
+`zune-jpeg`, `zune-core`, `tiff`, `miniz_oxide`, `weezl` — they now speed up the
+**runtime** texture decode (5 × 33 MP images at startup) in dev builds, since
+decode moved from build time to runtime.
 
 ### File map
 
 ```
-build.rs                 download 5 textures -> BC7/KTX2 transcode +
-                         bake 3 atmosphere LUTs to f16 KTX2, all into
-                         OUT_DIR; also download the JPL DE440 ephemeris into
-                         data/. Contains inline `mod atmosphere`.
-.cargo/config.toml       Linux-only -lstdc++ for intel_tex_2's ISPC objs
+build.rs                 download 5 textures (JPEG/TIFF) verbatim + the JPL
+                         DE440 ephemeris + EOP-All.csv, and bake 3 atmosphere
+                         LUTs to f16 KTX2, all into OUT_DIR. No transcode/BC7.
+                         Contains inline `mod atmosphere`.
+(no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC C++ linkage
 src/main.rs              tiny: clap CLI parse (`scenario <name>` + `render`
                          subcommands), dispatch to scenarios::*::run or
                          snapshot::run
@@ -139,13 +139,13 @@ src/simulation/satellite.rs  one Satellite per tracked object: TLE parse +
                          Element-set agnostic - TLEs live in the scenario
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/globe.wgsl       ALL shader code (4 passes in one module)
-OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5 BC7
-                         textures + 3 f16 LUTs (*.ktx2) + the verbatim JPL DE440
-                         ephemeris (linux_p1550p2650.440) + EOP-All.csv. The
-                         source textures are downloaded+transcoded in memory and
-                         never hit disk (the .ktx2 is the cache); only the two
-                         verbatim embeds are stored as-is. No assets/ dir. The
-                         satellite TLEs are NOT here - they're inline source
+OUT_DIR/                 gitignored build artifacts, include_bytes!'d: 5
+                         verbatim Earth/star textures (JPEG/TIFF) + 3 f16 LUTs
+                         (*.ktx2, the only built artifacts) + the verbatim JPL
+                         DE440 ephemeris (linux_p1550p2650.440) + EOP-All.csv.
+                         Everything but the LUTs is downloaded as-is (the file
+                         is the cache); only the LUTs are baked. No assets/ dir.
+                         The satellite TLEs are NOT here - they're inline source
                          literals (ISS_TLE/HST_TLE in scenarios/iss_and_hubble.rs)
 CLAUDE.md, MEMORY.md     the docs (this consolidation)
 ```
@@ -304,6 +304,26 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   (CLI token `iss`, ISS only) was then added as a clone of `iss_and_hubble` minus
   HST; its `ISS_TLE` const is **deliberately duplicated** rather than shared
   (owner's call - each scenario owns its TLE data). Owner-requested.
+- **Phase 14** (2026-06-21): **multiplatform - drop GPU texture compression.**
+  Reworked the texture pipeline for Windows/Linux/macOS on x86_64 **and**
+  aarch64 (incl. Apple Silicon, which has no BC support). The phase-2 build-time
+  **BC7/KTX2 transcode is gone**: `build.rs` now downloads the five Earth/star
+  textures (JPEG/TIFF) **verbatim** via `embed_verbatim` (folded into the
+  `EMBEDS` table next to the ephemeris/EOP), and the runtime decodes them with
+  the `image` crate (`upload_image`) and uploads them **uncompressed**
+  (`Rgba8UnormSrgb` for color day/night/stars, `Rgba8Unorm` for data
+  normal/specular). `request_adapter_device` now requests
+  `Features::empty()` (no `TEXTURE_COMPRESSION_BC`), so the app runs on every
+  backend/GPU. Removed `intel_tex_2` + the build-side `image` dep; **deleted
+  `.cargo/config.toml`** (its `-lstdc++` existed only for ISPC). `upload_ktx2`
+  slimmed to the LUT-only `Rgba16Float` path; the three atmosphere LUTs are still
+  baked. Decode runs on the existing rayon pool in `GlobeRenderer::new` (this is
+  the sanctioned runtime decode, **not** the rejected phase-1 `thread::scope`
+  one). Trade-off (owner-accepted): GPU memory ~4x (uncompressed ~670 MB vs
+  ~165 MB BC7); embedded texture bytes actually *shrank* (~21 MB JPEG/TIFF vs
+  ~160 MB BC7). No mipmaps added (kept `mip_level_count 1`). Look verified
+  identical via a headless `render` frame. See `REFACTOR_PLAN2.md`.
+  Owner-requested.
 
 ---
 
@@ -371,7 +391,8 @@ simulation.
 
 1. `Instance::new(InstanceDescriptor::new_without_display_handle())`.
 2. Surface from `window.clone()`; `request_adapter` (`HighPerformance`);
-   `request_device` requesting `Features::TEXTURE_COMPRESSION_BC` and
+   `request_device` requesting `Features::empty()` (no texture-compression
+   feature - textures upload uncompressed, so it runs on any GPU) and
    `experimental_features: ExperimentalFeatures::disabled()`.
 3. `get_default_config(...)`, then **two deliberate overrides** (both are
    `get_default_config` traps — see `CLAUDE.md` "Surface / display"):
@@ -386,8 +407,11 @@ simulation.
      rendering that makes scroll-zoom and inertia judder (frames follow the
      bursty input cadence; the animation loop free-runs with jittery dt).
 4. `GlobeRenderer::new(&device, &queue, config.format)` — the private scene
-   builder, eager, before the first frame. After the BC7/LUT build work this is
-   fast: GPU upload + pipeline creation only, no decode, no bake.
+   builder, eager, before the first frame. It decodes the five embedded
+   JPEG/TIFF textures (`image` crate) and uploads them uncompressed, uploads the
+   3 baked LUTs, compiles the shader module, and builds the pipelines - all on
+   the rayon pool. The LUT *bake* already happened at build time; texture
+   *decode* is here (the rayon-parallelized runtime decode).
 5. egui: only `egui_wgpu::Renderer::new(&device, config.format,
    RendererOptions::default())` is built here. The `egui::Context` +
    `egui_winit::State` (the logic/platform side) are created in
@@ -814,25 +838,35 @@ Cheap device-object creation (vertex/index/uniform buffers, two samplers,
 bind-group layout, bind group) is sequential — it serializes on the
 device's internal lock anyway. The expensive work is parallelized:
 - One `rayon::join` runs `create_shader_module` (naga parse + validate) on
-  one task while the **8 KTX2 textures upload in parallel** via
-  `into_par_iter` + `upload_ktx2` on the rest of the pool. `par_iter`
-  preserves input order, so the collected views line up with
+  one task while the **8 texture inputs are loaded in parallel** via
+  `into_par_iter` on the rest of the pool. Each input carries a `TexKind` tag:
+  `ColorSrgb`/`DataLinear` go through `upload_image` (decode the embedded
+  JPEG/TIFF, upload uncompressed RGBA8), `Lut` through `upload_ktx2` (the f16
+  KTX2). `par_iter` preserves input order, so the collected views line up with
   `texture_inputs` and the bind-group bindings.
 - A nested `rayon::join` compiles the **3 render pipelines** concurrently
   (they share the module + layout, both `Sync`; each does independent
   backend PSO compilation).
 
-This is **intentional** and was added on explicit request (do not confuse
-it with the phase-1 reverted parallel decode; see `CLAUDE.md`).
+This is **intentional** (do not confuse it with the phase-1 reverted
+`thread::scope` decode; the rayon decode *is* the sanctioned one - see
+`CLAUDE.md`).
+
+### `upload_image(device, queue, label, bytes, srgb) -> TextureView`
+
+Decodes an embedded Earth/star source texture (original JPEG/TIFF bytes,
+downloaded verbatim by build.rs) with `image::load_from_memory(...).to_rgba8()`
+and uploads it **uncompressed** via `create_texture_with_data`. `srgb` picks
+`Rgba8UnormSrgb` (color: day/night/stars) vs `Rgba8Unorm` (data:
+normal/specular). Both are universally supported + filterable, so no device
+feature is needed. `mip_level_count 1`.
 
 ### `upload_ktx2(device, queue, label, bytes) -> TextureView`
 
-The single texture-upload path for both BC7 and LUT textures. Parses the
-KTX2 (`ktx2::Reader`), maps the format (`BC7_SRGB_BLOCK` →
-`Bc7RgbaUnormSrgb`, `BC7_UNORM_BLOCK` → `Bc7RgbaUnorm`,
-`R16G16B16A16_SFLOAT` → `Rgba16Float`), takes level 0, and
-`create_texture_with_data` with the raw bytes — a straight memcpy to the
-GPU, no decode. All textures `mip_level_count 1`.
+The **LUT-only** upload path now. Parses the KTX2 (`ktx2::Reader`), expects
+`R16G16B16A16_SFLOAT` → `Rgba16Float` (any other format panics), takes level 0,
+and `create_texture_with_data` with the raw f16 bytes — a straight memcpy, no
+decode. `mip_level_count 1`.
 
 ### Uniforms (must match Rust `Uniforms` and WGSL `Uniforms`)
 
@@ -859,23 +893,23 @@ marker buffer when the satellite count exceeds its capacity.
 | binding | resource | format / notes |
 |---|---|---|
 | 0 | uniforms | visibility VERTEX_FRAGMENT |
-| 1 | day texture | `Bc7RgbaUnormSrgb`, 8192×4096 |
+| 1 | day texture | `Rgba8UnormSrgb`, 8192×4096 (decoded JPEG) |
 | 2 | `earth_sampler` | repeat U (dateline seam), clamp V (poles), linear, linear mipmap |
-| 3 | night texture | `Bc7RgbaUnormSrgb` |
-| 4 | normal map | **`Bc7RgbaUnorm`** (linear — data, not color) |
-| 5 | specular mask | `Bc7RgbaUnorm` (linear), `.r` = water |
+| 3 | night texture | `Rgba8UnormSrgb` (decoded JPEG) |
+| 4 | normal map | **`Rgba8Unorm`** (linear — data, not color; decoded TIFF) |
+| 5 | specular mask | `Rgba8Unorm` (linear), `.r` = water (decoded TIFF) |
 | 6 | transmittance LUT | `Rgba16Float` 256×64 |
 | 7 | `lut_sampler` | clamp both, linear |
 | 8 | inscatter Rayleigh LUT | `Rgba16Float` 256×128 |
 | 9 | inscatter Mie LUT | `Rgba16Float` 256×128 |
-| 10 | stars texture | `Bc7RgbaUnormSrgb` |
+| 10 | stars texture | `Rgba8UnormSrgb` (decoded JPEG) |
 
 `earth_sampler` is shared by all image textures including stars;
 `lut_sampler` by the three LUTs. The LUTs are read with
 `textureSampleLevel(..., 0.0)` (used in non-uniform control flow; no mips
-anyway). **BC7 is lossy** — the normal map is the one to eyeball, since
-`NORMAL_STRENGTH` 4.5 amplifies block artifacts (`opaque_slow_settings` in
-build.rs is the quality dial).
+anyway). Textures are now uploaded **uncompressed** (no BC7), so there are no
+block artifacts; the JPEG source is still lossy, but the normal map (`.tif`,
+lossless) is clean even though `NORMAL_STRENGTH` 4.5 amplifies it.
 
 ### `render(render_pass)`
 
@@ -918,7 +952,8 @@ renderer, saves the PNG, and prints a summary. `src/renderer/headless.rs`
 (`HeadlessRenderer`) is the GPU side. The two share the windowed path's core:
 - **Device creation** is the extracted `renderer::request_adapter_device(&instance,
   compatible_surface)` — `Gfx::init` passes `Some(&surface)`, `HeadlessRenderer`
-  passes `None` (surfaceless). Same BC7 feature + default limits both ways.
+  passes `None` (surfaceless). Same `Features::empty()` + default limits both
+  ways (no texture-compression feature).
 - **Scene** is the same private `GlobeRenderer` (`prepare` + `render`); a child
   module can reach the parent module's private items, so no visibility change was
   needed there.
@@ -977,14 +1012,14 @@ subsolar lat/lon, camera, output path) to stdout for context.
 
 | Texture | Binding | Format | Used by | Role |
 |---|---|---|---|---|
-| day | 1 | BC7 sRGB | `fs_main` | Surface albedo, **whole globe**. sRGB ⇒ hardware linearizes on sample, so lighting math is linear. |
-| night | 3 | BC7 sRGB | `fs_main` | **Luminance mask only** (find cities). Never displayed as color since phase 3. |
-| normal | 4 | BC7 UNORM (linear) | `fs_main` | Tangent-space normal, unpacked `*2−1`. x=east, y=north (OpenGL green-up), z=up. Linear is load-bearing — sRGB decode would warp the vectors. |
-| specular | 5 | BC7 UNORM (linear) | `fs_main` | Water mask, `.r` (1 = ocean). Blends BRDF params and gates the wave noise. |
+| day | 1 | RGBA8 sRGB | `fs_main` | Surface albedo, **whole globe**. sRGB ⇒ hardware linearizes on sample, so lighting math is linear. |
+| night | 3 | RGBA8 sRGB | `fs_main` | **Luminance mask only** (find cities). Never displayed as color since phase 3. |
+| normal | 4 | RGBA8 UNORM (linear) | `fs_main` | Tangent-space normal, unpacked `*2−1`. x=east, y=north (OpenGL green-up), z=up. Linear is load-bearing — sRGB decode would warp the vectors. |
+| specular | 5 | RGBA8 UNORM (linear) | `fs_main` | Water mask, `.r` (1 = ocean). Blends BRDF params and gates the wave noise. |
 | transmittance LUT | 6 | Rgba16Float 256×64 | `fs_main` | T(r, μ): fraction of sunlight surviving to the top of atmosphere. |
 | inscatter Rayleigh | 8 | Rgba16Float 256×128 | `fs_atmosphere` | Σ_R: view-ray Rayleigh integral, phase factored out. |
 | inscatter Mie | 9 | Rgba16Float 256×128 | `fs_atmosphere` | Σ_M: same for Mie. |
-| stars | 10 | BC7 sRGB | `fs_stars` | Equirectangular star backdrop, sampled by direction. |
+| stars | 10 | RGBA8 sRGB | `fs_stars` | Equirectangular star backdrop, sampled by direction. |
 
 ### Equirectangular mapping (both directions)
 
@@ -1057,7 +1092,7 @@ surface += lit * keep * EMISSIVE_COLOR * EMISSIVE_STRENGTH;
 
 Why it works:
 - `lit` is a near-binary mask from one **fixed luminance threshold**
-  (`EMISSIVE_SOFTNESS` gives a soft edge that also absorbs BC7 softness).
+  (`EMISSIVE_SOFTNESS` gives a soft edge that also absorbs JPEG softness).
 - `fade` ramps `0 → 1` over `cos_sun ∈ [EMISSIVE_FADE_START,
   EMISSIVE_FADE_END]`. With the current `[−0.15, 0.15]`, the terminator
   (`cos_sun = 0`) is the **midpoint**, so ~half the city pixels survive
@@ -1278,75 +1313,60 @@ tables. The whole bake is sub-second.
 ## 12. Build pipeline (`build.rs`)
 
 Jobs writing into `OUT_DIR` (which the runtime `include_bytes!`-es). There is
-**no `assets/` dir**. The only files on disk are the outputs: the `.ktx2`
-textures/LUTs and the two verbatim embeds (ephemeris + EOP). Texture *sources*
-are downloaded into memory and transcoded in one pass - they never touch disk.
-`OUT_DIR` persists across incremental builds, so an existing output is the cache
-(see each step). `download(url, limit)` is the shared in-memory fetch helper
-(ureq, body capped at `limit`).
+**no `assets/` dir**. Everything on disk is either downloaded **verbatim** (the
+five Earth/star textures + the ephemeris + EOP) or **baked** (the three f16
+LUTs). The build script no longer decodes or compresses images at all - no
+`intel_tex_2`, no build-side `image`. `OUT_DIR` persists across incremental
+builds, so an existing file is the cache. `download(url, limit)` is the shared
+in-memory fetch helper (ureq, body capped at `limit`).
 
-### 0. Embed satkit data files
+### 0+1. Embed verbatim downloads (satkit data + textures)
 `embed_verbatim(embed, out_dir)`, run for each entry of the `EMBEDS` table,
-`download()`s a file straight into `OUT_DIR` (per-entry size cap) unless already
-present, and emits `cargo::rerun-if-changed=OUT_DIR/<name>` so deleting it
-re-downloads. These embeds **must** land on disk (unlike the textures) because
-`celestial_sphere.rs` `include_bytes!`-es them directly — no copy, no transcode (embedded
-verbatim). The two entries:
+`download()`s a file straight into `OUT_DIR` under its URL file name (per-entry
+size cap) unless already present, and emits
+`cargo::rerun-if-changed=OUT_DIR/<name>` so deleting it re-downloads. Every embed
+**must** land on disk because the runtime `include_bytes!`-es it directly. The
+table now holds **seven** entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) from
   `ssd.jpl.nasa.gov` (256 MiB cap) — loaded via `jplephem::init_from_bytes`.
 - **CelesTrak `EOP-All.csv`** (~2-3 MiB) from `celestrak.org/SpaceData/`
   (64 MiB cap) — Earth-orientation params, loaded via
   `earth_orientation_params::init_from_bytes`.
+- **Five solarsystemscope.com textures** (256 MiB cap each):
+  `8k_earth_daymap.jpg`, `8k_earth_nightmap.jpg`, `8k_earth_normal_map.tif`,
+  `8k_earth_specular_map.tif`, `8k_stars_milky_way.jpg` (all 8192×4096). These
+  are embedded as their original JPEG/TIFF and decoded at **runtime**
+  (`renderer::upload_image`); whether each is sRGB (color) or linear (data) is
+  decided there, not here. ~21 MB total on disk (JPEG/TIFF are already
+  compressed; the TIFFs are LZW/deflate, not raw).
 
-So there are no runtime data files. Adds ~100 MB to the network-dependent first
-build and to the binary (the EOP file is small; the ephemeris dominates).
+So there are no runtime data files. Adds ~120 MB to the network-dependent first
+build and to the binary (the ephemeris dominates).
 
-### 1+2. Download + BC7 → KTX2 transcode (one in-memory pass)
-`ASSETS`: five solarsystemscope.com textures, each tagged `srgb: bool` —
-`8k_earth_daymap.jpg`, `8k_earth_nightmap.jpg` (srgb), `8k_earth_normal_map.tif`,
-`8k_earth_specular_map.tif` (linear/data), `8k_stars_milky_way.jpg` (srgb);
-all 8192×4096. `transcode(asset, out_dir)` derives `<stem>.ktx2` from the URL
-filename and emits `cargo::rerun-if-changed=OUT_DIR/<stem>.ktx2`. **If that
-output already exists it returns immediately** (the cache hit); otherwise it
-`download()`s the source into memory, decodes it with `image::load_from_memory`
-(format guessed from magic bytes — no on-disk file name needed), asserts
-multiple-of-4 dimensions (BC7 block size), BC7-compresses with
-`intel_tex_2::bc7::compress_blocks(opaque_basic_settings(), surface)`, and
-writes `<stem>.ktx2`. `srgb` → `BC7_SRGB_BLOCK` (day/night/stars), data →
-`BC7_UNORM_BLOCK` (normal/specular — must stay linear). The source image is
-**never written to disk**.
-- **Skip-when-output-exists is now load-bearing**, not just an optimization:
-  with no on-disk source cache, re-encoding requires re-downloading, so the
-  guard is what stops every build-script rerun (e.g. editing `build.rs`) from
-  re-fetching all five textures over the network. The flip side of the
-  2026-06-17 "always re-encode" decision: **refreshing a texture or changing
-  the encoder settings means deleting the stale `.ktx2`** so the next build
-  re-downloads + re-encodes it. (The earlier on-disk-source cache made the
-  unconditional re-encode cheap; the in-memory rework traded that for not
-  spilling ~30 MB of sources onto disk.)
-
-### 3. Atmosphere LUT bake
+### 2. Atmosphere LUT bake
 `bake_luts` runs the inline `atmosphere::bake()` and writes the three tables
 as uncompressed `R16G16B16A16_SFLOAT` KTX2 (transmittance 256×64, two
 inscatter 256×128). Runs **unconditionally** (sub-second), so the tables can
 never go stale after a constants tweak. The WGSL twin constants still need
-manual sync.
+manual sync. The LUTs are the **only** baked/KTX2 artifacts now.
 
-### `write_ktx2(format, width, height, blocks)` (shared by 2 and 3)
+### `write_ktx2(format, width, height, blocks)` (LUT bake only)
 Hand-serializes a single-level 2D KTX2 using the `ktx2` crate's own types
 (so writer and runtime `Reader` can't drift): 80-byte `Header`, one 24-byte
 `LevelIndex`, a 4-byte DFD-total-length field + a basic DFD block
 (`dfd::Basic::from_format` — the `Reader` *requires* a DFD; length 0 is
-rejected), then the raw data 16-byte aligned (`next_multiple_of(16)` covers
-BC7's 16 and RGBA16F's 8).
+rejected), then the raw data 16-byte aligned (`next_multiple_of(16)`; RGBA16F
+needs 8, 16 is a safe over-align).
 
 ### Net startup effect
-Runtime does **no image decode and no LUT bake** — both moved to build time.
-Startup is GPU upload + pipeline creation + device init only. Trade-off:
-embedded bytes grew ~21 MB (jpeg/tiff) → ~160 MB (5 × 32 MiB BC7) + ~0.6 MB
-LUTs, so the binary is large and links slowly (runtime file loading is the
-known follow-up). VRAM per color texture dropped 128 MB → 32 MB; uploads 4×
-smaller.
+Runtime now **decodes the five textures** (`image` crate, on the rayon pool) and
+uploads them uncompressed; the LUT bake still happened at build time. So startup
+does texture decode + GPU upload + pipeline creation + device init. Trade-off
+(owner-accepted, multiplatform change): embedded texture bytes *shrank* ~160 MB
+BC7 → ~21 MB JPEG/TIFF, but **GPU memory grew** — each color texture is ~134 MB
+uncompressed (~670 MB total) vs ~32 MB BC7. The win is **no
+texture-compression feature requirement**, so the binary runs on every
+backend/GPU including Apple Silicon / ARM SoCs that lack BC. See `REFACTOR_PLAN2.md`.
 
 ---
 
@@ -1408,15 +1428,17 @@ launch).
 ## 14. Known issues & open follow-ups
 
 Implemented startup optimizations (history): parallelize renderer setup
-(rayon ✓), build-time LUT bake (✓), BC7/KTX2 transcode (✓). **Not done**:
-- **Downsize textures to 4K** in `build.rs` (would quarter decode/upload;
-  current zoom rarely samples past 4K density).
+(rayon ✓), build-time LUT bake (✓). The build-time BC7/KTX2 transcode was
+**removed** in phase 14 (uncompressed textures for multiplatform support); the
+rayon decode now runs at startup. **Not done**:
+- **Downsize textures to 4K** in `build.rs` (would quarter decode/upload **and**
+  cut VRAM 4×; current zoom rarely samples past 4K density). More attractive now
+  that textures upload uncompressed (~134 MB each).
 - **Placeholder-then-sharpen**: embed tiny textures for an instant first
   frame, load full-res async, swap the bind group. Fixes *perceived*
   startup; the largest effort.
 - **Runtime file loading** instead of `include_bytes!` — shrinks the binary
-  and link time, unblocks hot-swapping textures. The KTX2 files are
-  self-describing already.
+  and link time, unblocks hot-swapping textures.
 
 Other standing items:
 - **No mipmaps** → far-zoom shimmer; the city-light dither can twinkle/alias

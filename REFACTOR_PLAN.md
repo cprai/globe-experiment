@@ -1,5 +1,16 @@
 # Multiplatform Refactor Plan
 
+> **SUPERSEDED (2026-06-21) for the texture-compression axis by
+> `REFACTOR_PLAN2.md`, which was implemented.** Rather than the ASTC path +
+> `intel_tex_2` build-host work proposed below (#1/#2/#3), GPU texture
+> compression was **removed entirely**: the original JPEG/TIFF textures are
+> embedded verbatim and decoded to uncompressed RGBA8 at runtime, dropping the
+> `TEXTURE_COMPRESSION_BC` feature, `intel_tex_2`, and `.cargo/config.toml`. That
+> single change covers findings #1-#3 here for all six targets. This document is
+> retained for the platform inventory and the non-texture notes (e.g. #4
+> ephemeris-name, #5 dev container, and the "everything else is portable"
+> survey), which remain valid.
+
 Goal: support **Windows, Linux, and macOS**, each on **x86_64 and aarch64**
 (6 target combinations). This document inventories everything in the current
 code that is platform- or architecture-specific, ranks the risk, and proposes

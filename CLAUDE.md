@@ -58,21 +58,25 @@ cargo run --release -- render --datetime 2024-01-15T12:30:00Z \
 The CLI has two modes: a `scenario` subcommand (interactive window, the default
 focus of this project) and a **`render` subcommand** (headless single-frame mode
 - draws one frame to a PNG and exits, no window/input/UI; see the `snapshot`
-module and the "Render mode" notes throughout). Render mode adds two runtime
-dependencies: **`humantime`** (RFC3339 datetime parsing) and **`image`** with
-only the `png` feature (PNG encoding; `image` was already a *build*-dependency
-for texture decoding - the runtime entry is separate, `png`-only).
+module and the "Render mode" notes throughout). The runtime **`image`**
+dependency (decode features `jpeg`/`tiff` for the embedded Earth/star textures,
+plus `png` for the `render` output) and **`humantime`** (RFC3339 datetime
+parsing) cover both. `image` is **no longer** a build-dependency - the build
+script does not decode anything now.
 
 - **First build needs a network connection** and is slow (~1.5 min extra):
-  `build.rs` downloads five textures and BC7-encodes them **in memory** (the
-  source image never hits disk), writing only the `*.ktx2` into `OUT_DIR`, and
-  downloads the ~98 MB JPL ephemeris + CelesTrak's `EOP-All.csv` (~2-3 MB
-  Earth-orientation params) into `OUT_DIR` verbatim (those must be on disk for
-  `include_bytes!`). Subsequent builds reuse the cached `OUT_DIR` outputs; the
-  `.ktx2` is the texture cache (`rerun-if-changed` points at it), so a present
-  output is never re-downloaded. No `assets/` directory is created. (Delete a
-  `OUT_DIR/*.ktx2` to re-download+re-encode that texture, or `OUT_DIR/EOP-All.csv`
-  to pull a fresher EOP snapshot.)
+  `build.rs` downloads five textures (original JPEG/TIFF) **verbatim** into
+  `OUT_DIR` - no transcode, no BC7 - alongside the ~98 MB JPL ephemeris +
+  CelesTrak's `EOP-All.csv` (~2-3 MB Earth-orientation params), all of which the
+  runtime `include_bytes!`-es. The Earth/star textures are decoded with the
+  `image` crate and uploaded **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`) at
+  startup, so there is **no GPU texture-compression feature requirement** and the
+  app runs on every backend/GPU (including those without BC/ASTC: Apple Silicon,
+  ARM SoCs). `build.rs` still bakes the three atmosphere LUTs to f16 KTX2.
+  Subsequent builds reuse the cached `OUT_DIR` files (`rerun-if-changed` points
+  at each), so a present file is never re-downloaded. No `assets/` directory is
+  created. (Delete a cached texture in `OUT_DIR` to re-download it, or
+  `OUT_DIR/EOP-All.csv` to pull a fresher EOP snapshot.)
 - Smoke test: `timeout <n> cargo run 2>&1 | head` (or redirect to a file —
   pipe buffering can swallow output). wgpu validation errors panic in the
   first frames, so a clean 15-25 s run means pipelines/bindings are valid.
@@ -275,12 +279,15 @@ the owner. Re-introducing them silently is a regression.
 - **Per-brightness glow scaling** — rejected; surviving city pixels glow at
   uniform strength.
 - A **`thread::scope` parallel texture *decode* + LUT bake** at startup —
-  reverted in phase 1. NOTE: this is *not* the same as the current
-  rayon parallelization of `GlobeRenderer::new` (the private scene builder
-  inside `Gfx::init`: module compile + KTX2 uploads + pipeline compiles), which
-  is **intentional** and was added on
-  explicit request after decode/bake moved to build time. Do not confuse
-  the two; do not "re-revert" the rayon code.
+  the `thread::scope` *implementation* was reverted in phase 1. NOTE: runtime
+  texture **decode itself is back** (the multiplatform change embeds the
+  original JPEG/TIFF and decodes them at startup instead of baking BC7 at build
+  time), but it runs on the **rayon** pool inside `GlobeRenderer::new` (the
+  private scene builder inside `Gfx::init`: module compile + texture
+  decode/upload + LUT upload + pipeline compiles), **not** a hand-rolled
+  `thread::scope`. The LUT *bake* stays at build time. So: the sanctioned rayon
+  parallelization is intentional (do not "re-revert" it); the rejected thing is
+  specifically the `thread::scope` design, not runtime decode.
 
 ---
 
@@ -470,12 +477,14 @@ section is for the larger, explicitly-deferred ideas.)
   `EOP-All.csv`) — see the "`init_satkit()` must seed satkit's EOP table" golden
   rule above. The EOP file lives alongside the ephemeris in `OUT_DIR`
   (`OUT_DIR/EOP-All.csv`).
-- All baked/transcoded assets land in `OUT_DIR` and are `include_bytes!`-ed,
-  **including** the two satkit data files that are bundled verbatim: the JPL
-  ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB).
-  `build.rs` downloads both straight into `OUT_DIR` (the `EMBEDS` table);
-  `celestial_sphere.rs` embeds each with `include_bytes!`. No `assets/` dir, no
-  runtime data file.
+- All build assets land in `OUT_DIR` and are `include_bytes!`-ed. Most are
+  bundled **verbatim** via the `EMBEDS` table: the two satkit data files - the
+  JPL ephemeris (`linux_p1550p2650.440`, ~98 MB) and `EOP-All.csv` (~2-3 MB) -
+  **and** the five Earth/star textures (original JPEG/TIFF, ~21 MB total). The
+  only *built* assets are the three atmosphere LUTs (`*.ktx2`, f16), baked by
+  `build.rs`. `celestial_sphere.rs` embeds the ephemeris/EOP and `renderer/mod.rs`
+  the textures/LUTs, each with `include_bytes!`. No `assets/` dir, no runtime
+  data file.
 
 ### Scenarios & valid time range (read before adding a scenario)
 - **Scenarios live in `src/scenarios/`** — one module per scenario, each with a
@@ -523,16 +532,25 @@ section is for the larger, explicitly-deferred ideas.)
 
 ## Hard constraints (environment & platform)
 
-- **Device requires `Features::TEXTURE_COMPRESSION_BC`** (for the BC7
-  textures). Universal on desktop GPUs; works under WSLg lavapipe too.
+- **Device requires no optional features** (`Features::empty()`). The
+  Earth/star textures are uploaded **uncompressed** (`Rgba8Unorm`/
+  `Rgba8UnormSrgb`), so no BC/ASTC texture-compression support is needed - the
+  app runs on every backend and GPU, including those without BC (Apple Silicon,
+  ARM SoCs) and WSLg lavapipe. This is what makes it cross-platform across
+  Windows/Linux/macOS on x86_64 **and** aarch64. (Do **not** re-add a
+  `TEXTURE_COMPRESSION_BC` requirement - it would panic on Apple Silicon.)
 - **No mipmaps** (`mip_level_count 1` on every texture). Known shimmer at
   far zoom; the city-light dither can twinkle/alias when blobs shrink
   sub-pixel at low zoom (no MSAA either). Mitigations are documented but
   not implemented.
-- **Large binary**: ~160 MB of BC7 + ~0.6 MB LUTs + the ~98 MB JPL ephemeris +
-  ~2-3 MB EOP are embedded via `include_bytes!`, so the binary is large
-  (~260 MB) and links slowly. Runtime file loading is a known, unimplemented
-  follow-up.
+- **Large binary, larger VRAM**: the embedded `include_bytes!` payload is
+  ~98 MB JPL ephemeris + ~2-3 MB EOP + ~21 MB of original JPEG/TIFF textures +
+  ~0.6 MB LUTs (the textures now embed *smaller* than the old ~160 MB of BC7,
+  since they are still compressed JPEG/TIFF on disk). The trade is **GPU
+  memory**: the five 8K textures are decoded to uncompressed RGBA8 at startup
+  (~134 MB each, ~670 MB total) vs ~165 MB as BC7 - an accepted cost of the
+  no-compression-feature portability. Runtime file loading is a known,
+  unimplemented follow-up.
 - **JPL ephemeris and EOP are embedded, not runtime files.** `build.rs`
   downloads `linux_p1550p2650.440` (DE440, ~98 MB) from JPL and `EOP-All.csv`
   (Earth-orientation params) from CelesTrak on the first build straight into
@@ -551,10 +569,12 @@ section is for the larger, explicitly-deferred ideas.)
   is **past-only**, the bundled EOP is valid forever for in-range dates. Keep
   `init_satkit`'s EOP seed regardless: satkit would otherwise resolve an EOP
   data dir on first use and create a stray `satkit-data` dir.
-- **`.cargo/config.toml`** adds `-lstdc++` on `x86_64-unknown-linux-gnu`
-  **only** — `intel_tex_2`'s prebuilt ISPC objects need the GCC C++
-  personality. MSVC on Windows is unaffected; do not make it
-  cross-platform.
+- **No `.cargo/config.toml`.** It previously linked `-lstdc++` for
+  `intel_tex_2`'s ISPC objects; with the BC7 encoder gone (textures embed
+  verbatim, decode at runtime) nothing pulls in a C++ runtime, so the file was
+  deleted. There is no longer any host-arch-specific link flag - native builds
+  work on every supported platform/arch (Windows/Linux/macOS x86_64 + aarch64).
+  Do not re-add it.
 - **WSLg flakiness**: app launch intermittently fails with libEGL/MESA
   errors — transient, retry; not a code bug. Not present on native Windows.
 - **Windows mount tooling**: `cargo add` can emit a bogus "found cargo.toml

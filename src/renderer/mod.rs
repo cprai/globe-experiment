@@ -73,9 +73,9 @@ impl Gfx {
             .create_surface(window.clone())
             .expect("create surface");
 
-        // Shared adapter+device creation (BC7 feature, default limits). The
-        // surface is passed so the chosen adapter is guaranteed able to present
-        // to it; the headless renderer passes `None` instead.
+        // Shared adapter+device creation (no optional features, default
+        // limits). The surface is passed so the chosen adapter is guaranteed
+        // able to present to it; the headless renderer passes `None` instead.
         let (adapter, device, queue) = request_adapter_device(&instance, Some(&surface));
 
         let size = window.inner_size();
@@ -98,10 +98,11 @@ impl Gfx {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
 
-        // Shader-module compilation, texture upload, and pipeline
-        // creation happen here, before the first frame; decoding and the
-        // LUT bake already ran at build time (build.rs). This work is
-        // parallelized internally with rayon (see GlobeRenderer::new).
+        // Shader-module compilation, texture decode+upload, and pipeline
+        // creation happen here, before the first frame; the atmosphere LUT bake
+        // already ran at build time (build.rs), but the Earth/star textures are
+        // decoded from their embedded JPEG/TIFF now. This work is parallelized
+        // internally with rayon (see GlobeRenderer::new).
         let globe = GlobeRenderer::new(&device, &queue, config.format);
 
         let egui_renderer = egui_wgpu::Renderer::new(
@@ -221,13 +222,19 @@ impl Gfx {
     }
 }
 
-/// Requests a high-performance adapter and a device with the globe's required
-/// features (BC7 texture compression) and default limits. Shared by the
-/// windowed [`Gfx`] and the headless [`HeadlessRenderer`] so both create the
-/// device identically. Pass `Some(&surface)` for the windowed path (the adapter
-/// must be able to present to that surface) or `None` for offscreen rendering.
-/// `instance` is borrowed because each caller owns it (the windowed path needs
-/// it to build the surface first).
+/// Requests a high-performance adapter and a device with **no** optional
+/// features and default limits. Shared by the windowed [`Gfx`] and the headless
+/// [`HeadlessRenderer`] so both create the device identically. Pass
+/// `Some(&surface)` for the windowed path (the adapter must be able to present
+/// to that surface) or `None` for offscreen rendering. `instance` is borrowed
+/// because each caller owns it (the windowed path needs it to build the surface
+/// first).
+///
+/// No GPU texture-compression feature is requested: the Earth/star textures are
+/// uploaded uncompressed (`Rgba8Unorm`/`Rgba8UnormSrgb`, decoded at runtime by
+/// `upload_image`), so the renderer runs on every backend and GPU - including
+/// those without BC/ASTC (Apple Silicon, ARM SoCs) - with no per-platform
+/// format selection.
 fn request_adapter_device(
     instance: &wgpu::Instance,
     compatible_surface: Option<&wgpu::Surface<'_>>,
@@ -241,9 +248,9 @@ fn request_adapter_device(
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("globe device"),
-        // The earth/star textures are BC7-compressed at build time.
-        // BC support is universal on desktop GPUs.
-        required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+        // No optional features: textures are uploaded uncompressed, so no
+        // BC/ASTC support is needed (maximum platform compatibility).
+        required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::default(),
@@ -348,51 +355,63 @@ impl GlobeRenderer {
 
         let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
 
-        // The build script transcodes every texture to BC7 in a KTX2
-        // container (sRGB for the color maps, linear for the normal and
-        // specular data maps) and bakes the atmosphere LUTs into f16 KTX2,
-        // so uploads are straight memcpys - no image decode or LUT bake
-        // happens at runtime.
+        // The five Earth/star textures are downloaded verbatim by the build
+        // script (original JPEG/TIFF) and embedded; they are decoded with the
+        // `image` crate and uploaded as uncompressed RGBA8 here - no GPU
+        // compression feature required (see request_adapter_device). The three
+        // atmosphere LUTs are still baked into f16 KTX2 by the build script and
+        // uploaded as-is. Each entry's `TexKind` tells the parallel loader which
+        // path to take: an sRGB color image, a linear data image, or an f16 LUT.
         //
-        // The eight uploads are mutually independent, and shader-module
-        // compilation (naga parse + validation) is independent of all of
-        // them, so the module is compiled on one rayon task while the
-        // textures upload in parallel across the rest of the pool. Device,
-        // Queue, and the produced views/module are all Send + Sync.
-        let texture_inputs: [(&str, &[u8]); 8] = [
+        // The eight loads are mutually independent, and shader-module
+        // compilation (naga parse + validation) is independent of all of them,
+        // so the module is compiled on one rayon task while the textures decode
+        // and upload in parallel across the rest of the pool. Device, Queue, and
+        // the produced views/module are all Send + Sync. (Decoding 33 MP images
+        // is CPU-heavy, so this parallelism matters more than it did for the old
+        // memcpy-only BC7 uploads.)
+        let texture_inputs: [(&str, &[u8], TexKind); 8] = [
             (
                 "earth day texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.ktx2")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.jpg")),
+                TexKind::ColorSrgb,
             ),
             (
                 "earth night texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.ktx2")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.jpg")),
+                TexKind::ColorSrgb,
             ),
             (
                 "earth normal texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.ktx2")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.tif")),
+                TexKind::DataLinear,
             ),
             (
                 "earth specular texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.ktx2")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.tif")),
+                TexKind::DataLinear,
             ),
             // The atmosphere LUTs are baked by the build script (see
-            // build.rs::bake_luts) - uploaded like any other texture.
+            // build.rs::bake_luts) - uploaded as f16 KTX2.
             (
                 "transmittance lut",
                 include_bytes!(concat!(env!("OUT_DIR"), "/transmittance.ktx2")),
+                TexKind::Lut,
             ),
             (
                 "inscatter rayleigh lut",
                 include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_rayleigh.ktx2")),
+                TexKind::Lut,
             ),
             (
                 "inscatter mie lut",
                 include_bytes!(concat!(env!("OUT_DIR"), "/inscatter_mie.ktx2")),
+                TexKind::Lut,
             ),
             (
                 "stars texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.ktx2")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.jpg")),
+                TexKind::ColorSrgb,
             ),
         ];
 
@@ -408,7 +427,11 @@ impl GlobeRenderer {
             || {
                 texture_inputs
                     .into_par_iter()
-                    .map(|(label, bytes)| upload_ktx2(device, queue, label, bytes))
+                    .map(|(label, bytes, kind)| match kind {
+                        TexKind::ColorSrgb => upload_image(device, queue, label, bytes, true),
+                        TexKind::DataLinear => upload_image(device, queue, label, bytes, false),
+                        TexKind::Lut => upload_ktx2(device, queue, label, bytes),
+                    })
                     .collect::<Vec<_>>()
             },
         );
@@ -905,9 +928,69 @@ impl GlobeRenderer {
     }
 }
 
-/// Uploads a build-script-produced KTX2 texture: the texel data (BC7
-/// blocks or f16 LUT rows) is copied to the GPU as-is. BC7 requires
-/// `Features::TEXTURE_COMPRESSION_BC` on the device.
+/// Which upload path a [`GlobeRenderer`] texture input takes.
+#[derive(Clone, Copy)]
+enum TexKind {
+    /// A color map decoded from JPEG/TIFF and uploaded `Rgba8UnormSrgb`
+    /// (day/night/stars), so sampling linearizes the sRGB bytes on the GPU.
+    ColorSrgb,
+    /// A data map decoded from JPEG/TIFF and uploaded `Rgba8Unorm`, kept linear
+    /// (normal/specular).
+    DataLinear,
+    /// A build-baked f16 atmosphere LUT in a KTX2 container (`Rgba16Float`).
+    Lut,
+}
+
+/// Decodes an embedded source texture (original JPEG/TIFF bytes, downloaded
+/// verbatim by build.rs) with the `image` crate and uploads it as an
+/// uncompressed RGBA8 texture. `srgb` selects `Rgba8UnormSrgb` for color maps
+/// (day/night/stars) vs `Rgba8Unorm` for data maps (normal/specular). Both
+/// formats are universally supported and filterable, so this needs no device
+/// feature - the key to running on every backend/GPU.
+fn upload_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    bytes: &[u8],
+    srgb: bool,
+) -> wgpu::TextureView {
+    let decoded = image::load_from_memory(bytes)
+        .unwrap_or_else(|error| panic!("decode {label}: {error}"))
+        .to_rgba8();
+    let (width, height) = decoded.dimensions();
+
+    let format = if srgb {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Rgba8Unorm
+    };
+
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        decoded.as_raw(),
+    );
+
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// Uploads a build-script-baked atmosphere LUT from its KTX2 container: the f16
+/// texel rows are copied to the GPU as-is. Only the `Rgba16Float` LUT format is
+/// expected now - the Earth/star textures use [`upload_image`] instead.
 fn upload_ktx2(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -919,8 +1002,6 @@ fn upload_ktx2(
     let header = reader.header();
 
     let format = match header.format {
-        Some(ktx2::Format::BC7_SRGB_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-        Some(ktx2::Format::BC7_UNORM_BLOCK) => wgpu::TextureFormat::Bc7RgbaUnorm,
         Some(ktx2::Format::R16G16B16A16_SFLOAT) => wgpu::TextureFormat::Rgba16Float,
         other => panic!("{label}: unexpected ktx2 format {other:?}"),
     };

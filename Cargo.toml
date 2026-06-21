@@ -11,10 +11,11 @@ egui-winit = "0.34.3"
 glam = "0.33.1"
 # RFC3339 datetime parsing for the `render` single-frame CLI mode.
 humantime = "2"
-# PNG encoding for the `render` single-frame output. Runtime dep (the
-# build-dependency `image` below decodes the source textures); only the `png`
-# encoder is needed here, so default features (other formats) are dropped.
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+# Decodes the embedded Earth/star textures at startup (jpeg/tiff) and encodes
+# the `render` single-frame output (png). The textures are embedded verbatim by
+# build.rs (no build-time transcode) and decoded here into uncompressed RGBA8,
+# so only these three codecs are needed; other default formats are dropped.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff"] }
 ktx2 = "0.5"
 pollster = "0.4"
 rayon = "1.10"
@@ -47,7 +48,8 @@ opt-level = 3
 [build-dependencies]
 bytemuck = "1.25.0"
 half = { version = "2.7.1", features = ["bytemuck"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "tiff"] }
-intel_tex_2 = "0.5"
+# Only the atmosphere LUTs are KTX2-wrapped at build time now; the Earth/star
+# textures are downloaded and embedded verbatim (decoded at runtime), so there
+# is no build-time image decode or BC7 transcode (no `image` / `intel_tex_2`).
 ktx2 = "0.5"
 ureq = "3.3.0"
