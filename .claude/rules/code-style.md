@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/**/*.rs"
+  - "build.rs"
 ---
 
 # Code style & conventions

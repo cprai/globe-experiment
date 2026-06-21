@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/**/*.rs"
+  - "build.rs"
   - "shaders/globe.wgsl"
 ---
 

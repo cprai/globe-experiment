@@ -9,7 +9,7 @@ paths:
 ## Adding a scenario
 
 - One module per past scenario under `src/scenarios/`, each with a `run()`.
-  Add a module and a `ScenarioName` variant in `main.rs`.
+  Add a module and a `ScenarioName` variant in `src/main.rs`.
 - Each scenario owns its inline TLE `const`s. The `ISS_TLE` literal is
   **deliberately duplicated** across scenarios that need it — do not factor
   into a shared const.
