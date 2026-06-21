@@ -9,9 +9,11 @@
     "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
   ],
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "VK_DRIVER_FILES": "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json:/usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
   },
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.claude",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools libgl1-mesa-dri libglx-mesa0 mesa-utils && sudo chown -R vscode:vscode /home/vscode/.claude",
   "customizations": {
     "vscode": {
       "extensions": [
