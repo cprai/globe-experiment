@@ -1777,8 +1777,8 @@ version bump — this crate's API is still moving.
   `OnceCell` (settable **once**; later calls error), validates the dir exists.
 - `datadir() -> Result<PathBuf>`: resolves the `SATKIT_DATA` env var (or the
   `set_datadir` singleton). **Side effect (root cause of the `satkit-data`
-  dir):** if no populated/writeable candidate exists it `create_dir_all`s the
-  first writeable candidate — `${binary_dir}/satkit-data` — and returns it. It's
+  dir):** if no populated/writable candidate exists it `create_dir_all`s the
+  first writable candidate — `${binary_dir}/satkit-data` — and returns it. It's
   called transitively by the EOP lazy load, which is why any frame transform
   used to spawn that empty dir until we pre-seeded EOP (§16.8). `data_found() ->
   bool` checks the **full** bundle (EOP/space-weather), so it returns **false**
