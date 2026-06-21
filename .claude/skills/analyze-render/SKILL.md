@@ -57,9 +57,19 @@ frame. This is the agent's responsibility - the tool will not warn you.
 - **Does NOT:** interaction feel (pan/zoom/inertia) - that still needs a native
   windowed run. Markers and the egui UI are absent in render mode by design.
 
+## Cleanup
+Delete any temp images you created once you are done inspecting them - they are
+throwaway visual-feedback artifacts, not project files, and should not be left
+behind (or accidentally committed). Prefer writing them under `/tmp` (e.g.
+`/tmp/render.png`) so they stay out of the repo; if you wrote one inside the
+repo, `rm` it after the analysis.
+
 ## Gotchas
 - Needs a working GPU/driver, like the windowed app. In a headless box with no
   Vulkan/GL driver, adapter creation panics with `NotFound { active_backends:
   0x0, ... }` - that is a missing-driver environment, not a code bug.
+- Two `XDG_RUNTIME_DIR is invalid or not set in the environment.` lines may
+  print to stderr from the GPU stack init. They are harmless noise and do not
+  affect the render or the saved PNG; ignore them.
 - First build is slow and needs network (downloads textures + the ~98 MB
   ephemeris + EOP); subsequent builds reuse the cache.

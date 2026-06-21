@@ -1432,17 +1432,19 @@ Other standing items:
   leap" from textured globe toward real Google Earth). The `Sun` model and
   the animation-capable redraw loop are already in place for a future
   time-of-day animation (just another "animating" flag).
-- **Render mode not yet GPU-verified.** The headless `render` mode (§9.5) was
-  built and CPU-validated (datetime parse, sim seeding, camera/`RenderState`,
-  clean CLI errors), but the actual offscreen render + PNG output could not be
-  exercised in the dev sandbox — it has **no GPU stack** (no `/dev/dri`, no
-  Vulkan/GL ICD). On a real-GPU host (where the windowed app runs), confirm:
-  the surfaceless `request_adapter(None)` + readback succeed, `Rgba8Unorm` is
-  renderable+`COPY_SRC` (a core format, so expected fine), and the saved PNG
-  matches the windowed look (the non-sRGB color reasoning in §9.5). Debug note:
-  an adapter failure printing `active_backends: 0x0` is a **missing-driver
-  environment**, not a `compatible_surface: None` problem — that would show up
-  as a nonzero `incompatible_surface_backends`, which stays `0x0` here.
+- **Render mode is GPU-verified (2026-06-21).** The headless `render` mode
+  (§9.5) is confirmed working end-to-end on a real-GPU host: the surfaceless
+  `request_adapter(None)` + offscreen `Rgba8Unorm` render + readback succeed and
+  the saved PNG matches the windowed look (the non-sRGB color reasoning in §9.5).
+  Earlier this could not be exercised because the dev sandbox had no GPU stack
+  (no `/dev/dri`, no Vulkan/GL ICD); the host has since been updated with a
+  working GPU stack. The sample command in CLAUDE.md ("Build & run") produces a
+  correct frame (day side, night-side city lights, atmosphere, stars). Harmless
+  noise: two `XDG_RUNTIME_DIR is invalid or not set` lines print to stderr from
+  the GPU stack init and do **not** affect the render. Debug note for any future
+  driver regression: an adapter failure printing `active_backends: 0x0` is a
+  **missing-driver environment**, not a `compatible_surface: None` problem — that
+  would show up as a nonzero `incompatible_surface_backends`, which stays `0x0`.
 - **No satellite markers in render mode** (deliberate — it tracks none). If
   wanted later, the clean path is a `SimulationState::at(instant, satellites)`
   (a paused clock pinned to `instant`) feeding `frame_state`, instead of the
