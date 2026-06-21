@@ -322,8 +322,8 @@ tree is also gone: a 2026-06-19 refactor split it into the top-level
   one). Trade-off (owner-accepted): GPU memory ~4x (uncompressed ~670 MB vs
   ~165 MB BC7); embedded texture bytes actually *shrank* (~21 MB JPEG/TIFF vs
   ~160 MB BC7). No mipmaps added (kept `mip_level_count 1`). Look verified
-  identical via a headless `render` frame. See `REFACTOR_PLAN2.md`.
-  Owner-requested.
+  identical via a headless `render` frame. To bring compression back later, see
+  §14 "Re-adding GPU texture compression." Owner-requested.
 
 ---
 
@@ -1366,7 +1366,8 @@ does texture decode + GPU upload + pipeline creation + device init. Trade-off
 BC7 → ~21 MB JPEG/TIFF, but **GPU memory grew** — each color texture is ~134 MB
 uncompressed (~670 MB total) vs ~32 MB BC7. The win is **no
 texture-compression feature requirement**, so the binary runs on every
-backend/GPU including Apple Silicon / ARM SoCs that lack BC. See `REFACTOR_PLAN2.md`.
+backend/GPU including Apple Silicon / ARM SoCs that lack BC. To bring compression
+back later, see §14 "Re-adding GPU texture compression."
 
 ---
 
@@ -1439,6 +1440,84 @@ rayon decode now runs at startup. **Not done**:
   startup; the largest effort.
 - **Runtime file loading** instead of `include_bytes!` — shrinks the binary
   and link time, unblocks hot-swapping textures.
+
+### Re-adding GPU texture compression (BC7 + ASTC)
+
+Phase 14 removed compression for portability (no GPU feature → runs everywhere,
+incl. BC-less Apple Silicon / ARM SoCs). The cost is **GPU memory**: ~134 MB
+per 8K color texture uncompressed (~670 MB for all five) vs ~32 MB BC7
+(~165 MB). If that VRAM bites, here is how to bring compression back. It is
+**not a simple revert** — a plain BC7 revert would re-break Apple Silicon, which
+exposes only **ASTC/ETC2** through Metal, **not** BC/S3TC, so the device request
+would panic on every M-series Mac. Two independent axes (easy to conflate):
+**runtime** = the target GPU must support the uploaded format; **build** = the
+encoder runs on the *build host* (the KTX2 output is host-independent bytes).
+
+The pre-removal **BC7-only** mechanics, for reference / to restore the desktop
+half:
+
+- **`build.rs` transcode** (was the `transcode(asset, out_dir)` fn + an `ASSETS`
+  table of `{ url, srgb: bool }`): download into memory →
+  `image::load_from_memory(..).to_rgba8()` → assert width/height are
+  multiples of 4 (BC7 block size) → `intel_tex_2::bc7::compress_blocks(
+  &bc7::opaque_basic_settings(), &RgbaSurface { data, width, height, stride:
+  width*4 })` → wrap via `write_ktx2(format, ..)` into `<stem>.ktx2`. Format:
+  `srgb` → `ktx2::Format::BC7_SRGB_BLOCK` (day/night/stars), else
+  `BC7_UNORM_BLOCK` (normal/specular — must stay linear). `write_ktx2` was shared
+  with the LUT bake (it still exists, for the LUTs).
+- **Deps** (`Cargo.toml`): build-deps `intel_tex_2 = "0.5"` (ISPC BC7 encoder)
+  and `image` (`jpeg`+`tiff`, for the build-time decode). `.cargo/config.toml`
+  added `-lstdc++` on `[target.x86_64-unknown-linux-gnu]` for ISPC's GCC C++
+  personality (MSVC/macOS resolve it automatically). Runtime `image` would no
+  longer need `jpeg`/`tiff` if the runtime stops decoding (but keep them if
+  mixing compressed + uncompressed).
+- **Runtime** (`renderer/mod.rs`): device required
+  `Features::TEXTURE_COMPRESSION_BC`; `upload_ktx2` mapped `BC7_SRGB_BLOCK →
+  Bc7RgbaUnormSrgb`, `BC7_UNORM_BLOCK → Bc7RgbaUnorm`, `R16G16B16A16_SFLOAT →
+  Rgba16Float`; `texture_inputs` was a flat `[(&str,&[u8]); 8]` all uploaded by
+  `upload_ktx2` (no `TexKind`, no `upload_image`). The BC7 `.ktx2` blocks were a
+  straight memcpy to the GPU (no runtime decode).
+- **Look:** the sRGB split (`*Srgb` for color, `*Unorm` for data) is identical
+  to today's uncompressed mapping, so colorimetry is unchanged either way;
+  calibration is to the **non-sRGB surface**, not to BC7. BC7 is lossy (block
+  artifacts, worst on the `NORMAL_STRENGTH`-amplified normal map); ASTC is lossy
+  with a *different* error profile, so any re-add must be eyeballed against the
+  current uncompressed reference frame.
+
+**Full multiplatform re-add (BC7 + ASTC).** Because Apple Silicon needs ASTC,
+the desktop BC7 path above is only half of it:
+
+- **Both formats baked.** Produce a BC7 *and* an ASTC KTX2 per texture. Note
+  `intel_tex_2` does **not** do ASTC — you need a separate ASTC encoder.
+- **Format selection at runtime, from adapter caps.** Drop the unconditional
+  `Features::TEXTURE_COMPRESSION_BC`; query the adapter and require BC *or* ASTC
+  (`TEXTURE_COMPRESSION_ASTC`), uploading the matching variant, and **panic with
+  a clear message** (not a bare `.expect`) if neither is present. To avoid
+  doubling the embedded bytes, `cfg`-gate which variant is `include_bytes!`-ed
+  where the target GPU is unambiguous: `aarch64-apple-darwin` → ASTC only;
+  `x86_64-apple-darwin` (Intel Mac) + all Windows/Linux desktop → BC7. **Caveat:
+  aarch64 Linux is heterogeneous** — a discrete NVIDIA/AMD GPU has BC, but ARM
+  SoC GPUs (Mali/Adreno) have only ASTC/ETC, which `cfg` alone can't
+  distinguish; embed **both** and pick at runtime there (accept the size), until
+  that GPU set is pinned down.
+- **Build-host problem (the reason it was removed).** `intel_tex_2` is a
+  build-dep shipping **prebuilt x86_64 ISPC objects**, so it runs on the build
+  host. Cross-compiling x86_64→aarch64 is fine (host stays x86_64), but
+  **native** aarch64 builds (ARM Linux, Apple Silicon) have no ISPC objects and
+  fail — and it needs `.cargo/config.toml`'s `-lstdc++` (and `-lc++` on macOS).
+  Two fixes if native aarch64 + build-from-source must keep working: **(a)
+  download pre-baked BC7+ASTC KTX2** at build time (same `EMBEDS` download
+  pattern; encoder leaves end-user machines entirely, `intel_tex_2` +
+  `.cargo/config.toml` stay gone) — recommended; or **(b)** swap `intel_tex_2`
+  for **portable pure-Rust** BC7 *and* ASTC encoders that build on any host.
+- **Touch list:** `build.rs` (bake/download both formats), `renderer/mod.rs`
+  (`request_adapter_device` cap-based feature pick; `upload_ktx2`/format map
+  gains ASTC; `texture_inputs` becomes `cfg`/runtime-selected),
+  `renderer/headless.rs` (inherits the device path), plus the doc/golden-rule
+  updates this change reversed.
+
+A cheaper partial win that keeps the uncompressed path: **downsize to 4K**
+(¼ VRAM), above.
 
 Other standing items:
 - **No mipmaps** → far-zoom shimmer; the city-light dither can twinkle/alias

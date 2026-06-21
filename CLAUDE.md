@@ -326,6 +326,23 @@ section is for the larger, explicitly-deferred ideas.)
     `CLAUDE.md`, `MEMORY.md`, and the `celestial_sphere.rs` / `init_satkit` doc-comments in
     the same change.
 
+- **Reconsider GPU texture compression (BC7 + ASTC).** Phase 14 removed all GPU
+  texture compression and now uploads the five Earth/star textures **uncompressed**
+  (`Rgba8Unorm`/`Rgba8UnormSrgb`, decoded at runtime), trading ~4x GPU memory
+  (~670 MB vs ~165 MB BC7) for "runs on every backend/GPU with no feature
+  requirement." If that VRAM cost ever bites (low-VRAM/integrated GPUs, or
+  wanting more/bigger textures), compression can come back **without** losing
+  cross-platform support, but it is a real chunk of work, not a revert: desktop
+  GPUs want BC7, **Apple Silicon has no BC** and needs ASTC, so a proper re-add
+  means baking **both** formats and selecting at runtime from adapter caps. The
+  full design (BC7 + ASTC, format selection, `cfg` gating, the
+  `intel_tex_2`-is-x86_64-only build-host problem and its pre-baked-download vs
+  portable-encoder fixes) and the exact pre-removal mechanics (BC7→KTX2 formats,
+  encoder call, `upload_ktx2` mapping, what to restore) are in `MEMORY.md` §14
+  "Re-adding GPU texture compression." A cheaper partial win that keeps the
+  uncompressed path is **downsizing the textures to 4K** (¼ the VRAM) — also in
+  `MEMORY.md` §14. Confirm with the owner before doing either.
+
 ---
 
 ## Conventions
