@@ -265,12 +265,25 @@ fn request_adapter_device(
     instance: &wgpu::Instance,
     compatible_surface: Option<&wgpu::Surface<'_>>,
 ) -> (wgpu::Adapter, wgpu::Device, wgpu::Queue) {
+    // Prefer a high-performance adapter (Vulkan/Metal/DX12). On WSL+X11 or
+    // other environments where Vulkan is absent, fall back to any adapter
+    // across all backends (GL, software rasterizer) that can present to the
+    // surface. Set WGPU_BACKEND=gl to force the OpenGL backend explicitly.
+    // wgpu 29: request_adapter returns Result<Adapter, RequestAdapterError>.
+    // Convert to Option so or_else can provide the enumerate_adapters fallback
+    // without needing to match on the error type.
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface,
         force_fallback_adapter: false,
     }))
-    .expect("request adapter");
+    .ok()
+    .or_else(|| {
+        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+            .into_iter()
+            .find(|a| compatible_surface.is_none_or(|s| a.is_surface_supported(s)))
+    })
+    .expect("no GPU adapter found; set WGPU_BACKEND=gl to force the OpenGL backend");
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("globe device"),
