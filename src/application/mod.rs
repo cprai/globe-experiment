@@ -29,9 +29,28 @@ use input::Controller;
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
 pub fn run<S: Simulation>(mut app: ApplicationState<S>) {
-    let event_loop = EventLoop::new().expect("create event loop");
+    let event_loop = build_event_loop();
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
+}
+
+/// Creates the winit event loop, forcing X11 on WSL.
+///
+/// WSLg's native Wayland compositor drops EGL connections under GPU load,
+/// causing broken-pipe crashes. Checking `WSL_DISTRO_NAME` (set by WSL2 for
+/// every distro) lets us steer winit toward the XCB/X11 backend before the
+/// compositor can break the connection. On all other platforms the default
+/// backend selection is unchanged.
+fn build_event_loop() -> EventLoop<()> {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        return EventLoop::builder()
+            .with_x11()
+            .build()
+            .expect("create event loop");
+    }
+    EventLoop::new().expect("create event loop")
 }
 
 /// The application: owns the window, the egui logic side (`Context` +

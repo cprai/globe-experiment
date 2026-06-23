@@ -30,9 +30,13 @@
   retries rather than deadlocking invisible. See `renderer.md`.
 - **`linux_` ephemeris filename is byte-order, not OS.** JPL's little-endian
   DE440 works on all six targets (all are little-endian). Do not OS-gate it.
-- **WSL + X11: winit defaults to Wayland, not X11.** Even when `DISPLAY` is
-  set, winit picks Wayland if `WAYLAND_DISPLAY` is also present (common in
-  WSL2). Vulkan may be absent or broken under Wayland in WSL; the GL/EGL
-  backend is the reliable fallback. `Gfx::init` passes
-  `OwnedDisplayHandle` to `InstanceDescriptor` so EGL can initialize; without
-  this the app panics with "no GPU adapter found". See `renderer.md`.
+- **WSL: force X11, do not use Wayland.** WSLg's native Wayland compositor
+  drops EGL connections under GPU load, causing broken-pipe crashes and an
+  `ExitFailure(1)` from the event loop. `build_event_loop()` in
+  `application/mod.rs` detects WSL via `WSL_DISTRO_NAME` and calls
+  `EventLoopBuilderExtX11::with_x11()` to force the XCB backend before the
+  compositor can break. `Gfx::init` passes `OwnedDisplayHandle` to
+  `InstanceDescriptor` so EGL can also open an X11 display for the GL adapter.
+  Without both fixes: no-adapter panic on first launch (Wayland + no Vulkan),
+  then broken-pipe crash during rendering (Wayland EGL drops). See
+  `renderer.md`.
