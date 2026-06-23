@@ -92,7 +92,7 @@ impl<S: Simulation> ApplicationHandler for ApplicationState<S> {
                 .expect("create window"),
         );
 
-        let gfx = Gfx::init(window.clone());
+        let gfx = Gfx::init(window.clone(), event_loop.owned_display_handle());
         window.set_cursor(self.controller.cursor_icon());
 
         // egui's platform side needs the window; the GPU side already went

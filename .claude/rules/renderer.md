@@ -50,6 +50,14 @@ confuse it with the phase-1 reverted `thread::scope` approach.
 
 ## `Gfx::init` device setup
 
+`Gfx::init` takes `OwnedDisplayHandle` (from `event_loop.owned_display_handle()`)
+and passes it to `InstanceDescriptor::new_with_display_handle`. This is required
+for the GLES/EGL backend to open its display connection — without it, GL adapter
+enumeration fails and the app panics with "no GPU adapter found" on any system
+where Vulkan is absent (WSL, some CI environments). winit defaults to Wayland on
+Linux even in WSL, and Wayland + EGL requires the display handle at instance
+creation time per the wgpu docs.
+
 Key overrides from `get_default_config` defaults (both are load-bearing):
 1. **Non-sRGB surface format**: `caps.formats.iter().find(|f| !f.is_srgb())`.
 2. **`present_mode = AutoVsync`**: the default picks Mailbox on DX12 (unpaced,

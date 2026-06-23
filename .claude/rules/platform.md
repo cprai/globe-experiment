@@ -30,3 +30,9 @@
   retries rather than deadlocking invisible. See `renderer.md`.
 - **`linux_` ephemeris filename is byte-order, not OS.** JPL's little-endian
   DE440 works on all six targets (all are little-endian). Do not OS-gate it.
+- **WSL + X11: winit defaults to Wayland, not X11.** Even when `DISPLAY` is
+  set, winit picks Wayland if `WAYLAND_DISPLAY` is also present (common in
+  WSL2). Vulkan may be absent or broken under Wayland in WSL; the GL/EGL
+  backend is the reliable fallback. `Gfx::init` passes
+  `OwnedDisplayHandle` to `InstanceDescriptor` so EGL can initialize; without
+  this the app panics with "no GPU adapter found". See `renderer.md`.

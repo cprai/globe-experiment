@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
+use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::simulation::RenderState;
@@ -67,8 +68,15 @@ impl Gfx {
     /// Builds the GPU surface/device, the globe scene resources, and the egui
     /// paint backend. The window stays hidden during this (the caller reveals
     /// it after the first presented frame).
-    pub fn init(window: Arc<Window>) -> Self {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    pub fn init(window: Arc<Window>, display: OwnedDisplayHandle) -> Self {
+        // Pass the platform display handle so the GLES/EGL backend can open
+        // its display connection. Without it, GL adapter enumeration fails on
+        // Wayland (winit's default on Linux, including WSL where Vulkan may
+        // be absent or broken). The display handle is required by the wgpu
+        // docs for GLES when presenting to a surface.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(display),
+        ));
         let surface = instance
             .create_surface(window.clone())
             .expect("create surface");
