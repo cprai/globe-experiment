@@ -23,6 +23,10 @@ rayon = "1.10"
 # `download` feature (runtime data fetch via ureq); SGP4 + the TEME->ITRF
 # rotation we use need no downloaded EOP/data files.
 satkit = { version = "0.18", default-features = false }
+# Deserializes the `render --ui` mock-panel JSON into the egui-free spec types
+# in `ui` (pure-Rust, portable across all six targets).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 wgpu = "29"
 winit = "0.30"
 

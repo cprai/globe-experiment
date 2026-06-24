@@ -7,6 +7,12 @@ const UI_WHITE: [u8; 3] = [255, 255, 255];
 /// an `egui::Align2` in [`control_panel`]); anchoring keeps a panel pinned to
 /// its corner as the window resizes. Only the corners currently in use are
 /// listed - add the bottom corners when a panel needs one.
+///
+/// `Copy` so a [`MockUi`] can hand it out of a borrowing `get_drawables` by
+/// value; `Deserialize` so the `render --ui` mock JSON can name a corner
+/// (`"top_left"` / `"top_right"`).
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PanelAnchor {
     TopLeft,
     TopRight,
@@ -74,6 +80,104 @@ pub enum UIDrawableElement<'a> {
 /// disjoint mutable field of live state.
 pub trait UIDrawable {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>;
+}
+
+/// White default for a mock [`UiElementSpec::Text`] whose JSON omits `color`.
+fn ui_white() -> [u8; 3] {
+    UI_WHITE
+}
+
+/// Owned, callback-free mirror of one [`UIDrawableElement`], deserialized from
+/// the `render --ui` mock JSON. The live variants carry `Box<dyn FnMut>`
+/// callbacks (not serializable); a mock panel is inert, so these carry only the
+/// rendered data. Tagged by variant name in snake_case, e.g.
+/// `{"text": {"position": [0, 0], "text": "Hi"}}`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiElementSpec {
+    /// A static label/readout. `color` defaults to white, `strong` to false.
+    Text {
+        position: [f32; 2],
+        text: String,
+        #[serde(default = "ui_white")]
+        color: [u8; 3],
+        #[serde(default)]
+        strong: bool,
+    },
+    /// An inert button (renders, does nothing).
+    Button { position: [f32; 2], label: String },
+    /// An inert slider. `range` is `[min, max]`.
+    Slider {
+        position: [f32; 2],
+        value: f32,
+        range: [f32; 2],
+    },
+}
+
+/// Owned, callback-free mirror of one [`UIDrawablePanel`], deserialized from
+/// the `render --ui` mock JSON: a corner `anchor`, an inset `offset`, a fixed
+/// box `size`, and panel-relative `elements`.
+#[derive(serde::Deserialize)]
+pub struct UiPanelSpec {
+    pub anchor: PanelAnchor,
+    pub offset: [f32; 2],
+    pub size: [f32; 2],
+    pub elements: Vec<UiElementSpec>,
+}
+
+/// A set of mock panels (from `render --ui`) that renders through the exact
+/// same [`control_panel`] path as the live UI, so a mock layout is faithful to
+/// real output. Every control is inert: its callback is `None`.
+pub struct MockUi {
+    pub panels: Vec<UiPanelSpec>,
+}
+
+impl UIDrawable for MockUi {
+    /// Maps each owned [`UiPanelSpec`] to a borrowed [`UIDrawablePanel`] with
+    /// every callback `None` - the same shape a live `get_drawables` returns,
+    /// minus interactivity.
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+        self.panels
+            .iter()
+            .map(|panel| UIDrawablePanel {
+                anchor: panel.anchor,
+                offset: panel.offset,
+                size: panel.size,
+                elements: panel
+                    .elements
+                    .iter()
+                    .map(|element| match element {
+                        UiElementSpec::Text {
+                            position,
+                            text,
+                            color,
+                            strong,
+                        } => UIDrawableElement::Text {
+                            position: *position,
+                            text: text.clone(),
+                            color: *color,
+                            strong: *strong,
+                        },
+                        UiElementSpec::Button { position, label } => UIDrawableElement::Button {
+                            position: *position,
+                            label: label.clone(),
+                            on_press: None,
+                        },
+                        UiElementSpec::Slider {
+                            position,
+                            value,
+                            range,
+                        } => UIDrawableElement::Slider {
+                            position: *position,
+                            value: *value,
+                            range: range[0]..=range[1],
+                            on_change: None,
+                        },
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
 }
 
 impl UIDrawable for SimulationState {

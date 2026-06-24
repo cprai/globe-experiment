@@ -935,6 +935,8 @@ dependencies = [
  "pollster",
  "rayon",
  "satkit",
+ "serde",
+ "serde_json",
  "ureq",
  "wgpu",
  "winit",

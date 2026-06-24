@@ -17,7 +17,8 @@ build.rs                 downloads 5 textures (JPEG/TIFF verbatim) + JPL
                          3 atmosphere LUTs as f16 KTX2. Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
-src/snapshot.rs          headless single-frame render mode (no EOP range check)
+src/snapshot.rs          headless single-frame render mode (no EOP range check);
+                         optional --ui mock-panel overlay (build_ui_frame)
 src/scenarios/mod.rs     scenario registry
 src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
@@ -26,10 +27,12 @@ src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
 src/ui.rs                UI module: owns UIDrawable trait + UIDrawablePanel +
                          UIDrawableElement + PanelAnchor (egui-free data), impl
-                         UIDrawable for SimulationState, and the egui
-                         control_panel that frames each panel at its anchored
-                         position and renders its elements at panel-relative
-                         positions (interactivity via callbacks)
+                         UIDrawable for SimulationState, the egui control_panel
+                         that frames each panel at its anchored position and
+                         renders its elements at panel-relative positions
+                         (interactivity via callbacks), plus the serde-derived
+                         mock spec (UiPanelSpec/UiElementSpec) + MockUi for the
+                         render --ui overlay
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render

@@ -78,6 +78,11 @@ enum Cli {
         /// Path to write the PNG.
         #[arg(long)]
         output: PathBuf,
+        /// Optional JSON array of mock UI panels to overlay on the frame, for
+        /// debugging UI layouts (corner anchors, element positions). Each panel
+        /// is `{anchor, offset, size, elements}`; see `ui::UiPanelSpec`.
+        #[arg(long)]
+        ui: Option<String>,
     },
 }
 
@@ -112,6 +117,7 @@ fn main() {
             width,
             height,
             output,
+            ui,
         } => snapshot::run(snapshot::RenderParams {
             datetime,
             longitude,
@@ -121,6 +127,7 @@ fn main() {
             width,
             height,
             output,
+            ui,
         }),
     }
 }
