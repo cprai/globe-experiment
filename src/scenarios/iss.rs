@@ -10,7 +10,7 @@ use crate::simulation::{
     self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
     marker_occluded,
 };
-use crate::ui::{SCENARIO_UI_TOP_Y, UIDrawable, UIDrawableElement};
+use crate::ui::{PanelAnchor, UIDrawable, UIDrawableElement, UIDrawablePanel};
 
 // This scenario's tracked-object TLE, inlined as a source literal. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked
@@ -97,23 +97,24 @@ impl Simulation for IssSimulation {
 }
 
 impl UIDrawable for IssSimulation {
-    fn get_drawables(&mut self) -> Vec<UIDrawableElement<'_>> {
-        // Shared-core block first (its callbacks borrow `self.simulation`),
-        // then this scenario's per-satellite readout (read from the disjoint
-        // `self.last_telemetry` field, so it coexists with that borrow). The
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+        // The shared-core panel first (its callbacks borrow `self.simulation`),
+        // then this scenario's own panel built from the disjoint
+        // `self.last_telemetry` field (so it coexists with that borrow). The
         // readout loop is deliberately kept per-scenario (like the propagation
         // loop) - scenarios may diverge in how they present objects.
-        let mut elements = self.simulation.get_drawables();
+        let mut panels = self.simulation.get_drawables();
+        let mut elements = Vec::with_capacity(self.last_telemetry.len() * 3);
         for (index, sat) in self.last_telemetry.iter().enumerate() {
-            let top = SCENARIO_UI_TOP_Y + index as f32 * 64.0;
+            let top = index as f32 * 64.0;
             elements.push(UIDrawableElement::Text {
-                position: [10.0, top],
+                position: [0.0, top],
                 text: sat.name.clone(),
                 color: [255, 120, 100],
                 strong: true,
             });
             elements.push(UIDrawableElement::Text {
-                position: [10.0, top + 20.0],
+                position: [0.0, top + 20.0],
                 text: format!(
                     "Lat {:.2} deg   Lon {:.2} deg",
                     sat.latitude_deg, sat.longitude_deg
@@ -122,13 +123,19 @@ impl UIDrawable for IssSimulation {
                 strong: false,
             });
             elements.push(UIDrawableElement::Text {
-                position: [10.0, top + 38.0],
+                position: [0.0, top + 38.0],
                 text: format!("Altitude: {:.0} km", sat.altitude_km),
                 color: [255, 255, 255],
                 strong: false,
             });
         }
-        elements
+        panels.push(UIDrawablePanel {
+            anchor: PanelAnchor::TopRight,
+            offset: [10.0, 10.0],
+            size: [260.0, self.last_telemetry.len() as f32 * 64.0 + 16.0],
+            elements,
+        });
+        panels
     }
 }
 

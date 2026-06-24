@@ -24,9 +24,11 @@ Six top-level modules + `earth`:
   `Camera` type.** Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI
   readout pulled separately via `ui::UIDrawable`).
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
-- **`ui`** — owns the `UIDrawable` trait + `UIDrawableElement` (egui-free data),
-  `impl UIDrawable for SimulationState`, and the egui `control_panel` that
-  renders the element list (no `Clock`/scenario knowledge in the renderer fn).
+- **`ui`** — owns the `UIDrawable` trait + `UIDrawablePanel` +
+  `UIDrawableElement` + `PanelAnchor` (egui-free data), `impl UIDrawable for
+  SimulationState`, and the egui `control_panel` that frames each panel at its
+  anchored position and renders its elements at panel-relative positions (no
+  `Clock`/scenario knowledge in the renderer fn).
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

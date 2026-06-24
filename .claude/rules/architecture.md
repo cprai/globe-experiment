@@ -24,10 +24,12 @@ src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (dup
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
-src/ui.rs                UI module: owns UIDrawable trait + UIDrawableElement
-                         (egui-free data), impl UIDrawable for SimulationState,
-                         and the egui control_panel that renders a flat element
-                         list at absolute positions (interactivity via callbacks)
+src/ui.rs                UI module: owns UIDrawable trait + UIDrawablePanel +
+                         UIDrawableElement + PanelAnchor (egui-free data), impl
+                         UIDrawable for SimulationState, and the egui
+                         control_panel that frames each panel at its anchored
+                         position and renders its elements at panel-relative
+                         positions (interactivity via callbacks)
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
@@ -79,31 +81,40 @@ frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState
     scenario for the immediately-following get_drawables call.
 ```
 
-## `UIDrawable` trait + `UIDrawableElement`
+## `UIDrawable` trait + `UIDrawablePanel` + `UIDrawableElement`
 
 Defined in `src/ui.rs` (egui-free: plain data + boxed closures - egui only
 enters in `control_panel`). Decouples panel *rendering* from *interactivity*.
 Lives in `ui`, not `simulation`, so the simulation core stays UI-free.
 
 ```
-UIDrawable::get_drawables(&mut self) -> Vec<UIDrawableElement<'_>>
-    A flat list of self-positioned elements for one frame.
+UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
+    The positioned panels for one frame.
+
+UIDrawablePanel { anchor: PanelAnchor, offset: [f32;2], size: [f32;2],
+                  elements: Vec<UIDrawableElement> }
+    A panel owns its on-screen place (corner anchor + inset, resolved against
+    the live window) and a fixed box `size` (fixes the frame and pins the egui
+    Area so it can't auto-shrink). Its elements are positioned RELATIVE to it.
 
 UIDrawableElement::{ Text, Button, Slider }
-    Each carries an absolute screen position [f32;2]. Button/Slider carry an
+    Each carries a panel-relative position [f32;2]. Button/Slider carry an
     Option<Box<dyn FnMut(..)>> callback (None = inert, e.g. a mock panel).
+
+PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
 
-- `impl UIDrawable for SimulationState` emits the shared-core block from live
+- `impl UIDrawable for SimulationState` emits **one** panel (top-left) from live
   state: subsolar + datetime readouts, and the play/pause button + speed slider
   whose callbacks mutate the live clock (each captures a *disjoint* clock field -
   `paused` vs `multiplier` - via direct field assignment, so both coexist with
   no interior mutability; do not call a `Clock` method in those closures, it
   would borrow the whole clock).
-- Each scenario's `impl UIDrawable` prepends `self.simulation.get_drawables()`
-  then appends its per-satellite readout from the stashed `last_telemetry`
-  (positioned below `SCENARIO_UI_TOP_Y`). `ui::control_panel(&mut impl
-  UIDrawable)` renders them, firing callbacks on interaction.
+- Each scenario's `impl UIDrawable` returns `self.simulation.get_drawables()`
+  (the core panel) plus **one** scenario panel (top-right) built from the stashed
+  `last_telemetry` (a disjoint field). The two panels are independently
+  positioned - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
+  frames each panel and renders its elements, firing callbacks on interaction.
 
 `SimulationState` (clock + celestial sphere) is the shared core that every
 scenario struct holds by composition. Satellites belong to the scenario struct,
@@ -116,10 +127,10 @@ need not know the `clock` submodule path.
   The `Simulation` trait takes resolved `Vec3`/`Mat4` values for the camera
   and returns a `RenderState`. This keeps input scheme changes local to
   `application` and each scenario's `frame_state` impl independently testable.
-  The `UIDrawable`/`UIDrawableElement` split extends this: those types live in
-  `ui` (not `simulation`), and the panel renders a flat element list with
-  optional callbacks, so it can drive a mock UI (all callbacks `None`) with no
-  live `Clock`.
+  The `UIDrawable`/`UIDrawablePanel`/`UIDrawableElement` split extends this:
+  those types live in `ui` (not `simulation`), and the panels render with
+  optional callbacks, so the same code can drive a mock UI (all callbacks
+  `None`) with no live `Clock`.
 - **`Camera` type lives in `application` only.** Other modules see only a
   resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but
   consumed by `renderer` — the one allowed edge.)
