@@ -7,8 +7,8 @@ use glam::{Mat3, Mat4, Vec3};
 use crate::application::{self, ApplicationState};
 use crate::simulation::satellite::Satellite;
 use crate::simulation::{
-    self, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
-    TelemetryState, marker_occluded,
+    self, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, ScenarioUIState, Simulation,
+    SimulationState, SimulationUIState, marker_occluded,
 };
 
 // This scenario's tracked-object TLE, inlined as a source literal. Unlike the
@@ -60,7 +60,11 @@ impl Simulation for IssSimulation {
         &mut self.simulation.clock
     }
 
-    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState) {
+    fn frame_state(
+        &mut self,
+        eye: Vec3,
+        view_proj: Mat4,
+    ) -> (RenderState, SimulationUIState, ScenarioUIState) {
         let now = self.simulation.clock.now();
 
         let mut markers = Vec::with_capacity(self.satellites.len());
@@ -86,13 +90,15 @@ impl Simulation for IssSimulation {
             star_rot_inv: self.simulation.celestial_sphere.star_rot_inv,
             markers,
         };
-        let telemetry = TelemetryState {
+        let sim_ui = SimulationUIState {
             subsolar_lat_deg: self.simulation.celestial_sphere.subsolar_lat_deg,
             subsolar_lon_deg: self.simulation.celestial_sphere.subsolar_lon_deg,
             datetime_label: self.simulation.clock.datetime_label(),
+        };
+        let scenario_ui = ScenarioUIState {
             satellites: sat_telemetry,
         };
-        (render, telemetry)
+        (render, sim_ui, scenario_ui)
     }
 }
 

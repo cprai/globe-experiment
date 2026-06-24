@@ -30,10 +30,17 @@ pub trait Simulation {
     /// before computing eye and view_proj for `frame_state`.
     fn celestial_to_world(&self) -> Mat3;
 
-    /// Produce this frame's render and telemetry state from the
+    /// Produce this frame's render state and the two UI snapshots from the
     /// application-resolved camera. Satellite propagation happens here, once
-    /// per frame per satellite.
-    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState);
+    /// per frame per satellite. The `SimulationUIState` carries the shared-core
+    /// readout (subsolar point + datetime); the `ScenarioUIState` carries this
+    /// scenario's per-satellite readout, built from the same propagation that
+    /// fills `RenderState::markers`.
+    fn frame_state(
+        &mut self,
+        eye: Vec3,
+        view_proj: Mat4,
+    ) -> (RenderState, SimulationUIState, ScenarioUIState);
 
     /// Mutable access to the clock for the egui control panel (play/pause +
     /// speed). The UI mutates it directly rather than via a message queue.
@@ -42,8 +49,8 @@ pub trait Simulation {
 
 /// The finished, render-ready positions/matrices for one frame: everything the
 /// renderer needs, as plain `glam` data (no GPU types). Produced together with
-/// [`TelemetryState`] by [`Simulation::frame_state`] from the
-/// application-resolved camera.
+/// [`SimulationUIState`] and [`ScenarioUIState`] by [`Simulation::frame_state`]
+/// from the application-resolved camera.
 #[derive(Clone, Debug)]
 pub struct RenderState {
     /// World-frame view-projection matrix (built by the application from the
@@ -71,25 +78,35 @@ pub struct SatelliteMarker {
     pub visible: bool,
 }
 
-/// Everything the UI readout displays for one frame, as a plain owned snapshot
-/// (no GPU/winit/egui types). Produced together with [`RenderState`] by
-/// [`Simulation::frame_state`] so the on-screen lat/lon/altitude come from the
-/// same satellite propagation the marker uses - they can never disagree, and
-/// the orbit is propagated only once per frame.
+/// The shared-core UI readout for one frame, as a plain owned snapshot (no
+/// GPU/winit/egui types): the ephemeris-derived subsolar point and the
+/// formatted clock datetime. These come from [`SimulationState`] (celestial
+/// sphere + clock) and are identical regardless of which scenario is running,
+/// so they live apart from the scenario's per-satellite readout in
+/// [`ScenarioUIState`].
 #[derive(Clone, Debug)]
-pub struct TelemetryState {
+pub struct SimulationUIState {
     /// Subsolar geodetic latitude, degrees (ephemeris-derived).
     pub subsolar_lat_deg: f32,
     /// Subsolar geodetic longitude, degrees (ephemeris-derived).
     pub subsolar_lon_deg: f32,
     /// Current simulation datetime, formatted for display (UTC).
     pub datetime_label: String,
+}
+
+/// The scenario-specific UI readout for one frame: one entry per tracked
+/// satellite. Produced together with [`RenderState`] by
+/// [`Simulation::frame_state`] so the on-screen lat/lon/altitude come from the
+/// same satellite propagation the marker uses - they can never disagree, and
+/// the orbit is propagated only once per frame.
+#[derive(Clone, Debug)]
+pub struct ScenarioUIState {
     /// One readout per tracked satellite.
     pub satellites: Vec<SatelliteTelemetry>,
 }
 
 /// One tracked satellite's readout for the UI panel. Element of
-/// [`TelemetryState::satellites`].
+/// [`ScenarioUIState::satellites`].
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").

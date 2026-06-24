@@ -19,9 +19,10 @@ Six top-level modules + `earth`:
   `Controller`. `ApplicationState<S: Simulation>` is generic over the
   simulation — nothing outside this module names the `Camera` type.
 - **`simulation`** — the `Simulation` trait, `SimulationState` (clock +
-  celestial sphere; **no satellites**), `RenderState`/`TelemetryState`, and
-  helpers. **No winit/wgpu/egui dependency. No `Camera` type.** Takes
-  resolved `Vec3`/`Mat4`; returns `RenderState`/`TelemetryState`.
+  celestial sphere; **no satellites**), `RenderState`/`SimulationUIState`/
+  `ScenarioUIState`, and helpers. **No winit/wgpu/egui dependency. No `Camera`
+  type.** Takes resolved `Vec3`/`Mat4`; returns
+  `RenderState`/`SimulationUIState`/`ScenarioUIState`.
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
 - **`ui`** — egui control panel.
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all

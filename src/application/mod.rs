@@ -213,23 +213,23 @@ impl<S: Simulation> ApplicationState<S> {
         // Resolve the inertial-frame camera into the Earth-fixed world frame
         // using the celestial sphere's current orientation, then hand the
         // finished view to the simulation to produce this frame's RenderState
-        // *and* the UI's TelemetryState in one shot (a single satellite
-        // propagation feeds both). All the camera math lives here (with the
-        // camera); the simulation only consumes the resolved eye/view and fills
-        // in the astronomical positions.
+        // *and* the UI snapshots in one shot (a single satellite propagation
+        // feeds both). All the camera math lives here (with the camera); the
+        // simulation only consumes the resolved eye/view and fills in the
+        // astronomical positions.
         let (width, height) = gfx.viewport();
         let aspect = width / height.max(1.0);
         let celestial_to_world = self.simulation.celestial_to_world();
         let eye = self.camera.eye(celestial_to_world);
         let view_proj = self.camera.view_proj(aspect, celestial_to_world);
-        let (render_state, telemetry) = self.simulation.frame_state(eye, view_proj);
+        let (render_state, sim_ui, scenario_ui) = self.simulation.frame_state(eye, view_proj);
 
-        // Run the egui UI from that telemetry snapshot (so the readout matches
-        // the rendered marker exactly); it mutates only the Clock. The logic
-        // and tessellation live here (the renderer only draws the primitives).
+        // Run the egui UI from those snapshots (so the readout matches the
+        // rendered marker exactly); it mutates only the Clock. The logic and
+        // tessellation live here (the renderer only draws the primitives).
         let raw_input = egui_state.take_egui_input(&window);
         let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
-            ui::control_panel(ui.ctx(), &telemetry, self.simulation.clock_mut())
+            ui::control_panel(ui.ctx(), &sim_ui, &scenario_ui, self.simulation.clock_mut())
         });
         egui_state.handle_platform_output(&window, full_output.platform_output);
 

@@ -1,19 +1,26 @@
-use crate::simulation::TelemetryState;
 use crate::simulation::clock::Clock;
+use crate::simulation::{ScenarioUIState, SimulationUIState};
 
 /// The control/readout panel, pinned to the top-left corner over the globe:
 /// the simulation clock (play/pause + speed), the ephemeris-driven subsolar
 /// point, and the tracked station's datetime and position.
 ///
-/// The display values come from a [`TelemetryState`] snapshot the simulation
-/// produced for this frame (alongside the `RenderState`), so the readout always
-/// matches the rendered marker. The only thing the panel *mutates* is the
-/// `Clock` (play/pause + speed), passed in by mutable reference.
+/// The display values come from the [`SimulationUIState`] (subsolar point +
+/// datetime) and [`ScenarioUIState`] (per-satellite readout) snapshots the
+/// simulation produced for this frame (alongside the `RenderState`), so the
+/// readout always matches the rendered marker. The only thing the panel
+/// *mutates* is the `Clock` (play/pause + speed), passed in by mutable
+/// reference.
 ///
 /// The Sun's position is no longer user-controlled - it comes from the JPL
 /// ephemeris for the clock's time (see `celestial_sphere`), so the old
 /// latitude/longitude sliders are gone.
-pub fn control_panel(ctx: &egui::Context, telemetry: &TelemetryState, clock: &mut Clock) {
+pub fn control_panel(
+    ctx: &egui::Context,
+    sim_ui: &SimulationUIState,
+    scenario_ui: &ScenarioUIState,
+    clock: &mut Clock,
+) {
     egui::Area::new(egui::Id::new("control_panel"))
         .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
@@ -24,7 +31,7 @@ pub fn control_panel(ctx: &egui::Context, telemetry: &TelemetryState, clock: &mu
             ui.label(
                 egui::RichText::new(format!(
                     "Sun (subsolar): lat {:.2} deg   lon {:.2} deg",
-                    telemetry.subsolar_lat_deg, telemetry.subsolar_lon_deg
+                    sim_ui.subsolar_lat_deg, sim_ui.subsolar_lon_deg
                 ))
                 .color(egui::Color32::WHITE),
             );
@@ -35,12 +42,12 @@ pub fn control_panel(ctx: &egui::Context, telemetry: &TelemetryState, clock: &mu
             // The SGP4 prediction's datetime (driven by the simulation clock),
             // shared by every tracked object.
             ui.label(
-                egui::RichText::new(format!("Time (UTC): {}", telemetry.datetime_label))
+                egui::RichText::new(format!("Time (UTC): {}", sim_ui.datetime_label))
                     .color(egui::Color32::WHITE),
             );
 
             // One block per tracked satellite: name + ground track + altitude.
-            for sat in &telemetry.satellites {
+            for sat in &scenario_ui.satellites {
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(&sat.name)

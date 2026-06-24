@@ -30,7 +30,7 @@ src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
 src/renderer/mesh.rs     WGS84 ellipsoid mesh generator (km, geodetic normals)
 src/simulation/mod.rs    Simulation trait, SimulationState (core: clock + celestial sphere),
-                         RenderState, TelemetryState
+                         RenderState, SimulationUIState, ScenarioUIState
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
@@ -66,9 +66,11 @@ celestial_to_world(&self) -> Mat3
     Earth-fixed world frame. Called by the application before each frame to
     resolve the camera into world space.
 
-frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> (RenderState, TelemetryState)
-    Propagate all satellites once, fill RenderState (renderer) and
-    TelemetryState (UI) from the same propagation.
+frame_state(&mut self, eye: Vec3, view_proj: Mat4)
+    -> (RenderState, SimulationUIState, ScenarioUIState)
+    Propagate all satellites once, fill RenderState (renderer),
+    SimulationUIState (subsolar + datetime) and ScenarioUIState (per-satellite
+    UI) from the same propagation.
 
 clock_mut(&mut self) -> &mut Clock
     Direct clock mutation for the egui panel (play/pause + speed slider).

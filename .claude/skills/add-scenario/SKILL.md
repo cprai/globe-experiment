@@ -22,7 +22,8 @@ time window) and wires it into the clap CLI.
    - implements `Simulation` for it (`advance`, `celestial_to_world`,
      `frame_state`, `clock_mut`). The `frame_state` impl propagates
      `self.satellites` using `self.simulation.clock.now()` and fills in
-     `RenderState`/`TelemetryState` from `self.simulation.celestial_sphere`.
+     `RenderState`/`SimulationUIState`/`ScenarioUIState` from
+     `self.simulation.celestial_sphere`.
      Use `marker_occluded` from `crate::simulation` for visibility testing.
    - has a `run()` function that: calls `simulation::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
