@@ -18,13 +18,19 @@ time window) and wires it into the clap CLI.
      `concat!` of the three TLE lines (name + two element lines). TLE data is
      **deliberately duplicated** per scenario — do not factor it into a
      shared const.
-   - defines a `pub struct <Name>Simulation { simulation: SimulationState, satellites: Vec<Satellite> }`.
+   - defines a `pub struct <Name>Simulation { simulation: SimulationState,
+     satellites: Vec<Satellite>, last_telemetry: Vec<SatelliteTelemetry> }`.
    - implements `Simulation` for it (`advance`, `celestial_to_world`,
-     `frame_state`, `clock_mut`). The `frame_state` impl propagates
-     `self.satellites` using `self.simulation.clock.now()` and fills in
-     `RenderState`/`SimulationUIState`/`ScenarioUIState` from
-     `self.simulation.celestial_sphere`.
-     Use `marker_occluded` from `crate::simulation` for visibility testing.
+     `frame_state`). The `frame_state` impl propagates `self.satellites` using
+     `self.simulation.clock.now()`, fills in `RenderState` from
+     `self.simulation.celestial_sphere`, and stashes the per-satellite readout
+     into `self.last_telemetry`. Use `marker_occluded` from `crate::simulation`
+     for visibility testing.
+   - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
+     `UIDrawableElement`, `SCENARIO_UI_TOP_Y` from `crate::ui`): return
+     `self.simulation.get_drawables()` (the shared-core block) then append
+     per-satellite `UIDrawableElement::Text` readouts from `self.last_telemetry`,
+     positioned below `SCENARIO_UI_TOP_Y`.
    - has a `run()` function that: calls `simulation::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
      use), then calls

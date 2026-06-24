@@ -7,9 +7,10 @@ use glam::{Mat3, Mat4, Vec3};
 use crate::application::{self, ApplicationState};
 use crate::simulation::satellite::Satellite;
 use crate::simulation::{
-    self, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, ScenarioUIState, Simulation,
-    SimulationState, SimulationUIState, marker_occluded,
+    self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
+    marker_occluded,
 };
+use crate::ui::{SCENARIO_UI_TOP_Y, UIDrawable, UIDrawableElement};
 
 // This scenario's tracked-object TLE, inlined as a source literal. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked
@@ -34,6 +35,11 @@ const ISS_TLE: &str = concat!(
 pub struct IssSimulation {
     simulation: SimulationState,
     satellites: Vec<Satellite>,
+    /// Per-satellite readout from this frame's propagation, stashed by
+    /// `frame_state` for the immediately-following `get_drawables` (the panel),
+    /// so the readout matches the rendered markers. Empty until the first
+    /// frame.
+    last_telemetry: Vec<SatelliteTelemetry>,
 }
 
 impl IssSimulation {
@@ -43,6 +49,7 @@ impl IssSimulation {
         Self {
             simulation: SimulationState::new(epoch),
             satellites,
+            last_telemetry: Vec::new(),
         }
     }
 }
@@ -56,15 +63,7 @@ impl Simulation for IssSimulation {
         self.simulation.celestial_to_world()
     }
 
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.simulation.clock
-    }
-
-    fn frame_state(
-        &mut self,
-        eye: Vec3,
-        view_proj: Mat4,
-    ) -> (RenderState, SimulationUIState, ScenarioUIState) {
+    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
         let now = self.simulation.clock.now();
 
         let mut markers = Vec::with_capacity(self.satellites.len());
@@ -83,22 +82,53 @@ impl Simulation for IssSimulation {
             });
         }
 
-        let render = RenderState {
+        // Stash for this frame's `get_drawables` (the panel), so the readout
+        // comes from the same propagation as the markers.
+        self.last_telemetry = sat_telemetry;
+
+        RenderState {
             view_proj,
             camera_pos: eye,
             sun_dir: self.simulation.celestial_sphere.sun_dir,
             star_rot_inv: self.simulation.celestial_sphere.star_rot_inv,
             markers,
-        };
-        let sim_ui = SimulationUIState {
-            subsolar_lat_deg: self.simulation.celestial_sphere.subsolar_lat_deg,
-            subsolar_lon_deg: self.simulation.celestial_sphere.subsolar_lon_deg,
-            datetime_label: self.simulation.clock.datetime_label(),
-        };
-        let scenario_ui = ScenarioUIState {
-            satellites: sat_telemetry,
-        };
-        (render, sim_ui, scenario_ui)
+        }
+    }
+}
+
+impl UIDrawable for IssSimulation {
+    fn get_drawables(&mut self) -> Vec<UIDrawableElement<'_>> {
+        // Shared-core block first (its callbacks borrow `self.simulation`),
+        // then this scenario's per-satellite readout (read from the disjoint
+        // `self.last_telemetry` field, so it coexists with that borrow). The
+        // readout loop is deliberately kept per-scenario (like the propagation
+        // loop) - scenarios may diverge in how they present objects.
+        let mut elements = self.simulation.get_drawables();
+        for (index, sat) in self.last_telemetry.iter().enumerate() {
+            let top = SCENARIO_UI_TOP_Y + index as f32 * 64.0;
+            elements.push(UIDrawableElement::Text {
+                position: [10.0, top],
+                text: sat.name.clone(),
+                color: [255, 120, 100],
+                strong: true,
+            });
+            elements.push(UIDrawableElement::Text {
+                position: [10.0, top + 20.0],
+                text: format!(
+                    "Lat {:.2} deg   Lon {:.2} deg",
+                    sat.latitude_deg, sat.longitude_deg
+                ),
+                color: [255, 255, 255],
+                strong: false,
+            });
+            elements.push(UIDrawableElement::Text {
+                position: [10.0, top + 38.0],
+                text: format!("Altitude: {:.0} km", sat.altitude_km),
+                color: [255, 255, 255],
+                strong: false,
+            });
+        }
+        elements
     }
 }
 

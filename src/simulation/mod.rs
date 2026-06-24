@@ -20,6 +20,11 @@ use celestial_sphere::CelestialSphere;
 /// The interface every scenario implements. `ApplicationState` is generic over
 /// `S: Simulation` and calls only these methods, so adding or swapping a
 /// scenario requires no changes to the application layer.
+///
+/// This trait is UI-agnostic. The egui panel reads/drives a scenario through a
+/// separate `crate::ui::UIDrawable` impl (no `clock_mut`, no UI snapshots from
+/// `frame_state`); keeping that trait in `ui` is what lets `simulation` stay
+/// free of any UI dependency.
 pub trait Simulation {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
@@ -30,27 +35,19 @@ pub trait Simulation {
     /// before computing eye and view_proj for `frame_state`.
     fn celestial_to_world(&self) -> Mat3;
 
-    /// Produce this frame's render state and the two UI snapshots from the
-    /// application-resolved camera. Satellite propagation happens here, once
-    /// per frame per satellite. The `SimulationUIState` carries the shared-core
-    /// readout (subsolar point + datetime); the `ScenarioUIState` carries this
-    /// scenario's per-satellite readout, built from the same propagation that
-    /// fills `RenderState::markers`.
-    fn frame_state(
-        &mut self,
-        eye: Vec3,
-        view_proj: Mat4,
-    ) -> (RenderState, SimulationUIState, ScenarioUIState);
-
-    /// Mutable access to the clock for the egui control panel (play/pause +
-    /// speed). The UI mutates it directly rather than via a message queue.
-    fn clock_mut(&mut self) -> &mut Clock;
+    /// Produce this frame's render state from the application-resolved camera.
+    /// Satellite propagation happens here, once per frame per satellite. The
+    /// per-satellite readout produced by the same propagation is stashed on the
+    /// scenario so the immediately-following
+    /// `crate::ui::UIDrawable::get_drawables` call (the egui panel) reports
+    /// values matching the rendered markers.
+    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState;
 }
 
 /// The finished, render-ready positions/matrices for one frame: everything the
-/// renderer needs, as plain `glam` data (no GPU types). Produced together with
-/// [`SimulationUIState`] and [`ScenarioUIState`] by [`Simulation::frame_state`]
-/// from the application-resolved camera.
+/// renderer needs, as plain `glam` data (no GPU types). Returned by
+/// [`Simulation::frame_state`] from the application-resolved camera; the UI
+/// readout for the same frame is pulled separately via `crate::ui::UIDrawable`.
 #[derive(Clone, Debug)]
 pub struct RenderState {
     /// World-frame view-projection matrix (built by the application from the
@@ -78,35 +75,12 @@ pub struct SatelliteMarker {
     pub visible: bool,
 }
 
-/// The shared-core UI readout for one frame, as a plain owned snapshot (no
-/// GPU/winit/egui types): the ephemeris-derived subsolar point and the
-/// formatted clock datetime. These come from [`SimulationState`] (celestial
-/// sphere + clock) and are identical regardless of which scenario is running,
-/// so they live apart from the scenario's per-satellite readout in
-/// [`ScenarioUIState`].
-#[derive(Clone, Debug)]
-pub struct SimulationUIState {
-    /// Subsolar geodetic latitude, degrees (ephemeris-derived).
-    pub subsolar_lat_deg: f32,
-    /// Subsolar geodetic longitude, degrees (ephemeris-derived).
-    pub subsolar_lon_deg: f32,
-    /// Current simulation datetime, formatted for display (UTC).
-    pub datetime_label: String,
-}
-
-/// The scenario-specific UI readout for one frame: one entry per tracked
-/// satellite. Produced together with [`RenderState`] by
-/// [`Simulation::frame_state`] so the on-screen lat/lon/altitude come from the
-/// same satellite propagation the marker uses - they can never disagree, and
-/// the orbit is propagated only once per frame.
-#[derive(Clone, Debug)]
-pub struct ScenarioUIState {
-    /// One readout per tracked satellite.
-    pub satellites: Vec<SatelliteTelemetry>,
-}
-
-/// One tracked satellite's readout for the UI panel. Element of
-/// [`ScenarioUIState::satellites`].
+/// One tracked satellite's readout for the UI panel. A scenario stashes a
+/// `Vec<SatelliteTelemetry>` each frame in [`Simulation::frame_state`], built
+/// from the same propagation that fills [`RenderState::markers`] (so readout
+/// and marker can never disagree, and the orbit is propagated once per frame),
+/// and turns it into `crate::ui::UIDrawableElement`s in its
+/// `crate::ui::UIDrawable` impl.
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").

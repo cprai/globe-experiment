@@ -18,13 +18,15 @@ Six top-level modules + `earth`:
 - **`application`** — window, camera, input, egui logic. Owns `Camera` +
   `Controller`. `ApplicationState<S: Simulation>` is generic over the
   simulation — nothing outside this module names the `Camera` type.
-- **`simulation`** — the `Simulation` trait, `SimulationState` (clock +
-  celestial sphere; **no satellites**), `RenderState`/`SimulationUIState`/
-  `ScenarioUIState`, and helpers. **No winit/wgpu/egui dependency. No `Camera`
-  type.** Takes resolved `Vec3`/`Mat4`; returns
-  `RenderState`/`SimulationUIState`/`ScenarioUIState`.
+- **`simulation`** — the `Simulation` trait (UI-agnostic), `SimulationState`
+  (clock + celestial sphere; **no satellites**), `RenderState`,
+  `SatelliteTelemetry`, and helpers. **No winit/wgpu/egui/`ui` dependency. No
+  `Camera` type.** Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI
+  readout pulled separately via `ui::UIDrawable`).
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
-- **`ui`** — egui control panel.
+- **`ui`** — owns the `UIDrawable` trait + `UIDrawableElement` (egui-free data),
+  `impl UIDrawable for SimulationState`, and the egui `control_panel` that
+  renders the element list (no `Clock`/scenario knowledge in the renderer fn).
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

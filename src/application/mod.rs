@@ -19,7 +19,7 @@ use winit::window::{Window, WindowId};
 
 use crate::renderer::{FrameOutcome, Gfx, UiFrame};
 use crate::simulation::Simulation;
-use crate::ui;
+use crate::ui::{self, UIDrawable};
 // Re-exported crate-wide so the headless `render` mode (`crate::snapshot`) can
 // build the same camera rig; only the input `Controller` stays private here.
 pub(crate) use camera::Camera;
@@ -28,7 +28,7 @@ use input::Controller;
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
-pub fn run<S: Simulation>(mut app: ApplicationState<S>) {
+pub fn run<S: Simulation + UIDrawable>(mut app: ApplicationState<S>) {
     let event_loop = build_event_loop();
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
@@ -58,7 +58,7 @@ fn build_event_loop() -> EventLoop<()> {
 /// and the renderer. The window/egui_state/gfx are created on `resumed`.
 /// Generic over `S: Simulation` so any scenario can be plugged in without
 /// changing the application layer.
-pub struct ApplicationState<S: Simulation> {
+pub struct ApplicationState<S: Simulation + UIDrawable> {
     camera: Camera,
     simulation: S,
     controller: Controller,
@@ -73,7 +73,7 @@ pub struct ApplicationState<S: Simulation> {
     shown: bool,
 }
 
-impl<S: Simulation> ApplicationState<S> {
+impl<S: Simulation + UIDrawable> ApplicationState<S> {
     /// Builds the application around an already-constructed simulation. The
     /// window, egui platform state, and renderer are created later, on the
     /// first `resumed`.
@@ -91,7 +91,7 @@ impl<S: Simulation> ApplicationState<S> {
     }
 }
 
-impl<S: Simulation> ApplicationHandler for ApplicationState<S> {
+impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -157,7 +157,7 @@ impl<S: Simulation> ApplicationHandler for ApplicationState<S> {
     }
 }
 
-impl<S: Simulation> ApplicationState<S> {
+impl<S: Simulation + UIDrawable> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
     /// hover); whatever it doesn't consume drives the globe camera.
     fn handle_input(&mut self, event: WindowEvent) {
@@ -222,15 +222,20 @@ impl<S: Simulation> ApplicationState<S> {
         let celestial_to_world = self.simulation.celestial_to_world();
         let eye = self.camera.eye(celestial_to_world);
         let view_proj = self.camera.view_proj(aspect, celestial_to_world);
-        let (render_state, sim_ui, scenario_ui) = self.simulation.frame_state(eye, view_proj);
+        let render_state = self.simulation.frame_state(eye, view_proj);
 
-        // Run the egui UI from those snapshots (so the readout matches the
-        // rendered marker exactly); it mutates only the Clock. The logic and
-        // tessellation live here (the renderer only draws the primitives).
+        // Run the egui UI: the panel pulls the scenario's drawable elements
+        // (read from the propagation just done above, so the readout matches the
+        // rendered markers) and renders them, firing the elements' callbacks for
+        // any interaction. The logic and tessellation live here (the renderer
+        // only draws the primitives). `self.simulation` and `self.egui_ctx` are
+        // disjoint fields, so the panel's `&mut self.simulation` borrow coexists
+        // with the `run_ui` receiver borrow.
         let raw_input = egui_state.take_egui_input(&window);
-        let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
-            ui::control_panel(ui.ctx(), &sim_ui, &scenario_ui, self.simulation.clock_mut())
-        });
+        let simulation = &mut self.simulation;
+        let full_output = self
+            .egui_ctx
+            .run_ui(raw_input, |ui| ui::control_panel(ui.ctx(), simulation));
         egui_state.handle_platform_output(&window, full_output.platform_output);
 
         // egui resets the cursor icon every frame; restore the globe's
