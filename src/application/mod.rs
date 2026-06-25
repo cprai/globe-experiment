@@ -78,12 +78,16 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
     /// window, egui platform state, and renderer are created later, on the
     /// first `resumed`.
     pub fn new(simulation: S) -> Self {
+        let egui_ctx = egui::Context::default();
+        // Stamp the Apollo-panel theme onto the context once; the live UI and a
+        // headless mock share the same `install_theme`, so they look identical.
+        ui::install_theme(&egui_ctx);
         Self {
             camera: Camera::default(),
             simulation,
             controller: Controller::default(),
             window: None,
-            egui_ctx: egui::Context::default(),
+            egui_ctx,
             egui_state: None,
             gfx: None,
             shown: false,

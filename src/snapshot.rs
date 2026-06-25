@@ -185,6 +185,8 @@ fn build_ui_frame(panels: Vec<UiPanelSpec>, width: u32, height: u32) -> UiFrame 
     let mut mock = MockUi { panels };
 
     let ctx = egui::Context::default();
+    // Same theme the windowed app installs, so a mock overlay is faithful.
+    ui::install_theme(&ctx);
     let raw_input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,

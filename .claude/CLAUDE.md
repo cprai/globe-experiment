@@ -37,10 +37,14 @@ cargo run --release -- render --output frame.png --scene \
 cargo run --release -- render --output mock.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0},
-      "ui":[{"anchor":"top_left","offset":[10,10],"size":[300,130],
-        "elements":[{"text":{"position":[0,0],"text":"Hi"}},
-                    {"button":{"position":[0,60],"label":"Play"}},
-                    {"slider":{"position":[0,94],"value":0.5,"range":[0,4.6]}}]}]}'
+      "ui":[{"anchor":"top_left","offset":[10,10],"size":[340,148],
+        "elements":[{"header":{"position":[0,0],"title":"Time / Subsolar"}},
+                    {"readout":{"position":[0,26],"label":"UTC","value":"12:30:00"}},
+                    {"dual_readout":{"position":[0,52],"left_label":"Lat",
+                      "left_value":"-21 deg","right_label":"Lon","right_value":"-5 deg"}},
+                    {"toggle":{"position":[0,84],"label":"Run","active":true}},
+                    {"lamp":{"position":[150,86],"label":"Signal","status":"ok"}},
+                    {"slider":{"position":[0,114],"value":0.5,"range":[0,4.6]}}]}]}'
 ```
 
 First build: slow (~1.5 min extra), needs network. `build.rs` downloads 5

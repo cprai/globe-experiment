@@ -119,33 +119,28 @@ impl UIDrawable for IssAndHubbleSimulation {
         let mut panels = self.simulation.get_drawables();
         let mut elements = Vec::with_capacity(self.last_telemetry.len() * 3);
         for (index, sat) in self.last_telemetry.iter().enumerate() {
-            let top = index as f32 * 64.0;
-            elements.push(UIDrawableElement::Text {
+            let top = index as f32 * 74.0;
+            elements.push(UIDrawableElement::Header {
                 position: [0.0, top],
-                text: sat.name.clone(),
-                color: [255, 120, 100],
-                strong: true,
+                title: sat.name.clone(),
             });
-            elements.push(UIDrawableElement::Text {
-                position: [0.0, top + 20.0],
-                text: format!(
-                    "Lat {:.2} deg   Lon {:.2} deg",
-                    sat.latitude_deg, sat.longitude_deg
-                ),
-                color: [255, 255, 255],
-                strong: false,
+            elements.push(UIDrawableElement::DualReadout {
+                position: [0.0, top + 24.0],
+                left_label: "Lat".to_string(),
+                left_value: format!("{:.2} deg", sat.latitude_deg),
+                right_label: "Lon".to_string(),
+                right_value: format!("{:.2} deg", sat.longitude_deg),
             });
-            elements.push(UIDrawableElement::Text {
-                position: [0.0, top + 38.0],
-                text: format!("Altitude: {:.0} km", sat.altitude_km),
-                color: [255, 255, 255],
-                strong: false,
+            elements.push(UIDrawableElement::Readout {
+                position: [0.0, top + 48.0],
+                label: "Alt".to_string(),
+                value: format!("{:.0} km", sat.altitude_km),
             });
         }
         panels.push(UIDrawablePanel {
             anchor: PanelAnchor::TopRight,
             offset: [10.0, 10.0],
-            size: [260.0, self.last_telemetry.len() as f32 * 64.0 + 16.0],
+            size: [300.0, self.last_telemetry.len() as f32 * 74.0 + 16.0],
             elements,
         });
         panels

@@ -35,7 +35,11 @@ src/ui.rs                UI module: owns UIDrawable trait + UIDrawablePanel +
                          renders its elements at panel-relative positions
                          (interactivity via callbacks), plus the serde-derived
                          mock spec (UiPanelSpec/UiElementSpec) + MockUi for the
-                         render --scene `ui` overlay
+                         render --scene `ui` overlay. Also owns install_theme:
+                         the Apollo-panel egui look (gunmetal frame, monospace
+                         UPPERCASE cream readouts, green-active keys, corner
+                         rivets/bevel), stamped onto the egui Context by both the
+                         windowed app and the headless render path
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
@@ -103,15 +107,22 @@ UIDrawablePanel { anchor: PanelAnchor, offset: [f32;2], size: [f32;2],
     the live window) and a fixed box `size` (fixes the frame and pins the egui
     Area so it can't auto-shrink). Its elements are positioned RELATIVE to it.
 
-UIDrawableElement::{ Text, Button, Slider }
-    Each carries a panel-relative position [f32;2]. Button/Slider carry an
-    Option<Box<dyn FnMut(..)>> callback (None = inert, e.g. a mock panel).
+UIDrawableElement::{ Header, Readout, DualReadout, Button, Toggle, Lamp,
+                     Slider }
+    Pre-styled INSTRUMENTS, not logical primitives: a producer picks which
+    instrument + its content, never its color/font/emphasis (style lives in
+    render_element). Each carries a panel-relative position [f32;2].
+    Header=amber title+rule. Readout/DualReadout=dim label(s) + cream value(s)
+    in recessed windows (the label/value split). Button=momentary key,
+    Toggle=latching key (lit green while `active`), Lamp=status dot keyed to
+    LampStatus{Ok/Caution/Fault/Off}, Slider=value track. Button/Toggle/Slider
+    carry an Option<Box<dyn FnMut(..)>> callback (None = inert, e.g. a mock).
 
 PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
 
 - `impl UIDrawable for SimulationState` emits **one** panel (top-left) from live
-  state: subsolar + datetime readouts, and the play/pause button + speed slider
+  state: subsolar + datetime readouts, and the Run toggle + speed slider
   whose callbacks mutate the live clock (each captures a *disjoint* clock field -
   `paused` vs `multiplier` - via direct field assignment, so both coexist with
   no interior mutability; do not call a `Clock` method in those closures, it
@@ -121,6 +132,12 @@ PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
   `last_telemetry` (a disjoint field). The two panels are independently
   positioned - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
   frames each panel and renders its elements, firing callbacks on interaction.
+- **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
+  `Context` and must be called once per context (both `ApplicationState::new`
+  and `snapshot::build_ui_frame` do). **All color lives in `ui` (the palette
+  consts + `render_element`)** - producers pick instruments, never colors.
+  `render_element` uppercases all text, frames each panel with the gunmetal
+  `panel_frame`, and paints the bevel highlight + corner rivets per panel.
 
 `SimulationState` (clock + celestial sphere) is the shared core that every
 scenario struct holds by composition. Satellites belong to the scenario struct,
