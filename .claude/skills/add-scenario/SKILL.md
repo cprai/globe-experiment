@@ -27,11 +27,13 @@ time window) and wires it into the clap CLI.
      into `self.last_telemetry`. Use `marker_occluded` from `crate::simulation`
      for visibility testing.
    - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
-     `UIDrawablePanel`, `UIDrawableElement`, `PanelAnchor` from `crate::ui`):
-     return `self.simulation.get_drawables()` (the shared-core panel) then push
-     **one** `UIDrawablePanel` (e.g. `anchor: PanelAnchor::TopRight`) whose
-     `elements` are per-satellite `UIDrawableElement::Text` readouts from
-     `self.last_telemetry`, positioned relative to the panel (top = `[0,0]`).
+     `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
+     you use, e.g. `Header`/`DualReadout`/`Readout`, from `crate::ui`): return
+     `self.simulation.get_drawables()` (the shared-core panel) then push **one**
+     `UIDrawablePanel` (e.g. `anchor: PanelAnchor::TopRight`) whose `elements`
+     are a `Vec<Box<dyn Instrument>>` of per-satellite readouts from
+     `self.last_telemetry` (e.g. `Box::new(Header { .. })`), positioned relative
+     to the panel (top = `[0,0]`).
    - has a `run()` function that: calls `simulation::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
      use), then calls

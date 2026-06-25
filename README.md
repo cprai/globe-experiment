@@ -42,7 +42,7 @@ cargo run --release -- render --output frame.png --width 1920 --height 1080 \
 The `--scene` JSON has a `simulation` section (`datetime`, RFC3339 UTC, fixes the
 celestial positions), a `camera` section (`longitude`/`latitude`/`distance` in
 km/`tilt`), and an optional `ui` section that overlays mock UI panels for
-debugging UI layouts headlessly (see `src/ui.rs`'s `UiPanelSpec`). Unknown JSON
+debugging UI layouts headlessly (see `src/ui/mock.rs`'s `UiPanelSpec`). Unknown JSON
 keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
 written as a PNG and a short summary (resolved datetime, subsolar point, camera)
 is printed. Unlike the interactive scenarios, the datetime here is **not**

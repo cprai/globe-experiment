@@ -24,11 +24,13 @@ Six top-level modules + `earth`:
   `Camera` type.** Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI
   readout pulled separately via `ui::UIDrawable`).
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
-- **`ui`** — owns the `UIDrawable` trait + `UIDrawablePanel` +
-  `UIDrawableElement` + `PanelAnchor` (egui-free data), `impl UIDrawable for
+- **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
+  `UIDrawablePanel` + `PanelAnchor` (egui-free data), `impl UIDrawable for
   SimulationState`, and the egui `control_panel` that frames each panel at its
-  anchored position and renders its elements at panel-relative positions (no
-  `Clock`/scenario knowledge in the renderer fn).
+  anchored position and renders its boxed `Instrument`s at panel-relative
+  positions (no `Clock`/scenario knowledge). `ui/instruments/*.rs` is one
+  `Instrument`-impl struct per file; `ui/theme.rs` the Apollo look + palette;
+  `ui/mock.rs` the serde mock spec.
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

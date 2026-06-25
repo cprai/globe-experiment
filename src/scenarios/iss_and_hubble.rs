@@ -11,7 +11,9 @@ use crate::simulation::{
     self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
     marker_occluded,
 };
-use crate::ui::{PanelAnchor, UIDrawable, UIDrawableElement, UIDrawablePanel};
+use crate::ui::{
+    DualReadout, Header, Instrument, PanelAnchor, Readout, UIDrawable, UIDrawablePanel,
+};
 
 // This scenario's tracked-object TLEs, inlined as source literals. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked
@@ -117,25 +119,26 @@ impl UIDrawable for IssAndHubbleSimulation {
         // readout loop is deliberately kept per-scenario (like the propagation
         // loop) - scenarios may diverge in how they present objects.
         let mut panels = self.simulation.get_drawables();
-        let mut elements = Vec::with_capacity(self.last_telemetry.len() * 3);
+        let mut elements: Vec<Box<dyn Instrument>> =
+            Vec::with_capacity(self.last_telemetry.len() * 3);
         for (index, sat) in self.last_telemetry.iter().enumerate() {
             let top = index as f32 * 74.0;
-            elements.push(UIDrawableElement::Header {
+            elements.push(Box::new(Header {
                 position: [0.0, top],
                 title: sat.name.clone(),
-            });
-            elements.push(UIDrawableElement::DualReadout {
+            }));
+            elements.push(Box::new(DualReadout {
                 position: [0.0, top + 24.0],
                 left_label: "Lat".to_string(),
                 left_value: format!("{:.2} deg", sat.latitude_deg),
                 right_label: "Lon".to_string(),
                 right_value: format!("{:.2} deg", sat.longitude_deg),
-            });
-            elements.push(UIDrawableElement::Readout {
+            }));
+            elements.push(Box::new(Readout {
                 position: [0.0, top + 48.0],
                 label: "Alt".to_string(),
                 value: format!("{:.0} km", sat.altitude_km),
-            });
+            }));
         }
         panels.push(UIDrawablePanel {
             anchor: PanelAnchor::TopRight,

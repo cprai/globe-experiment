@@ -79,8 +79,8 @@ pub struct SatelliteMarker {
 /// `Vec<SatelliteTelemetry>` each frame in [`Simulation::frame_state`], built
 /// from the same propagation that fills [`RenderState::markers`] (so readout
 /// and marker can never disagree, and the orbit is propagated once per frame),
-/// and turns it into `crate::ui::UIDrawableElement`s in its
-/// `crate::ui::UIDrawable` impl.
+/// and turns it into `crate::ui` instruments in its `crate::ui::UIDrawable`
+/// impl.
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").

@@ -29,7 +29,7 @@ The whole scene is one `--scene` JSON: a `simulation` section (`datetime`) and a
 rejected). `camera.distance` is in kilometers (Earth mean radius is ~6371 km;
 ~12742 km gives a full-globe view). The output target (`--output`/`--width`/
 `--height`) stays as CLI flags. An optional `ui` section overlays mock UI panels
-(see the `build-and-run`/`src/ui.rs` docs) - not usually needed for look
+(see the `build-and-run`/`src/ui/` docs) - not usually needed for look
 analysis. Then open `/tmp/render.png` with the Read tool and describe / compare
 what you see.
 

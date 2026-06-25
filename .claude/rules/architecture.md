@@ -28,18 +28,33 @@ src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (dup
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
-src/ui.rs                UI module: owns UIDrawable trait + UIDrawablePanel +
-                         UIDrawableElement + PanelAnchor (egui-free data), impl
-                         UIDrawable for SimulationState, the egui control_panel
-                         that frames each panel at its anchored position and
-                         renders its elements at panel-relative positions
-                         (interactivity via callbacks), plus the serde-derived
-                         mock spec (UiPanelSpec/UiElementSpec) + MockUi for the
-                         render --scene `ui` overlay. Also owns install_theme:
-                         the Apollo-panel egui look (gunmetal frame, monospace
-                         UPPERCASE cream readouts, green-active keys, corner
-                         rivets/bevel), stamped onto the egui Context by both the
+src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
+                         + PanelAnchor (egui-free data), impl UIDrawable for
+                         SimulationState, and the egui control_panel that frames
+                         each panel at its anchored position and renders its
+                         boxed Instrument trait objects at panel-relative
+                         positions (interactivity via callbacks). Re-exports the
+                         instrument structs + theme install_theme + mock types.
+src/ui/instruments/mod.rs  the Instrument trait (position + render); one
+                         self-contained instrument STRUCT per sibling file, each
+                         impl Instrument with its own baked-in look (a producer
+                         picks which instrument + content, never style)
+src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
+                         one instrument each (header.rs amber title+rule;
+                         readout.rs label/value window + shared readout_pair;
+                         dual_readout.rs two readouts; button.rs momentary key;
+                         toggle.rs latching green key + toggle_key; lamp.rs
+                         status dot + LampStatus; slider.rs value track). Control
+                         instruments carry an Option<Box<dyn FnMut>> (None=inert)
+src/ui/theme.rs          install_theme: the Apollo-panel egui look (gunmetal
+                         frame, monospace UPPERCASE cream readouts, green-active
+                         keys, corner rivets/bevel), the palette consts shared by
+                         the instruments, and panel chrome (panel_frame/bevel/
+                         rivets). Stamped onto the egui Context by both the
                          windowed app and the headless render path
+src/ui/mock.rs           the serde-derived mock spec (UiPanelSpec/UiElementSpec)
+                         + MockUi for the render --scene `ui` overlay; maps each
+                         owned spec to an inert (None-callback) boxed Instrument
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
@@ -91,32 +106,38 @@ frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState
     scenario for the immediately-following get_drawables call.
 ```
 
-## `UIDrawable` trait + `UIDrawablePanel` + `UIDrawableElement`
+## `UIDrawable` trait + `UIDrawablePanel` + `Instrument`
 
-Defined in `src/ui.rs` (egui-free: plain data + boxed closures - egui only
-enters in `control_panel`). Decouples panel *rendering* from *interactivity*.
-Lives in `ui`, not `simulation`, so the simulation core stays UI-free.
+The trait + panel live in `src/ui/mod.rs`; each instrument is a struct in its
+own `src/ui/instruments/*.rs` (egui-free *data* + boxed closures - egui only
+enters in each instrument's `render` and in `control_panel`). Decouples panel
+*rendering* from *interactivity*. Lives in `ui`, not `simulation`, so the
+simulation core stays UI-free.
 
 ```
 UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
     The positioned panels for one frame.
 
 UIDrawablePanel { anchor: PanelAnchor, offset: [f32;2], size: [f32;2],
-                  elements: Vec<UIDrawableElement> }
+                  elements: Vec<Box<dyn Instrument + 'a>> }
     A panel owns its on-screen place (corner anchor + inset, resolved against
     the live window) and a fixed box `size` (fixes the frame and pins the egui
     Area so it can't auto-shrink). Its elements are positioned RELATIVE to it.
 
-UIDrawableElement::{ Header, Readout, DualReadout, Button, Toggle, Lamp,
-                     Slider }
-    Pre-styled INSTRUMENTS, not logical primitives: a producer picks which
-    instrument + its content, never its color/font/emphasis (style lives in
-    render_element). Each carries a panel-relative position [f32;2].
+trait Instrument { position(&self) -> [f32;2];
+                   render(&mut self, ui, child_rect, panel_size) }
+    One struct per file impls it: Header, Readout, DualReadout, Button, Toggle,
+    Lamp, Slider. Pre-styled INSTRUMENTS, not logical primitives: a producer
+    picks which instrument + its content, never its color/font/emphasis (style
+    lives in each `render`, pulling palette consts from `theme`). control_panel
+    scopes a child Ui per instrument (position + wrap setup) then calls render;
+    only Header uses child_rect/panel_size (its full-width rule).
     Header=amber title+rule. Readout/DualReadout=dim label(s) + cream value(s)
-    in recessed windows (the label/value split). Button=momentary key,
-    Toggle=latching key (lit green while `active`), Lamp=status dot keyed to
-    LampStatus{Ok/Caution/Fault/Off}, Slider=value track. Button/Toggle/Slider
-    carry an Option<Box<dyn FnMut(..)>> callback (None = inert, e.g. a mock).
+    in recessed windows (the label/value split; readout_pair shared by both).
+    Button=momentary key, Toggle=latching key (lit green while `active`),
+    Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
+    track. Button/Toggle/Slider carry an Option<Box<dyn FnMut(..)>> callback
+    (None = inert, e.g. a mock).
 
 PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
@@ -131,13 +152,15 @@ PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
   (the core panel) plus **one** scenario panel (top-right) built from the stashed
   `last_telemetry` (a disjoint field). The two panels are independently
   positioned - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
-  frames each panel and renders its elements, firing callbacks on interaction.
+  frames each panel and renders its instruments, firing callbacks on
+  interaction.
 - **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
   `Context` and must be called once per context (both `ApplicationState::new`
-  and `snapshot::build_ui_frame` do). **All color lives in `ui` (the palette
-  consts + `render_element`)** - producers pick instruments, never colors.
-  `render_element` uppercases all text, frames each panel with the gunmetal
-  `panel_frame`, and paints the bevel highlight + corner rivets per panel.
+  and `snapshot::build_ui_frame` do). **All color lives in `ui::theme` (the
+  palette consts) + each instrument's `render`** - producers pick instruments,
+  never colors. Each instrument's `render` uppercases its text; `control_panel`
+  frames each panel with the gunmetal `panel_frame` and paints the bevel
+  highlight + corner rivets per panel.
 
 `SimulationState` (clock + celestial sphere) is the shared core that every
 scenario struct holds by composition. Satellites belong to the scenario struct,
@@ -150,7 +173,7 @@ need not know the `clock` submodule path.
   The `Simulation` trait takes resolved `Vec3`/`Mat4` values for the camera
   and returns a `RenderState`. This keeps input scheme changes local to
   `application` and each scenario's `frame_state` impl independently testable.
-  The `UIDrawable`/`UIDrawablePanel`/`UIDrawableElement` split extends this:
+  The `UIDrawable`/`UIDrawablePanel`/`Instrument` split extends this:
   those types live in `ui` (not `simulation`), and the panels render with
   optional callbacks, so the same code can drive a mock UI (all callbacks
   `None`) with no live `Clock`.
