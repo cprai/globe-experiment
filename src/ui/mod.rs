@@ -8,18 +8,18 @@
 //! - [`mock`] - the serde-derived [`MockUi`]/[`UiPanelSpec`] for the `render
 //!   --scene` overlay.
 //! - this file - the [`UIDrawable`] trait, [`UIDrawablePanel`]/[`PanelAnchor`],
-//!   the live `impl UIDrawable for SimulationState`, and [`control_panel`].
+//!   and [`control_panel`]. The shared-core `impl UIDrawable for
+//!   SimulationState` lives in `crate::simulation` alongside the type.
 //!
 //! `SimulationState` (clock + celestial sphere) is the shared core that every
 //! scenario struct holds by composition. The panel reads/drives a scenario
-//! through this `UIDrawable` impl (separate from the `Simulation` trait), so
-//! `simulation` has no UI dependency.
+//! through its `UIDrawable` impl, which is kept separate from the `Simulation`
+//! trait.
 
 mod instruments;
 mod mock;
 mod theme;
 
-use crate::simulation::{Clock, SimulationState};
 pub use instruments::{DualReadout, Header, Instrument, Readout, Slider, Toggle};
 pub use mock::{MockUi, UiPanelSpec};
 pub use theme::install_theme;
@@ -62,82 +62,13 @@ pub struct UIDrawablePanel<'a> {
 
 /// Anything the control panel can render: it yields a list of positioned
 /// [`UIDrawablePanel`]s, each owning a group of relatively-placed
-/// [`Instrument`]s. Implemented by [`SimulationState`] (one shared-core panel)
+/// [`Instrument`]s. Implemented by [`crate::simulation::SimulationState`] (one
+/// shared-core panel)
 /// and by each scenario (which returns the core panel plus its own
 /// per-satellite panel). `&mut self` so a control's callback can capture a
 /// disjoint mutable field of live state.
 pub trait UIDrawable {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>;
-}
-
-impl UIDrawable for SimulationState {
-    /// The shared-core panel, read from live state: the ephemeris subsolar
-    /// point, the clock datetime, and the play/pause + speed controls whose
-    /// callbacks mutate the live clock. The two control callbacks capture
-    /// disjoint clock fields (`paused` vs `multiplier`) via direct field
-    /// assignment - a `Clock` method would borrow the whole clock and collide.
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
-        // so no shared borrow of the clock outlives into the mutable callback
-        // captures below.
-        let datetime = self.clock.datetime_label();
-        let subsolar_lat = format!("{:.2} deg", self.celestial_sphere.subsolar_lat_deg);
-        let subsolar_lon = format!("{:.2} deg", self.celestial_sphere.subsolar_lon_deg);
-        let speed = format!("{:.1}x", self.clock.multiplier);
-        let running = !self.clock.paused;
-
-        // Exponential (base e) speed: the slider edits the exponent, so
-        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
-        // right, 10x at the midpoint. The mapping lives here, not in the panel.
-        let speed_exp = self.clock.multiplier.ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
-
-        // Instrument positions are relative to this panel's content origin. The
-        // producer picks instruments + content only; all styling is in the
-        // instrument modules.
-        let elements: Vec<Box<dyn Instrument + '_>> = vec![
-            Box::new(Header {
-                position: [0.0, 0.0],
-                title: "Time / Subsolar".to_string(),
-            }),
-            Box::new(Readout {
-                position: [0.0, 26.0],
-                label: "UTC".to_string(),
-                value: datetime,
-            }),
-            Box::new(DualReadout {
-                position: [0.0, 52.0],
-                left_label: "Lat".to_string(),
-                left_value: subsolar_lat,
-                right_label: "Lon".to_string(),
-                right_value: subsolar_lon,
-            }),
-            Box::new(Toggle {
-                position: [0.0, 84.0],
-                label: "Run".to_string(),
-                active: running,
-                on_toggle: Some(Box::new(|| self.clock.paused = !self.clock.paused)),
-            }),
-            Box::new(Readout {
-                position: [104.0, 86.0],
-                label: "Speed".to_string(),
-                value: speed,
-            }),
-            Box::new(Slider {
-                position: [0.0, 114.0],
-                value: speed_exp,
-                range: exp_range,
-                on_change: Some(Box::new(|exp| self.clock.multiplier = exp.exp())),
-            }),
-        ];
-
-        vec![UIDrawablePanel {
-            anchor: PanelAnchor::TopLeft,
-            offset: [10.0, 10.0],
-            size: [340.0, 148.0],
-            elements,
-        }]
-    }
 }
 
 /// Maps a [`PanelAnchor`] + inset to egui's `Area::anchor` arguments. egui's

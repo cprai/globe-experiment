@@ -1,9 +1,11 @@
 //! Simulation state and astronomical math: the simulation clock and the
 //! ephemeris-driven celestial sphere. This module owns the shared simulation
-//! core and defines the `Simulation` trait that every scenario implements. It
-//! is deliberately free of any windowing (winit), GPU (wgpu), or UI (egui)
-//! dependency, and never references the camera type (the camera lives in
-//! `application`).
+//! core, defines the `Simulation` trait that every scenario implements, and
+//! carries the `impl UIDrawable for SimulationState` that emits the shared-core
+//! panel. It stays free of any windowing (winit) or GPU (wgpu) dependency and
+//! never references the camera type (the camera lives in `application`); it
+//! does depend on `ui` for the `UIDrawable`/`Instrument` types the shared-core
+//! panel is built from.
 
 pub mod celestial_sphere;
 pub mod clock;
@@ -15,6 +17,10 @@ use satkit::Instant;
 pub use clock::Clock;
 
 use crate::earth;
+use crate::ui::{
+    DualReadout, Header, Instrument, PanelAnchor, Readout, Slider, Toggle, UIDrawable,
+    UIDrawablePanel,
+};
 use celestial_sphere::CelestialSphere;
 
 /// The interface every scenario implements. `ApplicationState` is generic over
@@ -23,8 +29,8 @@ use celestial_sphere::CelestialSphere;
 ///
 /// This trait is UI-agnostic. The egui panel reads/drives a scenario through a
 /// separate `crate::ui::UIDrawable` impl (no `clock_mut`, no UI snapshots from
-/// `frame_state`); keeping that trait in `ui` is what lets `simulation` stay
-/// free of any UI dependency.
+/// `frame_state`); the rendering trait is kept distinct from `Simulation` even
+/// though both the trait and the shared-core impl now live in this module.
 pub trait Simulation {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
@@ -146,6 +152,76 @@ impl SimulationState {
     /// transpose = inverse.)
     pub fn celestial_to_world(&self) -> Mat3 {
         self.celestial_sphere.star_rot_inv.transpose()
+    }
+}
+
+impl UIDrawable for SimulationState {
+    /// The shared-core panel, read from live state: the ephemeris subsolar
+    /// point, the clock datetime, and the play/pause + speed controls whose
+    /// callbacks mutate the live clock. The two control callbacks capture
+    /// disjoint clock fields (`paused` vs `multiplier`) via direct field
+    /// assignment - a `Clock` method would borrow the whole clock and collide.
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
+        // so no shared borrow of the clock outlives into the mutable callback
+        // captures below.
+        let datetime = self.clock.datetime_label();
+        let subsolar_lat = format!("{:.2} deg", self.celestial_sphere.subsolar_lat_deg);
+        let subsolar_lon = format!("{:.2} deg", self.celestial_sphere.subsolar_lon_deg);
+        let speed = format!("{:.1}x", self.clock.multiplier);
+        let running = !self.clock.paused;
+
+        // Exponential (base e) speed: the slider edits the exponent, so
+        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
+        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        let speed_exp = self.clock.multiplier.ln();
+        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+
+        // Instrument positions are relative to this panel's content origin. The
+        // producer picks instruments + content only; all styling is in the
+        // instrument modules.
+        let elements: Vec<Box<dyn Instrument + '_>> = vec![
+            Box::new(Header {
+                position: [0.0, 0.0],
+                title: "Time / Subsolar".to_string(),
+            }),
+            Box::new(Readout {
+                position: [0.0, 26.0],
+                label: "UTC".to_string(),
+                value: datetime,
+            }),
+            Box::new(DualReadout {
+                position: [0.0, 52.0],
+                left_label: "Lat".to_string(),
+                left_value: subsolar_lat,
+                right_label: "Lon".to_string(),
+                right_value: subsolar_lon,
+            }),
+            Box::new(Toggle {
+                position: [0.0, 84.0],
+                label: "Run".to_string(),
+                active: running,
+                on_toggle: Some(Box::new(|| self.clock.paused = !self.clock.paused)),
+            }),
+            Box::new(Readout {
+                position: [104.0, 86.0],
+                label: "Speed".to_string(),
+                value: speed,
+            }),
+            Box::new(Slider {
+                position: [0.0, 114.0],
+                value: speed_exp,
+                range: exp_range,
+                on_change: Some(Box::new(|exp| self.clock.multiplier = exp.exp())),
+            }),
+        ];
+
+        vec![UIDrawablePanel {
+            anchor: PanelAnchor::TopLeft,
+            offset: [10.0, 10.0],
+            size: [340.0, 148.0],
+            elements,
+        }]
     }
 }
 

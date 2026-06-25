@@ -19,18 +19,20 @@ Six top-level modules + `earth`:
   `Controller`. `ApplicationState<S: Simulation>` is generic over the
   simulation — nothing outside this module names the `Camera` type.
 - **`simulation`** — the `Simulation` trait (UI-agnostic), `SimulationState`
-  (clock + celestial sphere; **no satellites**), `RenderState`,
-  `SatelliteTelemetry`, and helpers. **No winit/wgpu/egui/`ui` dependency. No
-  `Camera` type.** Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI
-  readout pulled separately via `ui::UIDrawable`).
+  (clock + celestial sphere; **no satellites**) plus its shared-core `impl
+  UIDrawable for SimulationState`, `RenderState`, `SatelliteTelemetry`, and
+  helpers. **No winit/wgpu dependency. No `Camera` type.** Depends on `ui`
+  (hence egui) only for that `UIDrawable` impl. Takes resolved `Vec3`/`Mat4`;
+  returns `RenderState` (UI readout pulled separately via `ui::UIDrawable`).
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
 - **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
-  `UIDrawablePanel` + `PanelAnchor` (egui-free data), `impl UIDrawable for
-  SimulationState`, and the egui `control_panel` that frames each panel at its
-  anchored position and renders its boxed `Instrument`s at panel-relative
-  positions (no `Clock`/scenario knowledge). `ui/instruments/*.rs` is one
-  `Instrument`-impl struct per file; `ui/theme.rs` the Apollo look + palette;
-  `ui/mock.rs` the serde mock spec.
+  `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
+  `control_panel` that frames each panel at its anchored position and renders
+  its boxed `Instrument`s at panel-relative positions (no `Clock`/scenario
+  knowledge). The shared-core `impl UIDrawable for SimulationState` lives in
+  `simulation`, not here. `ui/instruments/*.rs` is one `Instrument`-impl struct
+  per file; `ui/theme.rs` the Apollo look + palette; `ui/mock.rs` the serde
+  mock spec.
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

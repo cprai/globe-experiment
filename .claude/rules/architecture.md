@@ -29,12 +29,13 @@ src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHand
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
 src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
-                         + PanelAnchor (egui-free data), impl UIDrawable for
-                         SimulationState, and the egui control_panel that frames
-                         each panel at its anchored position and renders its
-                         boxed Instrument trait objects at panel-relative
-                         positions (interactivity via callbacks). Re-exports the
-                         instrument structs + theme install_theme + mock types.
+                         + PanelAnchor (egui-free data), and the egui
+                         control_panel that frames each panel at its anchored
+                         position and renders its boxed Instrument trait objects
+                         at panel-relative positions (interactivity via
+                         callbacks). The shared-core impl UIDrawable for
+                         SimulationState lives in src/simulation/mod.rs. Re-exports
+                         the instrument structs + theme install_theme + mock types.
 src/ui/instruments/mod.rs  the Instrument trait (position + render); one
                          self-contained instrument STRUCT per sibling file, each
                          impl Instrument with its own baked-in look (a producer
@@ -60,8 +61,8 @@ src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
 src/renderer/mesh.rs     WGS84 ellipsoid mesh generator (km, geodetic normals)
 src/simulation/mod.rs    Simulation trait (UI-agnostic), SimulationState
-                         (core: clock + celestial sphere), RenderState,
-                         SatelliteTelemetry
+                         (core: clock + celestial sphere) + its shared-core
+                         impl UIDrawable, RenderState, SatelliteTelemetry
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
@@ -75,9 +76,10 @@ OUT_DIR/                 gitignored; include_bytes!'d: 5 JPEG/TIFF textures +
 ```
 main        -> application, simulation, renderer, scenarios
 application -> simulation, renderer, ui, earth, (winit, egui, egui_winit, glam)
-ui          -> simulation (SimulationState/Clock), (egui)   # owns UIDrawable
+ui          -> (egui)   # defines UIDrawable trait + control_panel
 renderer    -> simulation (RenderState), earth, (wgpu, egui_wgpu, ktx2, glam)
-simulation  -> earth, (satkit, glam)   # NO winit / wgpu / egui / ui / Camera
+simulation  -> earth, ui, (satkit, egui via ui, glam)   # impl UIDrawable for
+                                       # SimulationState; NO winit / wgpu / Camera
 earth       -> (glam)
 scenarios   -> simulation, ui, application
 ```
@@ -87,8 +89,10 @@ scenarios   -> simulation, ui, application
 Defined in `src/simulation/mod.rs`. The sole simulation interface
 `ApplicationState` uses; adding a scenario requires no changes to the
 application layer. It is **UI-agnostic** - the panel reads/drives a scenario
-through a *separate* `ui::UIDrawable` impl, so `simulation` has no UI
-dependency. `ApplicationState<S>` bounds `S: Simulation + UIDrawable`.
+through a *separate* `ui::UIDrawable` impl, kept distinct from `Simulation`.
+(The `Simulation` trait itself takes no UI types; the `simulation` module does
+depend on `ui` for the shared-core `impl UIDrawable for SimulationState` that
+now lives there.) `ApplicationState<S>` bounds `S: Simulation + UIDrawable`.
 
 ```
 advance(&mut self) -> bool
@@ -111,8 +115,9 @@ frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState
 The trait + panel live in `src/ui/mod.rs`; each instrument is a struct in its
 own `src/ui/instruments/*.rs` (egui-free *data* + boxed closures - egui only
 enters in each instrument's `render` and in `control_panel`). Decouples panel
-*rendering* from *interactivity*. Lives in `ui`, not `simulation`, so the
-simulation core stays UI-free.
+*rendering* from *interactivity*. The trait stays separate from `Simulation`;
+the shared-core `impl UIDrawable for SimulationState` lives next to the type in
+`src/simulation/mod.rs` (so `simulation` depends on `ui` for these types).
 
 ```
 UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
@@ -142,8 +147,9 @@ trait Instrument { position(&self) -> [f32;2];
 PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
 
-- `impl UIDrawable for SimulationState` emits **one** panel (top-left) from live
-  state: subsolar + datetime readouts, and the Run toggle + speed slider
+- `impl UIDrawable for SimulationState` (in `src/simulation/mod.rs`) emits
+  **one** panel (top-left) from live state: subsolar + datetime readouts, and
+  the Run toggle + speed slider
   whose callbacks mutate the live clock (each captures a *disjoint* clock field -
   `paused` vs `multiplier` - via direct field assignment, so both coexist with
   no interior mutability; do not call a `Clock` method in those closures, it
@@ -169,14 +175,16 @@ need not know the `clock` submodule path.
 
 ## Purity rules (compiler-enforced)
 
-- **`simulation` imports neither winit/wgpu/egui/`ui` nor the `Camera` type.**
+- **`simulation` imports neither winit/wgpu nor the `Camera` type.**
   The `Simulation` trait takes resolved `Vec3`/`Mat4` values for the camera
   and returns a `RenderState`. This keeps input scheme changes local to
   `application` and each scenario's `frame_state` impl independently testable.
-  The `UIDrawable`/`UIDrawablePanel`/`Instrument` split extends this:
-  those types live in `ui` (not `simulation`), and the panels render with
-  optional callbacks, so the same code can drive a mock UI (all callbacks
-  `None`) with no live `Clock`.
+  `simulation` *does* depend on `ui` (hence egui, transitively) for the
+  shared-core `impl UIDrawable for SimulationState`, which lives next to the
+  type rather than in `ui`. The `UIDrawable`/`UIDrawablePanel`/`Instrument`
+  types are still defined in `ui`, and the panels render with optional
+  callbacks, so the same code can drive a mock UI (all callbacks `None`) with
+  no live `Clock`.
 - **`Camera` type lives in `application` only.** Other modules see only a
   resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but
   consumed by `renderer` — the one allowed edge.)
