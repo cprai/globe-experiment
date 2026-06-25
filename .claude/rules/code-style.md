@@ -31,8 +31,8 @@ Six top-level modules + `earth`:
   its boxed `Instrument`s at panel-relative positions (no `Clock`/scenario
   knowledge). The shared-core `impl UIDrawable for SimulationState` lives in
   `simulation`, not here. `ui/instruments/*.rs` is one `Instrument`-impl struct
-  per file; `ui/theme.rs` the Apollo look + palette; `ui/mock.rs` the serde
-  mock spec.
+  per file; `ui/theme.rs` the Apollo look + palette; `ui/spec.rs` the serde
+  `ui`-overlay spec (deserialized straight into the bare instrument structs).
 - **`earth`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

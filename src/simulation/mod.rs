@@ -18,8 +18,8 @@ pub use clock::Clock;
 
 use crate::earth;
 use crate::ui::{
-    DualReadout, Header, Instrument, PanelAnchor, Readout, Slider, Toggle, UIDrawable,
-    UIDrawablePanel,
+    DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
+    Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 use celestial_sphere::CelestialSphere;
 
@@ -197,22 +197,26 @@ impl UIDrawable for SimulationState {
                 right_label: "Lon".to_string(),
                 right_value: subsolar_lon,
             }),
-            Box::new(Toggle {
-                position: [0.0, 84.0],
-                label: "Run".to_string(),
-                active: running,
-                on_toggle: Some(Box::new(|| self.clock.paused = !self.clock.paused)),
+            Box::new(InteractiveToggle {
+                toggle: Toggle {
+                    position: [0.0, 84.0],
+                    label: "Run".to_string(),
+                    active: running,
+                },
+                on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
             }),
             Box::new(Readout {
                 position: [104.0, 86.0],
                 label: "Speed".to_string(),
                 value: speed,
             }),
-            Box::new(Slider {
-                position: [0.0, 114.0],
-                value: speed_exp,
-                range: exp_range,
-                on_change: Some(Box::new(|exp| self.clock.multiplier = exp.exp())),
+            Box::new(InteractiveSlider {
+                slider: Slider {
+                    position: [0.0, 114.0],
+                    value: speed_exp,
+                    range: exp_range,
+                },
+                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
             }),
         ];
 

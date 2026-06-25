@@ -51,7 +51,7 @@ enum Cli {
         /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
         /// {"longitude", "latitude", "distance" (km), "tilt"}, "ui":
         /// [panels]}`. `ui` is optional (omit for a globe-only frame).
-        /// See `snapshot::SceneSpec` / `ui::UiPanelSpec`. Unknown keys
+        /// See `snapshot::SceneSpec` / `ui::UiPanel`. Unknown keys
         /// are rejected.
         #[arg(long)]
         scene: String,

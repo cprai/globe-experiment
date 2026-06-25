@@ -6,6 +6,12 @@ use crate::ui::theme::{BEVEL_DARK, LABEL_DIM, READOUT_CREAM, RECESS_FILL};
 /// A labelled value: a dim caption beside a cream value in a recessed readout
 /// window (the label/value split that keeps a value reading as the lit
 /// element).
+///
+/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// `get_drawables`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Readout {
     pub position: [f32; 2],
     pub label: String,

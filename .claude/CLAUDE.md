@@ -32,7 +32,7 @@ cargo run --release
 cargo run --release -- render --output frame.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
-# Add a "ui" section (Vec<ui::UiPanelSpec>) to overlay mock UI panels for
+# Add a "ui" section (Vec<ui::UiPanel>) to overlay mock UI panels for
 # headless UI-layout debugging:
 cargo run --release -- render --output mock.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},

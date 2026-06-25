@@ -5,8 +5,8 @@
 //! - [`instruments`] - one self-contained instrument type per file (each impls
 //!   [`Instrument`]); style lives in each instrument's `render`.
 //! - [`theme`] - the Apollo-panel palette, [`install_theme`], and panel chrome.
-//! - [`mock`] - the serde-derived [`MockUi`]/[`UiPanelSpec`] for the `render
-//!   --scene` overlay.
+//! - [`spec`] - the serde-deserialized [`PanelSet`]/[`UiPanel`]/[`UiElement`]
+//!   for the `render --scene` overlay.
 //! - this file - the [`UIDrawable`] trait, [`UIDrawablePanel`]/[`PanelAnchor`],
 //!   and [`control_panel`]. The shared-core `impl UIDrawable for
 //!   SimulationState` lives in `crate::simulation` alongside the type.
@@ -17,11 +17,20 @@
 //! trait.
 
 mod instruments;
-mod mock;
+mod spec;
 mod theme;
 
-pub use instruments::{DualReadout, Header, Instrument, Readout, Slider, Toggle};
-pub use mock::{MockUi, UiPanelSpec};
+// The full instrument set is re-exported as the reusable UI library's surface.
+// Some instruments (e.g. `Button`/`Lamp`/`InteractiveButton`) have no live
+// producer yet, so this binary never names them - `allow(unused_imports)` keeps
+// the complete library API exported without a warning until a producer uses it.
+#[allow(unused_imports)]
+pub use instruments::{
+    Button, DualReadout, Header, Instrument, InteractiveButton, InteractiveSlider,
+    InteractiveToggle, Lamp, LampStatus, Readout, Slider, Toggle,
+};
+#[allow(unused_imports)]
+pub use spec::{PanelSet, UiElement, UiPanel};
 pub use theme::install_theme;
 use theme::{paint_bevel, paint_rivets, panel_frame};
 
@@ -30,7 +39,7 @@ use theme::{paint_bevel, paint_rivets, panel_frame};
 /// its corner as the window resizes. Only the corners currently in use are
 /// listed - add the bottom corners when a panel needs one.
 ///
-/// `Copy` so a [`MockUi`] can hand it out of a borrowing `get_drawables` by
+/// `Copy` so a [`PanelSet`] can hand it out of a borrowing `get_drawables` by
 /// value; `Deserialize` so the `render --scene` `ui` JSON can name a corner
 /// (`"top_left"` / `"top_right"`).
 #[derive(Clone, Copy, serde::Deserialize)]
@@ -90,8 +99,9 @@ fn anchor_to_egui(anchor: &PanelAnchor, offset: [f32; 2]) -> (egui::Align2, egui
 /// nothing about the `Clock` or any scenario. It asks the `drawable` for a list
 /// of [`UIDrawablePanel`]s, frames each at its anchored position, and renders
 /// each panel's [`Instrument`]s at their panel-relative positions.
-/// Interactivity rides along as optional callbacks; a control whose callback is
-/// `None` renders but does nothing - which is what lets the same code render a
+/// Interactivity rides along inside each instrument: an interactive control
+/// wraps its bare struct with a callback, while a bare (e.g. deserialized)
+/// control renders but does nothing - which is what lets the same code render a
 /// mock panel.
 pub fn control_panel(ctx: &egui::Context, drawable: &mut impl UIDrawable) {
     for (panel_index, panel) in drawable.get_drawables().into_iter().enumerate() {

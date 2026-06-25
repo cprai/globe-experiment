@@ -2,15 +2,21 @@
 //! display with a baked-in look.
 //!
 //! A producer (a scenario / `SimulationState`) picks *which* instrument and
-//! supplies its content (and, for controls, a callback), but **never** its
-//! color, font, or emphasis - that all lives in each instrument's
-//! [`Instrument::render`], which pulls from [`crate::ui::theme`]. The control
-//! instruments ([`Button`], [`Toggle`], [`Slider`]) carry an optional `FnMut`
-//! callback (an `impl Fn` field is not expressible, so it is a boxed trait
-//! object); `None` renders an inert control, which is what lets the same code
-//! drive a mock UI. Their borrow `'a` is the `&mut self` of the producing
-//! [`crate::ui::UIDrawable::get_drawables`]; each captures a *disjoint* field
-//! of live state (e.g. one closure mutates `Clock::paused`, another
+//! supplies its content, but **never** its color, font, or emphasis - that all
+//! lives in each instrument's [`Instrument::render`], which pulls from
+//! [`crate::ui::theme`].
+//!
+//! Each control is **two types**: a bare struct holding only the render data
+//! ([`Button`], [`Toggle`], [`Slider`]) and an `Interactive*` wrapper that owns
+//! the bare struct plus a moved `FnMut` callback ([`InteractiveButton`],
+//! [`InteractiveToggle`], [`InteractiveSlider`]). The shared widget draw lives
+//! on the bare struct, so both render identically; the bare struct on its own
+//! is inert (clickable/draggable but does nothing). Splitting the callback out
+//! lets the bare structs derive `Deserialize`, so the `render --scene` `ui`
+//! JSON deserializes straight into them (via the `ui::spec` tagged enum) with
+//! no mirror type. The wrapper's borrow `'a` is the `&mut self` of the
+//! producing [`crate::ui::UIDrawable::get_drawables`]; each callback captures a
+//! *disjoint* field of live state (e.g. one mutates `Clock::paused`, another
 //! `Clock::multiplier`), so several coexist without interior mutability.
 
 mod button;
@@ -21,13 +27,13 @@ mod readout;
 mod slider;
 mod toggle;
 
-pub use button::Button;
+pub use button::{Button, InteractiveButton};
 pub use dual_readout::DualReadout;
 pub use header::Header;
 pub use lamp::{Lamp, LampStatus};
 pub use readout::Readout;
-pub use slider::Slider;
-pub use toggle::Toggle;
+pub use slider::{InteractiveSlider, Slider};
+pub use toggle::{InteractiveToggle, Toggle};
 
 /// One pre-styled instrument for a frame. Implemented per instrument type;
 /// [`crate::ui::control_panel`] places each instrument at its panel-relative

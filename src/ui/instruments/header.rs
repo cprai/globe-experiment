@@ -6,6 +6,12 @@ use crate::ui::theme::{BEVEL_LIGHT, HEADER_AMBER};
 /// A section header: a bold amber title with a rule ruled across the panel
 /// width beneath it - the labelled divider that tops each cluster on the Apollo
 /// panels.
+///
+/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// `get_drawables`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Header {
     pub position: [f32; 2],
     pub title: String,

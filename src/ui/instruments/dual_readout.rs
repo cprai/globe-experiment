@@ -4,6 +4,12 @@ use super::readout::readout_pair;
 /// Two labelled values side by side on one row, for compact paired readouts
 /// (e.g. LAT / LON). Reuses [`super::Readout`]'s recessed label/value window
 /// for each half.
+///
+/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// `get_drawables`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DualReadout {
     pub position: [f32; 2],
     pub left_label: String,

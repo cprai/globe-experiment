@@ -35,7 +35,8 @@ src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          at panel-relative positions (interactivity via
                          callbacks). The shared-core impl UIDrawable for
                          SimulationState lives in src/simulation/mod.rs. Re-exports
-                         the instrument structs + theme install_theme + mock types.
+                         the instrument structs (bare + Interactive*) + theme
+                         install_theme + the spec types (PanelSet/UiPanel).
 src/ui/instruments/mod.rs  the Instrument trait (position + render); one
                          self-contained instrument STRUCT per sibling file, each
                          impl Instrument with its own baked-in look (a producer
@@ -45,17 +46,25 @@ src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          readout.rs label/value window + shared readout_pair;
                          dual_readout.rs two readouts; button.rs momentary key;
                          toggle.rs latching green key + toggle_key; lamp.rs
-                         status dot + LampStatus; slider.rs value track). Control
-                         instruments carry an Option<Box<dyn FnMut>> (None=inert)
+                         status dot + LampStatus; slider.rs value track). Each
+                         control is split in two: a bare data struct (inert,
+                         derives Deserialize) + an Interactive* wrapper holding
+                         the bare struct + a moved Box<dyn FnMut> callback
+                         (InteractiveButton/InteractiveToggle/InteractiveSlider).
+                         Shared draw lives on the bare struct. InteractiveButton
+                         has no live producer yet (allow(dead_code)) - the full
+                         set ships as a reusable instrument library
 src/ui/theme.rs          install_theme: the Apollo-panel egui look (gunmetal
                          frame, monospace UPPERCASE cream readouts, green-active
                          keys, corner rivets/bevel), the palette consts shared by
                          the instruments, and panel chrome (panel_frame/bevel/
                          rivets). Stamped onto the egui Context by both the
                          windowed app and the headless render path
-src/ui/mock.rs           the serde-derived mock spec (UiPanelSpec/UiElementSpec)
-                         + MockUi for the render --scene `ui` overlay; maps each
-                         owned spec to an inert (None-callback) boxed Instrument
+src/ui/spec.rs           the serde-deserialized render --scene `ui` overlay: a
+                         tagged enum (UiElement) over the bare instrument structs
+                         themselves + a UiPanel + PanelSet (UIDrawable). No mirror
+                         type - the bare structs derive Deserialize, so each
+                         element clones into an inert boxed Instrument
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
@@ -141,8 +150,11 @@ trait Instrument { position(&self) -> [f32;2];
     in recessed windows (the label/value split; readout_pair shared by both).
     Button=momentary key, Toggle=latching key (lit green while `active`),
     Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
-    track. Button/Toggle/Slider carry an Option<Box<dyn FnMut(..)>> callback
-    (None = inert, e.g. a mock).
+    track. Each control is two types: a bare struct (inert; derives Deserialize)
+    and an Interactive* wrapper that owns the bare struct + a moved
+    Box<dyn FnMut(..)> callback (InteractiveButton/InteractiveToggle/
+    InteractiveSlider). A bare control renders inert (e.g. a deserialized mock);
+    the wrapper fires its callback. Shared draw lives on the bare struct.
 
 PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
@@ -182,8 +194,9 @@ need not know the `clock` submodule path.
   `simulation` *does* depend on `ui` (hence egui, transitively) for the
   shared-core `impl UIDrawable for SimulationState`, which lives next to the
   type rather than in `ui`. The `UIDrawable`/`UIDrawablePanel`/`Instrument`
-  types are still defined in `ui`, and the panels render with optional
-  callbacks, so the same code can drive a mock UI (all callbacks `None`) with
+  types are still defined in `ui`, and interactivity is carried by the
+  `Interactive*` wrappers (the bare instrument structs are inert), so the same
+  code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.
 - **`Camera` type lives in `application` only.** Other modules see only a
   resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but

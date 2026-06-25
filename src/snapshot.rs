@@ -7,7 +7,7 @@
 //!
 //! The whole scene is a single `--scene` JSON ([`SceneSpec`]): a `simulation`
 //! section (the datetime), a `camera` section, and an optional `ui` section of
-//! mock panels (see [`crate::ui::UiPanelSpec`]) to overlay - so an agent can
+//! mock panels (see [`crate::ui::UiPanel`]) to overlay - so an agent can
 //! debug rendering *and* UI layouts without a live window. The output target
 //! (width/height/path) stays on the CLI, not in the JSON. When `ui` is present
 //! the mock is run through the same `ui::control_panel` path as the live app
@@ -33,7 +33,7 @@ use crate::application::Camera;
 use crate::renderer::{HeadlessRenderer, MAX_FRAME_DIMENSION, UiFrame};
 use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{self, RenderState};
-use crate::ui::{self, MockUi, UiPanelSpec};
+use crate::ui::{self, PanelSet, UiPanel};
 
 /// Parameters for one single-frame render, built by `main` from the parsed CLI.
 /// The scene itself is the raw `--scene` JSON (parsed in [`run`] into a
@@ -60,7 +60,7 @@ struct SceneSpec {
     camera: CameraSpec,
     /// Mock UI panels to overlay; omit (or empty) for a globe-only frame.
     #[serde(default)]
-    ui: Vec<UiPanelSpec>,
+    ui: Vec<UiPanel>,
 }
 
 /// The `simulation` section: the celestial-state driver. Just the datetime
@@ -181,8 +181,8 @@ fn parse_rfc3339(text: &str) -> Result<Instant, String> {
 /// screen is sized to the output in points at 1.0 pixels-per-point, so mock
 /// positions are in output pixels. The panels were already validated by the
 /// scene parse in [`run`].
-fn build_ui_frame(panels: Vec<UiPanelSpec>, width: u32, height: u32) -> UiFrame {
-    let mut mock = MockUi { panels };
+fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
+    let mut mock = PanelSet { panels };
 
     let ctx = egui::Context::default();
     // Same theme the windowed app installs, so a mock overlay is faithful.

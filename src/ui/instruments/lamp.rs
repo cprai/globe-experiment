@@ -23,6 +23,12 @@ pub enum LampStatus {
 
 /// A status indicator lamp: a colored disc in a recessed socket keyed to
 /// `status`, plus a dim caption.
+///
+/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// `get_drawables`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lamp {
     pub position: [f32; 2],
     pub label: String,

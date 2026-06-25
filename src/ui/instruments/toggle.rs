@@ -3,26 +3,59 @@ use egui::Stroke;
 use super::Instrument;
 use crate::ui::theme::{ACCENT_GREEN, KEY_ACTIVE};
 
-/// A latching key that lights green while `active`. `on_toggle` fires on click
-/// (when `Some`); the producer owns flipping the state it reflects. A `None`
-/// callback renders an inert key (e.g. for a mock panel).
-pub struct Toggle<'a> {
+/// A latching key that lights green while `active` - the inert render data
+/// only. Drawing lives in [`Toggle::draw`], shared by this struct's read-only
+/// [`Instrument`] impl and by [`InteractiveToggle`], which adds the toggle
+/// callback.
+///
+/// `Deserialize` so the `render --scene` `ui` JSON can name it directly (the
+/// `active` flag still drives its lit look); `Clone` so [`crate::ui::PanelSet`]
+/// can hand a copy out of its borrowing `get_drawables`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Toggle {
     pub position: [f32; 2],
     pub label: String,
     pub active: bool,
-    pub on_toggle: Option<Box<dyn FnMut() + 'a>>,
 }
 
-impl Instrument for Toggle<'_> {
+impl Toggle {
+    /// Draws the latching key into `ui`; returns whether it was clicked this
+    /// frame. Holds the lit-look override so the inert and interactive paths
+    /// render identically.
+    fn draw(&self, ui: &mut egui::Ui) -> bool {
+        toggle_key(ui, &self.label, self.active).clicked()
+    }
+}
+
+impl Instrument for Toggle {
     fn position(&self) -> [f32; 2] {
         self.position
     }
 
     fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
-        if toggle_key(ui, &self.label, self.active).clicked()
-            && let Some(callback) = self.on_toggle.as_mut()
-        {
-            callback();
+        // Inert: still clickable, but the click does nothing (e.g. a mock panel).
+        let _ = self.draw(ui);
+    }
+}
+
+/// A [`Toggle`] wired to a toggle callback. `on_toggle` fires on click; the
+/// producer owns flipping the `active` state it reflects. The borrow `'a` is
+/// the `&mut self` of the producing [`crate::ui::UIDrawable::get_drawables`],
+/// so the closure can capture a disjoint mutable field of live state.
+pub struct InteractiveToggle<'a> {
+    pub toggle: Toggle,
+    pub on_toggle: Box<dyn FnMut() + 'a>,
+}
+
+impl Instrument for InteractiveToggle<'_> {
+    fn position(&self) -> [f32; 2] {
+        self.toggle.position
+    }
+
+    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
+        if self.toggle.draw(ui) {
+            (self.on_toggle)();
         }
     }
 }
