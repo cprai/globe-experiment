@@ -9,7 +9,7 @@ const UI_WHITE: [u8; 3] = [255, 255, 255];
 /// listed - add the bottom corners when a panel needs one.
 ///
 /// `Copy` so a [`MockUi`] can hand it out of a borrowing `get_drawables` by
-/// value; `Deserialize` so the `render --ui` mock JSON can name a corner
+/// value; `Deserialize` so the `render --scene` `ui` JSON can name a corner
 /// (`"top_left"` / `"top_right"`).
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,12 +88,12 @@ fn ui_white() -> [u8; 3] {
 }
 
 /// Owned, callback-free mirror of one [`UIDrawableElement`], deserialized from
-/// the `render --ui` mock JSON. The live variants carry `Box<dyn FnMut>`
+/// the `render --scene` `ui` JSON. The live variants carry `Box<dyn FnMut>`
 /// callbacks (not serializable); a mock panel is inert, so these carry only the
 /// rendered data. Tagged by variant name in snake_case, e.g.
 /// `{"text": {"position": [0, 0], "text": "Hi"}}`.
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum UiElementSpec {
     /// A static label/readout. `color` defaults to white, `strong` to false.
     Text {
@@ -115,9 +115,10 @@ pub enum UiElementSpec {
 }
 
 /// Owned, callback-free mirror of one [`UIDrawablePanel`], deserialized from
-/// the `render --ui` mock JSON: a corner `anchor`, an inset `offset`, a fixed
-/// box `size`, and panel-relative `elements`.
+/// the `render --scene` `ui` JSON: a corner `anchor`, an inset `offset`, a
+/// fixed box `size`, and panel-relative `elements`.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UiPanelSpec {
     pub anchor: PanelAnchor,
     pub offset: [f32; 2],
@@ -125,9 +126,10 @@ pub struct UiPanelSpec {
     pub elements: Vec<UiElementSpec>,
 }
 
-/// A set of mock panels (from `render --ui`) that renders through the exact
-/// same [`control_panel`] path as the live UI, so a mock layout is faithful to
-/// real output. Every control is inert: its callback is `None`.
+/// A set of mock panels (from the `render --scene` `ui` section) that renders
+/// through the exact same [`control_panel`] path as the live UI, so a mock
+/// layout is faithful to real output. Every control is inert: its callback is
+/// `None`.
 pub struct MockUi {
     pub panels: Vec<UiPanelSpec>,
 }

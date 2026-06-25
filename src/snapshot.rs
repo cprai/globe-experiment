@@ -5,11 +5,14 @@
 //! debugging of rendering changes, e.g. by an agent that opens the image. This
 //! is the headless analogue of a scenario's `run`.
 //!
-//! An optional `--ui` JSON argument overlays mock UI panels (see
-//! [`crate::ui::UiPanelSpec`]) so an agent can debug UI layouts without a live
-//! window. The mock is run through the same `ui::control_panel` path as the
-//! live app and composited by [`HeadlessRenderer`]; this module is the headless
-//! analogue of the windowed egui driving in `application`.
+//! The whole scene is a single `--scene` JSON ([`SceneSpec`]): a `simulation`
+//! section (the datetime), a `camera` section, and an optional `ui` section of
+//! mock panels (see [`crate::ui::UiPanelSpec`]) to overlay - so an agent can
+//! debug rendering *and* UI layouts without a live window. The output target
+//! (width/height/path) stays on the CLI, not in the JSON. When `ui` is present
+//! the mock is run through the same `ui::control_panel` path as the live app
+//! and composited by [`HeadlessRenderer`]; this module is the headless analogue
+//! of the windowed egui driving in `application`.
 //!
 //! IMPORTANT: unlike scenarios (see the "Scenarios & valid time range" rules in
 //! `CLAUDE.md`), render mode does **not** range-check the datetime against the
@@ -33,40 +36,73 @@ use crate::simulation::{self, RenderState};
 use crate::ui::{self, MockUi, UiPanelSpec};
 
 /// Parameters for one single-frame render, built by `main` from the parsed CLI.
+/// The scene itself is the raw `--scene` JSON (parsed in [`run`] into a
+/// [`SceneSpec`]); only the output target stays as discrete CLI args.
 pub struct RenderParams {
-    /// RFC3339 UTC instant for the celestial positions (e.g.
-    /// `2024-01-15T12:30:00Z`).
-    pub datetime: String,
-    /// Inertial look longitude, degrees.
-    pub longitude: f32,
-    /// Inertial look latitude, degrees.
-    pub latitude: f32,
-    /// Eye distance to the look-at point, kilometers.
-    pub distance_km: f32,
-    /// Tilt off nadir, degrees (0 looks straight down).
-    pub tilt: f32,
+    /// Raw `--scene` JSON: a [`SceneSpec`] (simulation + camera + optional ui).
+    pub scene: String,
     /// Output image width, pixels.
     pub width: u32,
     /// Output image height, pixels.
     pub height: u32,
     /// Path to write the PNG.
     pub output: PathBuf,
-    /// Optional JSON array of mock UI panels to overlay (see
-    /// [`crate::ui::UiPanelSpec`]). Parsed in [`run`]; `None` renders the globe
-    /// alone.
-    pub ui: Option<String>,
+}
+
+/// The full render scene, deserialized from the `--scene` JSON. Divides the
+/// celestial/simulation state from the camera and the optional UI overlay.
+/// `deny_unknown_fields` so a misspelled key (e.g. `latitde`) fails loudly
+/// rather than being silently dropped - the scene is hand-authored by agents.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneSpec {
+    simulation: SimulationSpec,
+    camera: CameraSpec,
+    /// Mock UI panels to overlay; omit (or empty) for a globe-only frame.
+    #[serde(default)]
+    ui: Vec<UiPanelSpec>,
+}
+
+/// The `simulation` section: the celestial-state driver. Just the datetime
+/// today (camera lives in its own section); a struct so it can grow.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SimulationSpec {
+    /// RFC3339 UTC instant for the celestial positions (e.g.
+    /// `2024-01-15T12:30:00Z`).
+    datetime: String,
+}
+
+/// The `camera` section: the orbital camera placement, mirroring the `Camera`
+/// fields the windowed path drives.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CameraSpec {
+    /// Inertial look longitude, degrees.
+    longitude: f32,
+    /// Inertial look latitude, degrees.
+    latitude: f32,
+    /// Eye distance to the look-at point, kilometers.
+    distance: f32,
+    /// Tilt off nadir, degrees (0 looks straight down).
+    tilt: f32,
 }
 
 /// Renders one frame per `params`, writes it to `params.output` as a PNG, and
 /// prints a summary to stdout. Exits the process with a nonzero status on a
 /// usage error (bad datetime, bad dimensions, or write failure).
 pub fn run(params: RenderParams) {
-    // Parse the datetime first. No EOP range check - see the module note.
-    let time = match parse_rfc3339(&params.datetime) {
+    // Parse the scene JSON first (strict: a misspelled key errors, see
+    // SceneSpec). Everything below reads from it.
+    let scene: SceneSpec = serde_json::from_str(&params.scene)
+        .unwrap_or_else(|error| fail(&format!("invalid --scene JSON: {error}")));
+
+    // Parse the datetime. No EOP range check - see the module note.
+    let time = match parse_rfc3339(&scene.simulation.datetime) {
         Ok(time) => time,
         Err(message) => fail(&format!(
-            "invalid --datetime '{}': {message} (expected RFC3339 UTC, e.g. 2024-01-15T12:30:00Z)",
-            params.datetime
+            "invalid simulation.datetime '{}': {message} (expected RFC3339 UTC, e.g. 2024-01-15T12:30:00Z)",
+            scene.simulation.datetime
         )),
     };
 
@@ -90,12 +126,12 @@ pub fn run(params: RenderParams) {
     let celestial = CelestialSphere::at(&time);
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    let distance = Camera::clamp_distance(params.distance_km);
+    let distance = Camera::clamp_distance(scene.camera.distance);
     let camera = Camera {
-        longitude: params.longitude,
-        latitude: params.latitude,
+        longitude: scene.camera.longitude,
+        latitude: scene.camera.latitude,
         distance,
-        tilt: params.tilt,
+        tilt: scene.camera.tilt,
     };
     let aspect = params.width as f32 / params.height.max(1) as f32;
     let eye = camera.eye(celestial_to_world);
@@ -109,12 +145,10 @@ pub fn run(params: RenderParams) {
         markers: Vec::new(),
     };
 
-    // Build the optional mock-UI overlay before touching the GPU, so a JSON
-    // error fails cleanly without spinning up a device.
-    let ui_frame = params
-        .ui
-        .as_deref()
-        .map(|json| build_ui_frame(json, params.width, params.height));
+    // Build the optional mock-UI overlay (empty `ui` = globe-only frame). The
+    // panels were already validated by the scene parse above.
+    let ui_frame =
+        (!scene.ui.is_empty()).then(|| build_ui_frame(scene.ui, params.width, params.height));
 
     let image = HeadlessRenderer::new(params.width, params.height).render(&render, ui_frame);
 
@@ -125,7 +159,7 @@ pub fn run(params: RenderParams) {
         ));
     }
 
-    print_summary(&params, &time, &celestial, distance);
+    print_summary(&params, &scene.camera, &time, &celestial, distance);
 }
 
 /// Parses an RFC3339 UTC datetime into a satkit [`Instant`] via `humantime`.
@@ -140,15 +174,14 @@ fn parse_rfc3339(text: &str) -> Result<Instant, String> {
     Ok(Instant::from_unixtime(unix_seconds))
 }
 
-/// Parses the `--ui` JSON into mock panels and runs them through egui once to
+/// Runs the mock `panels` (the scene's `ui` section) through egui once to
 /// produce a render-ready [`UiFrame`] - the headless analogue of the windowed
 /// egui driving in `application`. The mock is rendered via the same
 /// `ui::control_panel` the live app uses, so the overlay is faithful. The egui
 /// screen is sized to the output in points at 1.0 pixels-per-point, so mock
-/// positions are in output pixels. Exits with a clean error on bad JSON.
-fn build_ui_frame(json: &str, width: u32, height: u32) -> UiFrame {
-    let panels: Vec<UiPanelSpec> = serde_json::from_str(json)
-        .unwrap_or_else(|error| fail(&format!("invalid --ui JSON: {error}")));
+/// positions are in output pixels. The panels were already validated by the
+/// scene parse in [`run`].
+fn build_ui_frame(panels: Vec<UiPanelSpec>, width: u32, height: u32) -> UiFrame {
     let mut mock = MockUi { panels };
 
     let ctx = egui::Context::default();
@@ -189,6 +222,7 @@ fn build_ui_frame(json: &str, width: u32, height: u32) -> UiFrame {
 /// deliberately silent about EOP range (see the module note).
 fn print_summary(
     params: &RenderParams,
+    camera: &CameraSpec,
     time: &Instant,
     celestial: &CelestialSphere,
     distance: f32,
@@ -196,8 +230,8 @@ fn print_summary(
     let (year, month, day, hour, minute, second) = time.as_datetime();
 
     // Note if the supplied distance was clamped into the camera's valid range.
-    let clamped = if (distance - params.distance_km).abs() > f32::EPSILON {
-        format!(" (clamped from {:.1})", params.distance_km)
+    let clamped = if (distance - camera.distance).abs() > f32::EPSILON {
+        format!(" (clamped from {:.1})", camera.distance)
     } else {
         String::new()
     };
@@ -213,7 +247,7 @@ fn print_summary(
     );
     println!(
         "  camera:    lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",
-        params.longitude, params.latitude, distance, params.tilt
+        camera.longitude, camera.latitude, distance, camera.tilt
     );
     println!(
         "  output:    {} ({}x{})",

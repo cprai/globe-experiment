@@ -38,37 +38,23 @@ enum Cli {
     },
 
     /// Render a single frame to an image file and exit (no window, no UI). The
-    /// datetime fixes the celestial positions and the camera flags fix the
-    /// view; the frame is written to --output as a PNG. Intended for visually
-    /// debugging rendering changes.
+    /// `--scene` JSON fixes the celestial positions (its `simulation.datetime`)
+    /// and the view (its `camera`), and may carry mock `ui` panels to overlay;
+    /// the frame is written to --output as a PNG. Intended for visually
+    /// debugging rendering and UI changes.
     ///
     /// NOTE: unlike `scenario`, the datetime is NOT range-checked against the
     /// bundled Earth-orientation (EOP) data - times outside the bundled range
     /// silently degrade rather than erroring. Use a past, in-range datetime for
     /// an accurate frame.
-    //
-    // `allow_negative_numbers` lets the numeric camera flags take negative
-    // values (e.g. `--longitude -75`); without it clap parses the leading `-`
-    // as an unknown short flag ("unexpected argument '-7'"). It still rejects
-    // genuine unknown flags, so only number-shaped values are affected.
-    #[command(allow_negative_numbers = true)]
     Render {
-        /// RFC3339 UTC instant for the celestial positions, e.g.
-        /// 2024-01-15T12:30:00Z.
+        /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
+        /// {"longitude", "latitude", "distance" (km), "tilt"}, "ui":
+        /// [panels]}`. `ui` is optional (omit for a globe-only frame).
+        /// See `snapshot::SceneSpec` / `ui::UiPanelSpec`. Unknown keys
+        /// are rejected.
         #[arg(long)]
-        datetime: String,
-        /// Inertial look longitude, degrees.
-        #[arg(long)]
-        longitude: f32,
-        /// Inertial look latitude, degrees.
-        #[arg(long)]
-        latitude: f32,
-        /// Eye distance to the look-at point, kilometers.
-        #[arg(long)]
-        distance: f32,
-        /// Tilt off nadir, degrees (0 looks straight down).
-        #[arg(long)]
-        tilt: f32,
+        scene: String,
         /// Output image width in pixels.
         #[arg(long, default_value_t = 1920)]
         width: u32,
@@ -78,11 +64,6 @@ enum Cli {
         /// Path to write the PNG.
         #[arg(long)]
         output: PathBuf,
-        /// Optional JSON array of mock UI panels to overlay on the frame, for
-        /// debugging UI layouts (corner anchors, element positions). Each panel
-        /// is `{anchor, offset, size, elements}`; see `ui::UiPanelSpec`.
-        #[arg(long)]
-        ui: Option<String>,
     },
 }
 
@@ -109,25 +90,15 @@ fn main() {
         // Bare `scenario` with no name: list what's available instead of erroring.
         Cli::Scenario { name: None } => list_scenarios(),
         Cli::Render {
-            datetime,
-            longitude,
-            latitude,
-            distance,
-            tilt,
+            scene,
             width,
             height,
             output,
-            ui,
         } => snapshot::run(snapshot::RenderParams {
-            datetime,
-            longitude,
-            latitude,
-            distance_km: distance,
-            tilt,
+            scene,
             width,
             height,
             output,
-            ui,
         }),
     }
 }

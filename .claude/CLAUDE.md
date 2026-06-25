@@ -26,15 +26,21 @@ reintroduce it.
 
 ```sh
 cargo run --release
-cargo run --release -- render --datetime 2024-01-15T12:30:00Z \
-    --longitude -75 --latitude 40 --distance 12742 --tilt 0 --output frame.png
-# Overlay mock UI panels (debug UI layouts headlessly); JSON = Vec<ui::UiPanelSpec>:
-cargo run --release -- render --datetime 2024-01-15T12:30:00Z \
-    --longitude -75 --latitude 40 --distance 12742 --tilt 0 --output mock.png \
-    --ui '[{"anchor":"top_left","offset":[10,10],"size":[300,130],
-      "elements":[{"text":{"position":[0,0],"text":"Hi"}},
-                  {"button":{"position":[0,60],"label":"Play"}},
-                  {"slider":{"position":[0,94],"value":0.5,"range":[0,4.6]}}]}]'
+# `render` takes ONE --scene JSON (simulation + camera + optional ui); the
+# output target (--output, --width, --height) stays as CLI flags. Unknown JSON
+# keys are rejected (deny_unknown_fields).
+cargo run --release -- render --output frame.png --scene \
+    '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
+      "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
+# Add a "ui" section (Vec<ui::UiPanelSpec>) to overlay mock UI panels for
+# headless UI-layout debugging:
+cargo run --release -- render --output mock.png --scene \
+    '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
+      "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0},
+      "ui":[{"anchor":"top_left","offset":[10,10],"size":[300,130],
+        "elements":[{"text":{"position":[0,0],"text":"Hi"}},
+                    {"button":{"position":[0,60],"label":"Play"}},
+                    {"slider":{"position":[0,94],"value":0.5,"range":[0,4.6]}}]}]}'
 ```
 
 First build: slow (~1.5 min extra), needs network. `build.rs` downloads 5

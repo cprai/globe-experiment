@@ -17,16 +17,21 @@ camera that frames the feature you changed.
 
 ## Command
 ```sh
-cargo run --release -- render \
-    --datetime 2024-01-01T12:00:00Z \
-    --longitude <deg> --latitude <deg> --distance <km> --tilt <deg> \
-    --width 1280 --height 720 \
-    --output /tmp/render.png
+cargo run --release -- render --output /tmp/render.png --width 1280 --height 720 \
+    --scene '{
+      "simulation": {"datetime": "2024-01-01T12:00:00Z"},
+      "camera": {"longitude": <deg>, "latitude": <deg>,
+                 "distance": <km>, "tilt": <deg>}
+    }'
 ```
-All four camera flags (`--longitude`, `--latitude`, `--distance`, `--tilt`) are
-**required** - there is no default camera. `--distance` is in kilometers (Earth
-mean radius is ~6371 km; ~12742 km gives a full-globe view). Then open
-`/tmp/render.png` with the Read tool and describe / compare what you see.
+The whole scene is one `--scene` JSON: a `simulation` section (`datetime`) and a
+`camera` section, both **required** (there is no default camera; unknown keys are
+rejected). `camera.distance` is in kilometers (Earth mean radius is ~6371 km;
+~12742 km gives a full-globe view). The output target (`--output`/`--width`/
+`--height`) stays as CLI flags. An optional `ui` section overlays mock UI panels
+(see the `build-and-run`/`src/ui.rs` docs) - not usually needed for look
+analysis. Then open `/tmp/render.png` with the Read tool and describe / compare
+what you see.
 
 The command also prints a summary to stdout (resolved datetime, subsolar
 lat/lon, camera, output path) - read it for context on where the day side and
@@ -35,8 +40,8 @@ terminator should fall in the frame.
 ## Framing tips
 - **Terminator / day-night edge:** aim at a longitude near the subsolar
   longitude +/- 90 deg; a low tilt shows the edge across the disc.
-- **Atmosphere limb / sky glow:** high `--tilt` (toward the horizon) so the limb
-  fills the frame.
+- **Atmosphere limb / sky glow:** high `camera.tilt` (toward the horizon) so the
+  limb fills the frame.
 - **Night side (city lights):** a longitude on the dark hemisphere.
 - **Before/after:** render the change to two paths and inspect both.
 
@@ -55,7 +60,9 @@ frame. This is the agent's responsibility - the tool will not warn you.
   non-sRGB LDR output (the offscreen target is non-sRGB `Rgba8Unorm` exactly so
   the bytes match the window), so colors are trustworthy.
 - **Does NOT:** interaction feel (pan/zoom/inertia) - that still needs a native
-  windowed run. Markers and the egui UI are absent in render mode by design.
+  windowed run. Satellite markers are absent in render mode by design; the egui
+  UI is absent unless the scene supplies a `ui` section (mock panels for layout
+  debugging, no live data).
 
 ## Cleanup
 Delete any temp images you created once you are done inspecting them - they are

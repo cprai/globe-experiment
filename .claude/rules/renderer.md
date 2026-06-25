@@ -116,14 +116,20 @@ load-bearing — sRGB decode would warp the tangent vectors.
   silently degrade. This is deliberate — documented in `snapshot.rs` and
   `scenarios.md`.
 - **No markers** in render mode (`RenderState.markers` is empty).
-- **Globe-only by default; optional egui overlay for mock UI via `--ui`.**
+- **One `--scene` JSON drives the whole frame** (`snapshot::SceneSpec`,
+  `deny_unknown_fields`): a `simulation` section (datetime), a `camera` section,
+  and an optional `ui` section (`Vec<ui::UiPanelSpec>`). The output target
+  (`--output`/`--width`/`--height`) stays as CLI flags, NOT in the JSON. A
+  misspelled key at any level errors with exit 2 (the agent-debugging payoff of
+  strict parsing).
+- **Globe-only by default; optional egui overlay when the scene has a `ui`.**
   `HeadlessRenderer` owns an `egui_wgpu::Renderer` and `render()` takes an
   `Option<UiFrame>`; when `Some`, panels composite over the globe exactly as in
   `Gfx::update` (apply `textures_delta.set`, `update_buffers`, `forget_lifetime`
   the pass, draw globe then egui, submit egui commands first, free deltas after).
-  `snapshot::build_ui_frame` deserializes the `--ui` JSON (`Vec<ui::UiPanelSpec>`)
-  into `ui::MockUi` — callback-free `UiPanelSpec`/`UiElementSpec` mapped to
-  `UIDrawablePanel`s with `None` callbacks — and drives it through the live
+  `snapshot::build_ui_frame` takes the already-parsed `Vec<ui::UiPanelSpec>`,
+  wraps it in `ui::MockUi` — callback-free `UiPanelSpec`/`UiElementSpec` mapped
+  to `UIDrawablePanel`s with `None` callbacks — and drives it through the live
   `ui::control_panel`, so a mock renders identically to the real UI. **Two egui
   passes are required** (a throwaway warmup, then the real pass): egui lays out
   text + builds its font atlas lazily, so a single pass tessellates to nothing

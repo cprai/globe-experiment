@@ -17,8 +17,11 @@ build.rs                 downloads 5 textures (JPEG/TIFF verbatim) + JPL
                          3 atmosphere LUTs as f16 KTX2. Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
+                         (render takes one --scene JSON + --output/width/height)
 src/snapshot.rs          headless single-frame render mode (no EOP range check);
-                         optional --ui mock-panel overlay (build_ui_frame)
+                         SceneSpec = --scene JSON (simulation + camera +
+                         optional ui); optional mock-panel overlay
+                         (build_ui_frame)
 src/scenarios/mod.rs     scenario registry
 src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
@@ -32,7 +35,7 @@ src/ui.rs                UI module: owns UIDrawable trait + UIDrawablePanel +
                          renders its elements at panel-relative positions
                          (interactivity via callbacks), plus the serde-derived
                          mock spec (UiPanelSpec/UiElementSpec) + MockUi for the
-                         render --ui overlay
+                         render --scene `ui` overlay
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render

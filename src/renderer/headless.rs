@@ -8,8 +8,8 @@
 //! buffer instead of a swapchain surface) and that the UI is optional. The
 //! globe draw sequence is identical: clear to black, then stars -> surface ->
 //! atmosphere (markers are skipped because render mode tracks none). When the
-//! caller supplies a [`UiFrame`] (the `render --ui` mock layouts), an egui
-//! overlay is composited on top, exactly as in the windowed path.
+//! caller supplies a [`UiFrame`] (from the `render --scene` `ui` mock layouts),
+//! an egui overlay is composited on top, exactly as in the windowed path.
 
 use super::{GlobeRenderer, MAX_FRAME_DIMENSION, UiFrame, request_adapter_device};
 use crate::simulation::RenderState;

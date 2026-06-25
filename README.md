@@ -27,25 +27,28 @@ files at runtime.
 ## Rendering a single frame (headless)
 
 Besides the interactive window, the tool can render one frame to an image file
-and exit - no window, input, or UI - which is handy for scripted/visual
-debugging of the renderer:
+and exit - no window or input - which is handy for scripted/visual debugging of
+the renderer. The whole scene is a single `--scene` JSON; only the output target
+stays as CLI flags:
 
 ```sh
-cargo run --release -- render \
-    --datetime 2024-01-15T12:30:00Z \
-    --longitude -75 --latitude 40 --distance 12742 --tilt 0 \
-    --width 1920 --height 1080 \
-    --output frame.png
+cargo run --release -- render --output frame.png --width 1920 --height 1080 \
+    --scene '{
+      "simulation": {"datetime": "2024-01-15T12:30:00Z"},
+      "camera": {"longitude": -75, "latitude": 40, "distance": 12742, "tilt": 0}
+    }'
 ```
 
-The `--datetime` (RFC3339 UTC) fixes the celestial positions; the four camera
-flags are required (distance is in kilometers); `--width`/`--height` default to
-1920x1080. The frame is written as a PNG and a short summary (resolved datetime,
-subsolar point, camera) is printed. Unlike the interactive scenarios, the
-datetime here is **not** range-checked against the bundled Earth-orientation
-data - times outside the bundled range (before 1962 or after the build date)
-render but silently lose accuracy, so use a past, in-range datetime for a
-faithful frame.
+The `--scene` JSON has a `simulation` section (`datetime`, RFC3339 UTC, fixes the
+celestial positions), a `camera` section (`longitude`/`latitude`/`distance` in
+km/`tilt`), and an optional `ui` section that overlays mock UI panels for
+debugging UI layouts headlessly (see `src/ui.rs`'s `UiPanelSpec`). Unknown JSON
+keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
+written as a PNG and a short summary (resolved datetime, subsolar point, camera)
+is printed. Unlike the interactive scenarios, the datetime here is **not**
+range-checked against the bundled Earth-orientation data - times outside the
+bundled range (before 1962 or after the build date) render but silently lose
+accuracy, so use a past, in-range datetime for a faithful frame.
 
 ## Controls
 
