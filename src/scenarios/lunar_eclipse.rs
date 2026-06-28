@@ -67,7 +67,6 @@ impl Simulation for LunarEclipseSimulation {
             camera_pos: eye,
             // Earth/Moon targets keep the origin at Earth (planet-free scene).
             render_origin: Vec3::ZERO,
-            sun_dir: celestial.sun_dir,
             sun_pos_world: celestial.sun_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
             moon_pos_world: celestial.moon_pos_world,

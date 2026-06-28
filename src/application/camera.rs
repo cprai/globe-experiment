@@ -129,16 +129,16 @@ impl Camera {
     /// world->celestial rotation); applying it keeps the camera fixed relative
     /// to the stars while the world rotates beneath it.
     pub fn view_proj(&self, aspect: f32, celestial_to_world: Mat3) -> Mat4 {
-        let (eye, target, up) = self.world_frame(celestial_to_world);
+        // Built in the floating-origin (render) frame, where the orbited body
+        // sits at the numerical origin. Computed WITHOUT forming the absolute
+        // eye: a far planet's absolute position is billions of km, so
+        // `absolute_eye - render_origin` in f32 cancels catastrophically (the
+        // view translation snaps to ~hundreds of km and the camera jitters).
+        // `world_frame_relative` keeps the math local instead. For Earth/Moon
+        // (render_origin 0) this equals the absolute rig - bit-identical.
+        let (eye, target, up) = self.world_frame_relative(celestial_to_world);
 
-        // Floating origin: build the view in the render frame (world shifted by
-        // -render_origin) so a far planet target sits near the numerical origin
-        // where f32 is precise. The renderer subtracts the SAME render_origin in
-        // clip space (and `eye()` still returns the true-world eye for the
-        // uniforms). For Earth/Moon the origin is ZERO, so this is `- 0.0` and
-        // the matrix is bit-identical to the pre-planet renderer.
-        let origin = self.target.render_origin();
-        let view = Mat4::look_at_rh(eye - origin, target - origin, up);
+        let view = Mat4::look_at_rh(eye, target, up);
         let proj = Mat4::perspective_rh(
             Self::FOV_Y.to_radians(),
             aspect.max(0.01),
@@ -164,9 +164,12 @@ impl Camera {
         reverse_z * proj * view
     }
 
-    /// The camera position in the Earth-fixed world frame (km).
-    pub fn eye(&self, celestial_to_world: Mat3) -> Vec3 {
-        self.world_frame(celestial_to_world).0
+    /// The camera eye in the floating-origin (render) frame (km) - what the
+    /// renderer uploads as `camera_pos` and uses to center the star shell.
+    /// Precise for far targets (see `world_frame_relative`); for Earth/Moon
+    /// (render_origin 0) it is the absolute eye.
+    pub fn eye_relative(&self, celestial_to_world: Mat3) -> Vec3 {
+        self.world_frame_relative(celestial_to_world).0
     }
 
     /// An inertial camera that orbits `target` and whose look axis points along
@@ -234,17 +237,22 @@ impl Camera {
         switched
     }
 
-    /// The rig rotated from the inertial frame into the Earth-fixed world
-    /// frame for rendering, offset to the target body's center. The rotation is
-    /// about the origin (points and directions transform alike); the center is
-    /// a world-space translation applied to the positions only, so the rig
-    /// orbits the target wherever it sits.
-    fn world_frame(&self, celestial_to_world: Mat3) -> (Vec3, Vec3, Vec3) {
+    /// The rig in the **floating-origin (render) frame**: the inertial offsets
+    /// rotated into the world and shifted by `(center - render_origin)`, so the
+    /// orbited body sits at/near the numerical origin. Computed this way
+    /// (rather than forming the absolute rig and subtracting
+    /// `render_origin`) so a far planet never goes through a billions-of-km
+    /// f32 value: for the orbited body `center == render_origin`, so the
+    /// shift is exactly zero and the rig is just `celestial_to_world *
+    /// offset` (local, precise). For Earth/Moon (render_origin 0) the shift
+    /// is the body center, so this equals the absolute rig - bit-identical
+    /// to the pre-planet renderer.
+    fn world_frame_relative(&self, celestial_to_world: Mat3) -> (Vec3, Vec3, Vec3) {
         let (eye, target, up) = self.frame();
-        let center = self.target.center_world();
+        let shift = self.target.center_world() - self.target.render_origin();
         (
-            center + celestial_to_world * eye,
-            center + celestial_to_world * target,
+            shift + celestial_to_world * eye,
+            shift + celestial_to_world * target,
             celestial_to_world * up,
         )
     }

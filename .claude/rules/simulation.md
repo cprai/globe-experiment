@@ -115,6 +115,15 @@ The Moon is positioned and oriented per frame in `CelestialSphere::at`:
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sun direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
   `celestial_sphere` so `planet.rs` stays satkit-free (like `earth`/`moon`).
+- **f32 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
+  errors in range — `Result::Ok` for every planet). `nvec` then converts to f32,
+  which at planetary distance quantizes the *absolute* position to ~6 km
+  (Mercury) up to ~93 km (Saturn); Neptune's f32 ulp is ~539 km. This does NOT
+  cause jitter: the renderer draws everything **relative to the camera target**
+  (see `camera.md`/`renderer.md`), and the orbited body's relative position is a
+  bit-exact zero because `render_origin` reuses the *same* f32 value. Far bodies
+  are sub-pixel specks, so their position error is invisible. No f64 positions
+  are needed.
 
 ## Satellite pipeline (satellite.rs)
 

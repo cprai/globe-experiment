@@ -168,29 +168,32 @@ pub trait Simulation {
 /// readout for the same frame is pulled separately via `crate::ui::UIDrawable`.
 #[derive(Clone, Debug)]
 pub struct RenderState {
-    /// World-frame view-projection matrix (built by the application from the
-    /// camera + `celestial_to_world` + viewport aspect).
+    /// View-projection matrix, built by the camera in the **floating-origin
+    /// (render) frame** (`celestial_to_world` + aspect): the orbited body sits
+    /// at the numerical origin so far planet targets stay f32-precise.
     pub view_proj: Mat4,
-    /// Camera eye position in the Earth-fixed world frame (km).
+    /// Camera eye in the **floating-origin (render) frame** (km), i.e. relative
+    /// to `render_origin` (= the absolute eye for Earth/Moon). The renderer's
+    /// per-body positions are all expressed in this same frame.
     pub camera_pos: Vec3,
-    /// World-space origin the renderer draws relative to (the floating origin):
-    /// `camera_target.render_origin()`. `ZERO` for Earth/Moon (output
-    /// unchanged); the planet center for a planet target, which restores f32
-    /// precision for far bodies. The renderer subtracts it in clip space and
-    /// the camera builds `view_proj` against it; the two must agree.
+    /// The world-space point the render frame is centered on: the camera
+    /// target's center (`camera_target.render_origin()`), `ZERO` for
+    /// Earth/Moon. The renderer subtracts it (on the CPU) from each body's
+    /// absolute world position below so the GPU only ever sees small,
+    /// target-local coordinates; it is NOT uploaded to the shader.
     pub render_origin: Vec3,
-    /// Unit vector toward the Sun in the world frame.
-    pub sun_dir: Vec3,
-    /// Sun position in the world frame, km (true geocentric). Lights the
-    /// planets, which need the Sun direction *at the planet*, not Earth's
-    /// `sun_dir`.
+    /// Sun position in the absolute world frame, km (true geocentric). The
+    /// renderer expresses it relative to `render_origin` and every lit pass
+    /// derives its Sun direction from it (`normalize(sun - surface)`); there is
+    /// no Earth-fixed `sun_dir` in the render path.
     pub sun_pos_world: Vec3,
     /// World -> star-texture (galactic) rotation for the equirectangular
     /// star-map lookup (uploaded as `star_rot_inv`). This is the
     /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
     /// from the equatorial frame the camera rig uses.
     pub star_rot_inv: Mat3,
-    /// Moon center in the world frame (km), at true scale and distance.
+    /// Moon center in the absolute world frame (km), at true scale and
+    /// distance.
     pub moon_pos_world: Vec3,
     /// Rotation from the Moon's body-fixed (selenographic) frame to the world
     /// frame - the ephemeris + IAU lunar orientation. Applied to the lunar

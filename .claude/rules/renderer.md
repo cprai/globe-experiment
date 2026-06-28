@@ -67,24 +67,30 @@ Key overrides from `get_default_config` defaults (both are load-bearing):
    causes judder).
 Device requested with `Features::empty()` + `experimental_features: disabled`.
 
+## Render frame — all positions are camera-target-local
+
+**The whole shader works in the render frame: every position uniform is relative
+to the camera target's center.** `prepare` subtracts `RenderState.render_origin`
+on the CPU from each absolute body position before upload, so the GPU never sees
+an absolute world position (the far-planet f32-jitter fix). There is **no
+`render_origin` uniform and no `sun_dir`** — the shader is purely local and
+derives every Sun direction from `sun_pos`. The orbited body's position is a
+bit-exact zero (`pos - render_origin`), so its mesh draws in local coordinates.
+For Earth/Moon (`render_origin == 0`) the render frame is the absolute frame.
+
 ## Uniforms struct layout (must match Rust `Uniforms` and WGSL `Uniforms`)
 
 ```
-view_proj:    mat4x4<f32>
-camera_pos:   vec3<f32> + 1 f32 pad  (_pad0)   // km
-sun_dir:      vec3<f32> + 1 f32 pad  (_pad1)
+view_proj:    mat4x4<f32>            // built in the render frame (camera.rs)
+camera_pos:   vec3<f32> + 1 f32 pad  (_pad0)   // eye, render frame km
 star_rot_inv: mat3x3<f32>            // Rust: 3 columns each padded to [f32;4]
 marker:       vec4<f32>              // x,y = viewport px; z = radius px; w = unused
 moon_rot:     mat3x3<f32>            // body-fixed -> world; cols padded to [f32;4]
-moon_pos_world: vec3<f32> + 1 f32 pad (_pad2)   // Moon center, km
+moon_pos:     vec3<f32> + 1 f32 pad (_pad2)   // Moon center, render frame km
 moon_params:  vec4<f32>              // x = Moon radius km; y = Earth radius km;
                                      //   z = Sun angular radius rad; w = unused
-render_origin: vec3<f32> + 1 f32 pad (_pad3)    // floating origin, km; ZERO for
-                                     //   Earth/Moon. Subtracted in every vertex
-                                     //   shader's clip computation.
-sun_pos_world: vec3<f32> + 1 f32 pad (_pad4)    // Sun pos km; lights the planets
-                                     //   AND aims the backdrop sun disc
-                                     //   (normalize(sun_pos_world-render_origin))
+sun_pos:      vec3<f32> + 1 f32 pad (_pad4)   // Sun, render frame km; lights every
+                                     //   body + aims the backdrop disc
 ```
 
 Key: WGSL `mat3x3` columns have `vec4` stride, so the Rust struct pads each
@@ -93,18 +99,23 @@ instance buffer** (`MarkerInstance { position: vec3, visible: f32 }`), not
 in the uniform block. The uniform and marker instances are written every frame
 in `prepare` (`queue.write_buffer`). The Moon mesh is a separate vertex/index
 buffer (`mesh::moon_ellipsoid`), drawn with its own model transform via
-`moon_rot`/`moon_pos_world`; the Earth shell mesh is rebound for the atmosphere
+`moon_rot`/`moon_pos`; the Earth shell mesh is rebound for the atmosphere
 pass that follows it.
 
 **Planets (group 1).** Each planet has its own mesh (`mesh::planet_ellipsoid`),
-a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos_world` vec3 +
-`radius_km`), and a group-1 bind group (uniform + texture + the shared sampler).
-The planet pipeline (`vs_planet`/`fs_planet`, layout `[group0, group1]`, same
-solid-body reversed-Z depth as the Moon) draws each planet in `RenderState.planets`
-order (empty except the solar-system scenario, so `planet_count` gates it). The 7
-planet textures live ONLY in group 1, so group 0 stays at 9 sampled textures —
-clear of the portable 16-per-stage limit. **Draw order: stars -> Earth surface
--> Moon -> planets -> atmosphere -> markers.**
+a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render
+frame) + `radius_km`), and a group-1 bind group (uniform + texture + the shared
+sampler). The planet pipeline (`vs_planet`/`fs_planet`, layout `[group0,
+group1]`, same solid-body reversed-Z depth as the Moon) draws each planet in
+`RenderState.planets` order (empty except the solar-system scenario, so
+`planet_count` gates it). The 7 planet textures live ONLY in group 1, so group 0
+stays at 9 sampled textures — clear of the portable 16-per-stage limit.
+
+**Earth-system gate.** `prepare` sets `draw_earth_system = (render_origin == 0)`;
+`render` draws the Earth surface, atmosphere, Moon, and markers only when true
+(orbiting Earth/Moon). Orbiting a planet they are skipped. **Draw order: stars
+-> Earth surface -> Moon -> planets -> atmosphere -> markers** (the Earth-system
+ones gated).
 
 ## Bind group 0 layout
 
@@ -136,7 +147,7 @@ per draw.
 
 | binding | resource | notes |
 |---|---|---|
-| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos_world` + `radius_km` |
+| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos` (render frame) + `radius_km` |
 | 1 | planet texture | `Rgba8UnormSrgb` (8K for inner/gas, 2K for ice giants) |
 | 2 | sampler | the shared `earth_sampler` (repeat U / clamp V) |
 

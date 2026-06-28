@@ -65,7 +65,6 @@ impl Simulation for SolarSystemSimulation {
             view_proj,
             camera_pos: eye,
             render_origin: target.render_origin(),
-            sun_dir: celestial.sun_dir,
             sun_pos_world: celestial.sun_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
             moon_pos_world: celestial.moon_pos_world,

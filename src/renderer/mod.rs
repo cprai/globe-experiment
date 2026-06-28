@@ -374,10 +374,9 @@ fn request_adapter_device(
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [f32; 16],
+    /// Camera eye in the render frame (km) = relative to the camera target.
     camera_pos: [f32; 3],
     _pad0: f32,
-    sun_dir: [f32; 3],
-    _pad1: f32,
     /// Inverse star map rotation (world -> galactic texture frame);
     /// mat3x3 columns padded to vec4 stride.
     star_rot_inv: [[f32; 4]; 3],
@@ -387,18 +386,16 @@ struct Uniforms {
     marker: [f32; 4],
     /// Moon body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
     moon_rot: [[f32; 4]; 3],
-    /// Moon center in the world frame (km).
-    moon_pos_world: [f32; 3],
+    /// Moon center in the render frame (km) = relative to the camera target.
+    moon_pos: [f32; 3],
     _pad2: f32,
     /// Eclipse params: x = Moon mean radius km, y = Earth mean radius km,
     /// z = Sun angular radius rad, w = unused.
     moon_params: [f32; 4],
-    /// Floating-origin world point (km); subtracted from world positions in
-    /// every vertex shader. ZERO for Earth/Moon targets.
-    render_origin: [f32; 3],
-    _pad3: f32,
-    /// Sun position in the world frame (km), for planet lighting.
-    sun_pos_world: [f32; 3],
+    /// Sun position in the render frame (km) = relative to the camera target.
+    /// Every lit pass derives its Sun direction from this; there is no
+    /// Earth-fixed `sun_dir`.
+    sun_pos: [f32; 3],
     _pad4: f32,
 }
 
@@ -410,8 +407,11 @@ struct Uniforms {
 struct PlanetUniform {
     /// Body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
     rot: [[f32; 4]; 3],
-    /// Planet center in the world frame (km).
-    pos_world: [f32; 3],
+    /// Planet center in the render frame (km) = relative to the camera target.
+    /// For the ORBITED planet this is exactly zero (its center IS the render
+    /// origin), so its mesh is drawn in pure local coordinates - the key to
+    /// killing the far-planet f32 jitter.
+    pos: [f32; 3],
     /// Planet mean radius (km).
     radius_km: f32,
 }
@@ -486,6 +486,14 @@ struct GlobeRenderer {
     /// Number of planets to draw this frame (0 except the solar-system
     /// scenario).
     planet_count: u32,
+    /// Whether to draw the Earth system this frame: the Earth surface, the
+    /// atmosphere, the Moon, and any satellite markers. True only when the
+    /// camera target is Earth or the Moon (render origin at the Earth, so their
+    /// absolute meshes are also the local meshes). When orbiting a planet these
+    /// are skipped - the Earth's atmosphere physics is Earth-centered and
+    /// meaningless billions of km away, and drawing it there would otherwise
+    /// need the absolute (imprecise) world.
+    draw_earth_system: bool,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Per-satellite marker instance data (position + visibility), drawn
@@ -1275,6 +1283,7 @@ impl GlobeRenderer {
             planet_pipeline,
             planets,
             planet_count: 0,
+            draw_earth_system: true,
             uniforms,
             bind_group,
             markers,
@@ -1301,6 +1310,14 @@ impl GlobeRenderer {
     ) {
         let (width, height) = viewport;
 
+        // Everything the GPU sees is in the RENDER FRAME: positions relative to
+        // `render.render_origin` (the camera target's center). The renderer does
+        // the subtraction here on the CPU so the shader only ever handles small,
+        // target-local coordinates - the orbited body lands exactly at the
+        // origin (its absolute center IS render_origin, so the difference is a
+        // bit-exact zero), which is what keeps far planets from jittering.
+        let origin = render.render_origin;
+
         // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
         // columns are padded to vec4 stride.
         let star_cols = render.star_rot_inv.to_cols_array_2d();
@@ -1310,8 +1327,6 @@ impl GlobeRenderer {
             view_proj: render.view_proj.to_cols_array(),
             camera_pos: render.camera_pos.to_array(),
             _pad0: 0.0,
-            sun_dir: render.sun_dir.to_array(),
-            _pad1: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
@@ -1319,7 +1334,7 @@ impl GlobeRenderer {
             moon_rot: std::array::from_fn(|c| {
                 [moon_cols[c][0], moon_cols[c][1], moon_cols[c][2], 0.0]
             }),
-            moon_pos_world: render.moon_pos_world.to_array(),
+            moon_pos: (render.moon_pos_world - origin).to_array(),
             _pad2: 0.0,
             moon_params: [
                 render.moon_radius_km,
@@ -1327,22 +1342,27 @@ impl GlobeRenderer {
                 SUN_ANGULAR_RADIUS_RAD,
                 0.0,
             ],
-            render_origin: render.render_origin.to_array(),
-            _pad3: 0.0,
-            sun_pos_world: render.sun_pos_world.to_array(),
+            sun_pos: (render.sun_pos_world - origin).to_array(),
             _pad4: 0.0,
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
-        // One model uniform per planet to draw this frame. `render.planets` is
-        // in planet::ALL order (empty for non-solar scenarios), the same order
-        // as `self.planets`, so they zip 1:1; `planet_count` gates the draw.
+        // The Earth system (Earth surface + atmosphere + Moon + markers) renders
+        // only when orbiting the Earth or the Moon, i.e. the render origin is at
+        // the Earth. Orbiting a planet, the Earth/Moon are a far speck and the
+        // atmosphere is Earth-centered physics, so they are skipped.
+        self.draw_earth_system = origin == glam::Vec3::ZERO;
+
+        // One model uniform per planet to draw this frame, each at its center
+        // RELATIVE to the render origin. `render.planets` is in planet::ALL
+        // order (empty for non-solar scenarios), the same order as
+        // `self.planets`, so they zip 1:1; `planet_count` gates the draw.
         self.planet_count = render.planets.len() as u32;
         for (gpu, state) in self.planets.iter().zip(&render.planets) {
             let rot_cols = state.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
-                pos_world: state.pos_world.to_array(),
+                pos: (state.pos_world - origin).to_array(),
                 radius_km: state.planet.mean_radius_km(),
             };
             queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&planet_uniform));
@@ -1374,27 +1394,30 @@ impl GlobeRenderer {
         render_pass.set_vertex_buffer(0, self.vertices.slice(..));
         render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
 
-        // Backdrop first, then the surface (which writes depth). The Moon then
-        // draws against that depth (the Earth occludes it), and the scattering
-        // pass adds atmosphere over the disc (aerial perspective) and the limb.
+        // Backdrop first; it always draws (the stars/Sun frame every body).
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+        // The Earth surface (which writes depth), the Moon, then the atmosphere
+        // over the disc and limb - drawn only when orbiting the Earth/Moon (the
+        // render origin is at the Earth). Orbiting a planet they would be a far
+        // speck (and the Earth-centered atmosphere physics is meaningless), so
+        // they are skipped, leaving just the planets + backdrop.
+        if self.draw_earth_system {
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        // The Moon: its own mesh + model transform. Drawn after the Earth so the
-        // depth buffer resolves their mutual occlusion (including a partial limb
-        // when the Moon is half-hidden behind the planet).
-        render_pass.set_pipeline(&self.moon_pipeline);
-        render_pass.set_vertex_buffer(0, self.moon_vertices.slice(..));
-        render_pass.set_index_buffer(self.moon_indices.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
+            render_pass.set_pipeline(&self.moon_pipeline);
+            render_pass.set_vertex_buffer(0, self.moon_vertices.slice(..));
+            render_pass.set_index_buffer(self.moon_indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
+        }
 
         // The planets: each its own mesh + group-1 bind group (model uniform +
-        // texture), the same solid-body depth setup as the Moon. Only the
-        // solar-system scenario fills `planets` (planet_count > 0); every other
-        // scenario skips the pipeline entirely. group 0 stays bound from above.
+        // texture), the same solid-body depth setup as the Moon. The orbited
+        // planet is drawn in local coordinates (its center is the render
+        // origin); the others sit far off as specks. Only the solar-system
+        // scenario fills `planets` (planet_count > 0). group 0 stays bound.
         if self.planet_count > 0 {
             render_pass.set_pipeline(&self.planet_pipeline);
             for gpu in self.planets.iter().take(self.planet_count as usize) {
@@ -1405,20 +1428,20 @@ impl GlobeRenderer {
             }
         }
 
-        // The atmosphere reuses the globe shell mesh - rebind it.
-        render_pass.set_vertex_buffer(0, self.vertices.slice(..));
-        render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.set_pipeline(&self.atmosphere_pipeline);
-        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+        if self.draw_earth_system {
+            // The atmosphere reuses the globe shell mesh - rebind it.
+            render_pass.set_vertex_buffer(0, self.vertices.slice(..));
+            render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_pipeline(&self.atmosphere_pipeline);
+            render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        // The satellite markers last, as screen overlays: one instanced draw,
-        // one instance per tracked object. The quad corners are generated in
-        // the vertex shader; the instance buffer supplies each marker's world
-        // position and visibility. Skipped entirely when nothing is tracked.
-        if self.marker_count > 0 {
-            render_pass.set_pipeline(&self.marker_pipeline);
-            render_pass.set_vertex_buffer(0, self.markers.slice(..));
-            render_pass.draw(0..6, 0..self.marker_count);
+            // The satellite markers last, as screen overlays: one instanced
+            // draw, one instance per tracked object. Skipped when none tracked.
+            if self.marker_count > 0 {
+                render_pass.set_pipeline(&self.marker_pipeline);
+                render_pass.set_vertex_buffer(0, self.markers.slice(..));
+                render_pass.draw(0..6, 0..self.marker_count);
+            }
         }
     }
 }

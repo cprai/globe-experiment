@@ -26,11 +26,15 @@ rotation (correct near side + libration), lit by the Sun, with **mutual
 Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood
 moon"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
-sun-lit with simple Lambert; because they sit millions-to-billions of km out, a
-planet target renders with a **floating origin** (the scene is drawn relative to
-the orbited planet's center; Earth/Moon keep the origin at Earth, bit-identical
-to before). A **reversed-Z depth buffer** (Depth32Float) makes Earth occlude the
-Moon. **Past scenarios only** (before build date) — what makes full EOP accuracy
+sun-lit with simple Lambert. Because they sit millions-to-billions of km out
+(past f32 precision), **all rendering is done in a camera-target-local "render
+frame"**: every position is uploaded relative to the camera target's center, so
+the orbited body sits at a bit-exact zero and far planets do not jitter. There
+is no Earth-fixed origin or `sun_dir` in the render path — every body is lit from
+the Sun *position*. The Earth surface/atmosphere/Moon/markers draw only when
+orbiting Earth/Moon; orbiting a planet, only the planets + backdrop draw. For
+Earth/Moon (render origin at the Earth) geometry stays bit-identical. A
+**reversed-Z depth buffer** (Depth32Float) makes Earth occlude the Moon. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 

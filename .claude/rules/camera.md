@@ -40,22 +40,32 @@ an event on launch (solar eclipse: Earth target aimed at `-sun_dir`; lunar
 eclipse: Moon target aimed at `moon_pos_world`, so it launches orbiting the
 Moon); the default constructor `::new` still gives the full-globe Earth view.
 
-## Floating origin (planet targets)
+## Render frame (floating origin) — all rendering is camera-target-local
 
 A planet sits millions-to-billions of km from Earth — past f32 precision in
-world-km, where an un-shifted scene jitters/facets and the camera swims. So a
-**planet target renders with a floating origin**: `CameraTarget::render_origin()`
-returns the planet's center (and `Vec3::ZERO` for Earth/Moon). `Camera::view_proj`
-builds the view from `eye - render_origin` / `target - render_origin`, and every
-vertex shader subtracts the **same** `uniforms.render_origin` in clip space
-(`world - render_origin`) while keeping `world_pos` true-world for lighting. The
-two must agree. For Earth/Moon the origin is `ZERO`, so the clip subtraction is
-`- 0.0` everywhere and the **geometry** is bit-identical to the pre-planet
-renderer (verified by byte-equal PNGs); the only non-geometry change is the
-backdrop sun disc now being body-relative (< 1 LSB on the sun-disc pixels for
-Earth/Moon — see "Backdrop anchoring"). `RenderState.render_origin` carries the
-value; `eye()` still
-returns the true-world eye for the `camera_pos` uniform.
+world-km, where forming an absolute position jitters/facets the body and the
+camera swims. So **everything the GPU sees is in the render frame: positions
+relative to the camera target's center** (`CameraTarget::render_origin()` — the
+planet's center, or `Vec3::ZERO` for Earth/Moon). The GPU never handles an
+absolute world position.
+
+- `RenderState.render_origin` is the target center; the renderer subtracts it on
+  the **CPU** (in `prepare`) from every absolute body position
+  (`sun_pos_world`, `moon_pos_world`, each planet's `pos_world`) before upload.
+  `render_origin` is **not** a shader uniform — the shader is purely local.
+- The orbited body's center IS `render_origin`, so its uploaded position is a
+  **bit-exact zero** (`pos - render_origin == 0`): its mesh is drawn in pure
+  local coordinates, which is what kills the jitter. (Even the f64->f32 ephemeris
+  rounding cancels here, since the camera target uses the *same* f32 value.)
+- `Camera::view_proj` / `Camera::eye_relative` build the rig via
+  `world_frame_relative`: `(center - render_origin) + c2w*offset` — they never
+  form the absolute eye (`absolute_eye - render_origin` would cancel
+  catastrophically, snapping the view translation to ~hundreds of km). For the
+  orbited body `center == render_origin`, so the rig is just `c2w*offset`.
+- For Earth/Moon (`render_origin == 0`) the render frame **is** the absolute
+  frame, so the camera geometry is bit-identical to the pre-planet renderer.
+  (Lighting differs by < 1 LSB: every pass now derives the Sun direction from
+  the Sun *position* rather than a precomputed `sun_dir`.)
 
 ## Camera target (orbit Earth, Moon, or a planet)
 
@@ -63,12 +73,12 @@ The camera orbits a **`CameraTarget`** (`{ Earth, Moon { center_world },
 Planet { planet, center_world } }`, defined in `simulation`, plain data +
 geometry accessors delegating to `earth` / `moon` / `planet` — a sanctioned
 `simulation`->`application` data edge like `RenderState`).
-`Camera` holds a `target` field. The rig math is unchanged for Earth (center =
-origin, output bit-identical); for the Moon (or a planet) `world_frame` offsets
-the rig by the body center (`eye_world = center + c2w*eye_offset`), so the camera
-orbits the body and stays star-fixed while tracking its moving ephemeris position.
-`same_kind` treats two `Planet`s as equal only when the *same* planet (so cycling
-Mars->Jupiter reframes); `retarget` re-aims at any off-origin center.
+`Camera` holds a `target` field. The rig is built by `world_frame_relative` in
+the render frame (see above): for Earth/Moon it equals the absolute rig; for a
+planet it is the small local offset. The camera stays star-fixed while tracking
+the body's moving ephemeris position. `same_kind` treats two `Planet`s as equal
+only when the *same* planet (so cycling Mars->Jupiter reframes); `retarget`
+re-aims at any off-origin center.
 The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
@@ -91,18 +101,17 @@ absolute position on the celestial sphere (the stars are at infinity — no
 parallax, no zoom dependence). Changing the *star* anchoring reintroduces
 parallax between sun and stars (a fixed bug).
 
-The **sun disc** is drawn in the direction the **orbited body** sees the Sun:
-`normalize(sun_pos_world - render_origin)`, NOT the Earth-fixed `sun_dir`. The
-Sun is a solar-system object, so from a distant planet it is in a wholly
-different direction than from Earth (e.g. ~160 deg away at Jupiter); using
-`render_origin` makes the disc agree with that planet's terminator (`fs_planet`
-lights from `sun_pos_world - world_pos`, the same direction) and stays
-parallax-free under local orbit/zoom (`render_origin` is constant while orbiting
-one body). For Earth/Moon targets `render_origin` is 0, so the disc is the
-Earth->Sun direction as before (a re-render diff is < 1 LSB on the sun-disc
-pixels only, from `normalize(sun_pos_world)` vs the unit `sun_dir`). The
-Earth/Moon surface passes (`fs_main`/`fs_atmosphere`/`fs_moon`) still light from
-`sun_dir` — they are the dedicated Earth/Moon passes, always at/near the origin.
+**There is no Earth-fixed `sun_dir` in the render path.** Every lit pass derives
+its Sun direction from `uniforms.sun_pos` (the Sun in the render frame =
+relative to the camera target): surfaces use `normalize(sun_pos - world_pos)`
+(Earth `fs_main`, Moon `fs_moon`, `fs_planet`), and the backdrop sun disc
+(`fs_stars`) uses `normalize(sun_pos)` (the camera target's own direction to the
+Sun). The Sun is a solar-system object, so from a distant planet it is in a
+wholly different direction than from Earth (e.g. ~160 deg away at Jupiter), and
+this is what makes the disc agree with that planet's terminator. It is
+parallax-free under local orbit/zoom (`sun_pos` is constant while orbiting one
+body). For Earth/Moon it is the Earth->Sun direction as before (< 1 LSB diff,
+position-derived vs the old precomputed unit `sun_dir`).
 
 The star shell (`vs_stars`) is **centered on the camera** (`world = camera_pos +
 normal * STARS_RADIUS_KM`), so it always encloses the eye and the camera-relative

@@ -245,7 +245,9 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             self.controller.reset_animation();
         }
 
-        let eye = self.camera.eye(celestial_to_world);
+        // The eye in the floating-origin (render) frame; the renderer works in
+        // that frame so far planet targets stay f32-precise.
+        let eye = self.camera.eye_relative(celestial_to_world);
         let view_proj = self.camera.view_proj(aspect, celestial_to_world);
         let render_state = self.simulation.frame_state(eye, view_proj);
 

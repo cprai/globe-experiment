@@ -42,13 +42,21 @@ paths:
   occlusion before the additive atmosphere. The planets use a separate pipeline +
   group-1 bind group (`vs_planet`/`fs_planet`); only the solar-system scenario
   fills them.
-- **Floating origin: every vertex pass clips in `world - uniforms.render_origin`.**
-  A planet target sets `render_origin` to the planet center (far past f32
-  precision otherwise) and `Camera::view_proj` is built against the same origin;
-  `world_pos` passed to fragments stays true-world for lighting. For Earth/Moon
-  `render_origin` is `ZERO`, so the clip subtraction is `- 0.0` (geometry
-  bit-identical). Planets are lit by the Sun direction *at the planet*
-  (`normalize(sun_pos_world - world_pos)`), not Earth's `sun_dir`.
+- **Earth system is gated to Earth/Moon targets.** The Earth surface, atmosphere,
+  Moon, and satellite markers draw only when `render_origin == 0` (orbiting the
+  Earth or the Moon); the renderer sets a `draw_earth_system` flag. Orbiting a
+  planet they would be a far speck and the Earth-centered atmosphere physics is
+  meaningless, so they are skipped — only the planets + backdrop draw.
+- **Render frame (floating origin): the shader is fully camera-target-local.**
+  Every position uniform (`camera_pos`, `moon_pos`, `sun_pos`, the per-planet
+  `pos`) is **already relative to the camera target** — the renderer subtracts
+  `render_origin` on the CPU, so there is NO `render_origin` uniform and no
+  `world - render_origin` in any vertex shader. The orbited body's `pos` is a
+  bit-exact zero, so its mesh is drawn in pure local coordinates (the f32-jitter
+  fix). For Earth/Moon (`render_origin == 0`) the render frame is the absolute
+  frame, so geometry is bit-identical. There is **no `sun_dir`**: every lit pass
+  derives its Sun direction from `sun_pos` (`normalize(sun_pos - world_pos)` for
+  surfaces, `normalize(sun_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
   per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
 - **Mutual eclipse shadows are analytic** (`sun_visibility` in `globe.wgsl`):
@@ -61,22 +69,21 @@ paths:
 - **Terminator / night-side darkening must use the GEOMETRIC normal**
   (`dot(n_geo, sun)`), never the bump-mapped normal `n`. Bump detail on the
   day/night edge speckles it.
-- **Star map and Sun are ephemeris-driven.** `sun_dir` from JPL DE440;
-  `star_rot_inv = P * R_itrf2gcrf * P^T`. Do not replace with a sun-attached
-  rotation. The matrix uploaded to the shader additionally folds in a static
-  galactic->equatorial offset (`star_tex_rot_inv`), because the star texture is
-  drawn in galactic coordinates; see `simulation.md`.
+- **Star map and Sun are ephemeris-driven.** Sun *position* from JPL DE440
+  (uploaded as `sun_pos`, render-frame); `star_rot_inv = P * R_itrf2gcrf * P^T`.
+  Do not replace with a sun-attached rotation. The star matrix additionally folds
+  in a static galactic->equatorial offset (`star_tex_rot_inv`), because the star
+  texture is drawn in galactic coordinates; see `simulation.md`.
 - **Backdrop anchoring**: star lookup is a function of the camera-relative view
   direction, not position on the celestial sphere. Changing the *star* anchoring
   reintroduces parallax between sun and stars (a fixed bug). The star shell is
   **centered on the camera** (`vs_stars`: `camera_pos + normal *
   STARS_RADIUS_KM`), so it always encloses the eye - required for non-Earth
   targets (orbiting the Moon is ~384,000 km outside an origin-centered shell;
-  the Sun and half the sky vanished). The **sun disc** is drawn in the orbited
-  body's direction to the Sun (`normalize(sun_pos_world - render_origin)`), NOT
-  the Earth-fixed `sun_dir` - so it agrees with each planet's terminator
-  (`fs_planet` lights from the same `sun_pos_world - world_pos`). Earth/Moon
-  (`render_origin` 0) get the Earth->Sun direction as before. See `camera.md`.
+  the Sun and half the sky vanished). The **sun disc** (`fs_stars`) is drawn in
+  the orbited body's direction to the Sun (`normalize(sun_pos)`, render-frame) so
+  it agrees with each planet's terminator (`fs_planet` lights from the same Sun
+  position). See `camera.md`.
 
 ## Look-tuning discipline
 

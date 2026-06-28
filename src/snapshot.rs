@@ -221,13 +221,12 @@ pub fn run(params: RenderParams) {
     let distance = camera.clamp_distance(scene.camera.distance);
     let camera = Camera { distance, ..camera };
     let aspect = params.width as f32 / params.height.max(1) as f32;
-    let eye = camera.eye(celestial_to_world);
+    let eye = camera.eye_relative(celestial_to_world);
 
     let render = RenderState {
         view_proj: camera.view_proj(aspect, celestial_to_world),
         camera_pos: eye,
         render_origin: camera.target.render_origin(),
-        sun_dir: celestial.sun_dir,
         sun_pos_world: celestial.sun_pos_world,
         star_rot_inv: celestial.star_tex_rot_inv,
         moon_pos_world: celestial.moon_pos_world,
