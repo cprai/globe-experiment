@@ -34,7 +34,9 @@ paths:
   day/night edge speckles it.
 - **Star map and Sun are ephemeris-driven.** `sun_dir` from JPL DE440;
   `star_rot_inv = P * R_itrf2gcrf * P^T`. Do not replace with a sun-attached
-  rotation.
+  rotation. The matrix uploaded to the shader additionally folds in a static
+  galactic->equatorial offset (`star_tex_rot_inv`), because the star texture is
+  drawn in galactic coordinates; see `simulation.md`.
 - **Backdrop anchoring**: star lookup and sun disc are functions of the
   camera-relative view direction (`world_pos - camera_pos`), not position on
   the celestial sphere. Changing this reintroduces parallax between sun and

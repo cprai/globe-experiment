@@ -13,6 +13,16 @@
 //! world frame is permuted (Y = north, Z = prime meridian, X = 90 deg E). The
 //! permutation `p` maps (x,y,z) -> (y,z,x) - the same permutation the
 //! satellite path expresses via `earth::surface_position`/`geodetic_normal`.
+//!
+//! Star-map frame note: the embedded star texture
+//! (`8k_stars_milky_way.jpg`) is drawn in *galactic* coordinates - the Milky
+//! Way runs as a horizontal band through the image center, the galactic bulge
+//! near mid-image. The equirectangular lookup in `fs_stars` is equatorial
+//! (its pole = the celestial pole), so the texture must be re-oriented by the
+//! fixed galactic->equatorial rotation before sampling. `GALACTIC_OFFSET`
+//! carries that constant; it is folded into `star_tex_rot_inv` only (the
+//! shader-facing matrix), leaving `star_rot_inv` as the equatorial frame the
+//! inertial camera rig is built from.
 
 use glam::{Mat3, Vec3};
 use satkit::frametransform::{qgcrf2itrf_approx, qitrf2gcrf_approx};
@@ -31,6 +41,30 @@ const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2
 /// months of predictions past the build date. Since this is a past-only
 /// simulation tool, the snapshot stays valid for every in-range date.
 const EOP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EOP-All.csv"));
+
+/// Standard J2000 equatorial(ICRS)->galactic rotation `g = R * e`, in standard
+/// (non-permuted) axes, from the IAU galactic-pole definition: north galactic
+/// pole at RA 192.85948 deg / Dec +27.12825 deg, galactic center (l=0, b=0) at
+/// RA 266.40500 deg / Dec -28.93617 deg, longitude of the north celestial pole
+/// l = 122.93192 deg. `R^T` is the galactic->equatorial inverse. Used to
+/// re-orient the galactic-drawn star texture into the shader's equatorial
+/// equirectangular lookup (see the module's star-map frame note). glam stores
+/// matrices column-major, so this lists the *columns* (images of the standard
+/// basis), i.e. the transpose of how the matrix is usually printed by row.
+// The full catalogued digits are kept verbatim for provenance; f32 silently
+// rounds them (well below the sub-pixel star-map tolerance).
+#[allow(clippy::excessive_precision)]
+const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
+    -0.0548755604,
+    0.4941094279,
+    -0.8676661490,
+    -0.8734370902,
+    -0.4448296300,
+    -0.1980763734,
+    -0.4838350155,
+    0.7469822445,
+    0.4559837762,
+]);
 
 /// Initializes satkit's global state for fully offline, data-dir-free use.
 /// Must be called once at startup, before any ephemeris/frame-transform use.
@@ -67,9 +101,17 @@ pub fn init_satkit() {
 pub struct CelestialSphere {
     /// Unit vector toward the Sun in the Earth-fixed (ECEF) world frame.
     pub sun_dir: Vec3,
-    /// Rotation taking world (ECEF) view directions into the star map's
-    /// celestial (GCRF) frame; uploaded to the shader as `star_rot_inv`.
+    /// Rotation taking world (ECEF) view directions into the *equatorial*
+    /// celestial (GCRF) frame. This is the inertial frame the camera rig is
+    /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
+    /// shader samples the star texture with (that is `star_tex_rot_inv`).
     pub star_rot_inv: Mat3,
+    /// Rotation taking world (ECEF) view directions into the star *texture's*
+    /// galactic frame: `GALACTIC_OFFSET * star_rot_inv`. Uploaded to the shader
+    /// as `star_rot_inv` (the equirectangular lookup matrix). Kept separate
+    /// from the camera-rig frame above so the static galactic->equatorial
+    /// re-orientation does not move existing scenarios' camera framing.
+    pub star_tex_rot_inv: Mat3,
     /// Subsolar geodetic latitude/longitude (degrees), for display.
     pub subsolar_lat_deg: f32,
     pub subsolar_lon_deg: f32,
@@ -104,6 +146,14 @@ impl CelestialSphere {
         );
         let star_rot_inv = p * r_itrf2gcrf * p.transpose();
 
+        // The star texture is drawn in galactic coordinates, but `fs_stars`
+        // does an equatorial equirectangular lookup. Re-express the equatorial
+        // direction in the texture's galactic frame: bring R_EQU2GAL into the
+        // permuted world axes (P R P^T) and compose with the equatorial
+        // orientation. Constant in time, so the camera stays inertial.
+        let galactic_offset = p * R_EQU2GAL * p.transpose();
+        let star_tex_rot_inv = galactic_offset * star_rot_inv;
+
         // Subsolar point (inverse of earth::geodetic_normal) for display.
         let subsolar_lat_deg = sun_dir.y.asin().to_degrees();
         let subsolar_lon_deg = sun_dir.x.atan2(sun_dir.z).to_degrees();
@@ -111,6 +161,7 @@ impl CelestialSphere {
         Self {
             sun_dir,
             star_rot_inv,
+            star_tex_rot_inv,
             subsolar_lat_deg,
             subsolar_lon_deg,
         }
@@ -125,4 +176,62 @@ fn nvec(v: Vector3) -> Vec3 {
 /// A numeris 3-vector from components (the ctor takes a column-major array).
 fn unit(x: f64, y: f64, z: f64) -> Vector3 {
     Vector3::new([[x], [y], [z]])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `R_EQU2GAL` must agree with the IAU galactic-pole definition: its
+    /// inverse (galactic->equatorial) maps the galactic center (1,0,0) and
+    /// the north galactic pole (0,0,1) back to their catalogued equatorial
+    /// RA/Dec. This validates the embedded matrix independently of any
+    /// render or time.
+    #[test]
+    fn galactic_axes_map_to_catalogued_radec() {
+        let equ_of = |gal: Vec3| {
+            let e = R_EQU2GAL.transpose() * gal;
+            let ra = e.y.atan2(e.x).to_degrees().rem_euclid(360.0);
+            let dec = e.z.clamp(-1.0, 1.0).asin().to_degrees();
+            (ra, dec)
+        };
+
+        let (gc_ra, gc_dec) = equ_of(Vec3::X);
+        assert!(
+            (gc_ra - 266.40500).abs() < 1e-3,
+            "galactic center RA {gc_ra}"
+        );
+        assert!(
+            (gc_dec - -28.93617).abs() < 1e-3,
+            "galactic center Dec {gc_dec}"
+        );
+
+        let (ngp_ra, ngp_dec) = equ_of(Vec3::Z);
+        assert!((ngp_ra - 192.85948).abs() < 1e-3, "NGP RA {ngp_ra}");
+        assert!((ngp_dec - 27.12825).abs() < 1e-3, "NGP Dec {ngp_dec}");
+    }
+
+    /// In the permuted texture frame the galactic center must land at the
+    /// equirectangular center (+Z, `u=0.5`) and the NGP at the pole (+Y,
+    /// `v=0`) - the convention `fs_stars` assumes. Checks the `P R P^T` bring.
+    #[test]
+    fn texture_frame_places_galactic_center_and_pole() {
+        let p = Mat3::from_cols(
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let galactic_offset = p * R_EQU2GAL * p.transpose();
+
+        // `galactic_offset` maps a permuted-equatorial dir to the permuted
+        // texture frame. Feed the permuted-equatorial galactic center / NGP.
+        let gc_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * Vec3::X));
+        let ngp_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * Vec3::Z));
+
+        assert!(
+            (gc_tex - Vec3::Z).length() < 1e-5,
+            "galactic center {gc_tex}"
+        );
+        assert!((ngp_tex - Vec3::Y).length() < 1e-5, "NGP {ngp_tex}");
+    }
 }

@@ -124,6 +124,8 @@ pub fn run(params: RenderParams) {
     // has no clock, no tracked satellites, and no SimulationState. The camera
     // math is identical to the windowed path (see `application`'s redraw).
     let celestial = CelestialSphere::at(&time);
+    // Camera rig uses the equatorial frame (`star_rot_inv`); the star texture
+    // is sampled with the galactic-corrected `star_tex_rot_inv` below.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
     let distance = Camera::clamp_distance(scene.camera.distance);
@@ -140,7 +142,7 @@ pub fn run(params: RenderParams) {
         view_proj: camera.view_proj(aspect, celestial_to_world),
         camera_pos: eye,
         sun_dir: celestial.sun_dir,
-        star_rot_inv: celestial.star_rot_inv,
+        star_rot_inv: celestial.star_tex_rot_inv,
         // Pure globe: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };

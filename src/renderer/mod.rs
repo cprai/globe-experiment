@@ -318,7 +318,8 @@ struct Uniforms {
     _pad0: f32,
     sun_dir: [f32; 3],
     _pad1: f32,
-    /// Inverse star map rotation; mat3x3 columns padded to vec4 stride.
+    /// Inverse star map rotation (world -> galactic texture frame);
+    /// mat3x3 columns padded to vec4 stride.
     star_rot_inv: [[f32; 4]; 3],
     /// Marker params shared by every marker: x,y = viewport size px,
     /// z = radius px, w = unused. (Per-marker position/visibility is

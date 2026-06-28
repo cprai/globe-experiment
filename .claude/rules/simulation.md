@@ -13,7 +13,8 @@ paths:
 | **GCRF/ICRF** | Geocentric Celestial Reference Frame; inertial; Z = celestial pole, X ~ vernal equinox | JPL ephemeris output; star (celestial) frame |
 | **ITRF** | Standard Earth-fixed ECEF: X = equator+prime-meridian, Y = 90°E, Z = north pole | Output of GCRF/TEME->Earth rotations |
 | **world** | Project frame: Y = north, Z = prime meridian, X = 90°E; km; origin = Earth center | Renderer (mesh, camera, uniforms) |
-| **celestial** | GCRF re-permuted to Y-up so the equirect star lookup's pole = celestial pole | Star map sampling; camera inertial rig |
+| **celestial** | GCRF re-permuted to Y-up (equatorial); pole = celestial pole | Camera inertial rig (`star_rot_inv`) |
+| **galactic** | celestial rotated by the static galactic->equatorial offset, so the galactic-drawn texture lines up with the equatorial equirect lookup | Star map sampling (`star_tex_rot_inv`) |
 
 The **world** frame is ITRF with axes permuted: `world (X,Y,Z) = ITRF (Y,Z,X)`.
 See `P` in `coordinates.md`.
@@ -52,9 +53,17 @@ Star map and Sun are **ephemeris-driven** — do not replace with a sun-attached
 rotation:
 - `sun_dir`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF (approx)
   -> world via P -> normalize.
-- `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> celestial), uploaded to
-  shader as-is. As time advances, the celestial sphere rotates at the sidereal
-  rate consistent with the Sun.
+- `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> equatorial celestial). This
+  is the frame the camera rig is built from (see `camera.md`). As time
+  advances, the celestial sphere rotates at the sidereal rate consistent with
+  the Sun.
+- The embedded star texture (`8k_stars_milky_way.jpg`) is drawn in **galactic**
+  coordinates (Milky Way horizontal, bulge centered), but `fs_stars` does an
+  equatorial equirectangular lookup. So the *shader-facing* matrix is
+  `star_tex_rot_inv = GALACTIC_OFFSET * star_rot_inv`, where `GALACTIC_OFFSET`
+  (in `celestial_sphere.rs`) is the static IAU galactic->equatorial rotation
+  brought into the permuted axes (`P R_EQU2GAL P^T`). Uploaded to the shader as
+  `star_rot_inv`; the equatorial `star_rot_inv` stays on the camera rig only.
 
 The Sun/star backdrop uses `*_approx` transforms (~1 arcsec): real UT1-UTC
 via `gmst` but approximate nutation and no polar motion. The satellite uses

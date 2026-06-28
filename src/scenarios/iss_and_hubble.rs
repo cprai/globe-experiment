@@ -105,7 +105,7 @@ impl Simulation for IssAndHubbleSimulation {
             view_proj,
             camera_pos: eye,
             sun_dir: self.simulation.celestial_sphere.sun_dir,
-            star_rot_inv: self.simulation.celestial_sphere.star_rot_inv,
+            star_rot_inv: self.simulation.celestial_sphere.star_tex_rot_inv,
             markers,
         }
     }

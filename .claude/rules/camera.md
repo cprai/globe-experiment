@@ -22,6 +22,13 @@ Because `star_rot_inv * celestial_to_world = I`, a rig held constant in the
 celestial frame yields a constant star lookup direction — **stars are locked
 to the camera while the ECEF globe spins underneath**.
 
+The rig is built from the **equatorial** `star_rot_inv` (the GCRF frame). The
+shader samples the star texture with a *different* matrix, `star_tex_rot_inv`
+= a static galactic->equatorial offset times `star_rot_inv` (the texture is
+drawn in galactic coordinates — see `simulation.md`). The offset is constant,
+so the camera stays inertial; keeping the rig on the equatorial frame means
+the re-orientation does not move existing scenarios' framing.
+
 `Camera.longitude` / `Camera.latitude` are **inertial directions**, not
 geographic coordinates. Do not move the camera into the ECEF/world frame.
 

@@ -70,8 +70,10 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   orientation, and the star backdrop are computed from the JPL DE440
   ephemeris (via the [satkit](https://crates.io/crates/satkit) crate) for the
   current simulated time, so the day/night terminator and the stars track real
-  astronomy as time advances. The camera is fixed relative to the stars, so the
-  Earth visibly rotates beneath it.
+  astronomy as time advances. The galactic-coordinate Milky Way texture is
+  re-oriented to the equatorial sky by a fixed galactic->equatorial rotation, so
+  the Milky Way crosses the sky at its true angle. The camera is fixed relative
+  to the stars, so the Earth visibly rotates beneath it.
 - Real Earth-orientation parameters: satellite positions use measured polar
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP

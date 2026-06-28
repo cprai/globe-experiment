@@ -2,9 +2,11 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     sun_dir: vec3<f32>,
-    // Inverse of the star map's orientation (the celestial sphere is rigidly
-    // attached to the sun: longitude spins it about the polar axis, latitude
-    // tilts it about the horizontal equinox axis).
+    // Inverse of the star map's orientation: rotates a camera-relative world
+    // direction into the star texture's frame for the equirectangular lookup.
+    // Ephemeris-driven (sidereal-rate) and includes the static
+    // galactic->equatorial offset, since the texture is drawn in galactic
+    // coordinates.
     star_rot_inv: mat3x3<f32>,
     // Marker params shared by every satellite marker:
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.

@@ -44,4 +44,8 @@ So P is consistent with every WGS84 helper and with every satkit result.
   duplicated.
 - Inverse (`fs_stars`, by direction `d`): `u = atan2(d.x, d.z)/(2*pi) + 0.5`,
   `v = acos(d.y)/pi`. Computed **per fragment** — interpolating `u` across a
-  triangle crossing the +/-180 seam would smear the entire texture.
+  triangle crossing the +/-180 seam would smear the entire texture. Here `d`
+  is in the star texture's frame: `d = star_tex_rot_inv * view_dir`. The
+  texture is drawn in **galactic** coordinates, so `star_tex_rot_inv` carries a
+  static galactic->equatorial offset on top of the equatorial orientation (see
+  `simulation.md`).

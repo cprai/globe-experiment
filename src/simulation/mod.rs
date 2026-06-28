@@ -63,8 +63,10 @@ pub struct RenderState {
     pub camera_pos: Vec3,
     /// Unit vector toward the Sun in the world frame.
     pub sun_dir: Vec3,
-    /// World -> celestial rotation for the star-map lookup (uploaded as
-    /// `star_rot_inv`).
+    /// World -> star-texture (galactic) rotation for the equirectangular
+    /// star-map lookup (uploaded as `star_rot_inv`). This is the
+    /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
+    /// from the equatorial frame the camera rig uses.
     pub star_rot_inv: Mat3,
     /// One marker per tracked satellite, in the same order as the scenario's
     /// satellite list. The renderer draws them instanced.
