@@ -5,9 +5,10 @@
 //! Geocentric model: the Earth stays the rendered globe at the origin in its
 //! Earth-fixed (ECEF) frame. The Sun's position comes from the ephemeris
 //! (GCRF, inertial); Earth's orientation (the GCRF<->ITRF rotation) maps it
-//! into the Earth-fixed frame and rotates the star backdrop. We use the
-//! IAU-76/FK5 "approx" transforms (~1 arcsec, well sub-pixel here), so no
-//! Earth-orientation (EOP) data file is needed - only the ephemeris.
+//! into the Earth-fixed frame and rotates the star backdrop. We use the full
+//! IERS-2010 transforms (sub-arcsec, matching the satellite path), which read
+//! the embedded EOP table plus the embedded IERS nutation/CIO tables (seeded
+//! in `init_satkit`) - no runtime data file is needed.
 //!
 //! Frame note: satkit uses standard ECEF/GCRF (Z = pole); this project's
 //! world frame is permuted (Y = north, Z = prime meridian, X = 90 deg E). The
@@ -25,7 +26,7 @@
 //! inertial camera rig is built from.
 
 use glam::{Mat3, Vec3};
-use satkit::frametransform::{qgcrf2itrf_approx, qitrf2gcrf_approx};
+use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf, qitrf2gcrf};
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, Vector3};
 
@@ -41,6 +42,15 @@ const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2
 /// months of predictions past the build date. Since this is a past-only
 /// simulation tool, the snapshot stays valid for every in-range date.
 const EOP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EOP-All.csv"));
+
+/// The IERS Conventions 2010 nutation/CIO series, embedded the same way as the
+/// ephemeris and EOP (build.rs downloads them straight into `OUT_DIR`). The
+/// full (non-approx) GCRF<->ITRF transforms read these for the CIP X/Y
+/// coordinates (`TAB5A`/`TAB5B`) and the CIO locator s (`TAB5D`); the approx
+/// transforms did not need them. Seeded in `init_satkit`.
+const TAB5A: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2a.txt"));
+const TAB5B: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2b.txt"));
+const TAB5D: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2d.txt"));
 
 /// Standard J2000 equatorial(ICRS)->galactic rotation `g = R * e`, in standard
 /// (non-permuted) axes, from the IAU galactic-pole definition: north galactic
@@ -69,7 +79,7 @@ const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
 /// Initializes satkit's global state for fully offline, data-dir-free use.
 /// Must be called once at startup, before any ephemeris/frame-transform use.
 ///
-/// Two pieces of satkit global state are seeded here, both from embedded bytes:
+/// Three kinds of satkit global state are seeded here, all from embedded bytes:
 ///
 /// 1. The JPL ephemeris singleton (`EPHEMERIS`). satkit lazily loads it from
 ///    disk on the first position query otherwise, after which this would fail
@@ -88,12 +98,24 @@ const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
 ///    warning satkit prints for lookups outside the table's date range (e.g. a
 ///    pre-1962 time), which then fall back to zeros.
 ///
-/// Panics if either embedded blob fails to parse (a broken build).
+/// 3. The IERS 2010 nutation/CIO tables (`TAB5A`/`TAB5B`/`TAB5D`). The full
+///    GCRF<->ITRF transforms the celestial sphere uses read these for the CIP
+///    X/Y series and the CIO locator s. They have the *same* stray-dir failure
+///    mode as the EOP table: satkit's lazy resolver would `from_file(..)` each
+///    one, recreating `satkit-data` (and panicking if absent). Seeding them up
+///    front consumes that one-shot load, and must happen before the first
+///    transform - which it does, since this runs at the top of each scenario.
+///
+/// Panics if any embedded blob fails to parse (a broken build).
 pub fn init_satkit() {
     satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
 
     satkit::earth_orientation_params::init_from_bytes(EOP).expect("init EOP from embedded bytes");
     satkit::earth_orientation_params::disable_eop_time_warning();
+
+    init_iers_table_from_bytes(IersTableId::Tab5A, TAB5A).expect("init IERS Tab5A from bytes");
+    init_iers_table_from_bytes(IersTableId::Tab5B, TAB5B).expect("init IERS Tab5B from bytes");
+    init_iers_table_from_bytes(IersTableId::Tab5D, TAB5D).expect("init IERS Tab5D from bytes");
 }
 
 /// Sun direction and star-map orientation for one instant, in the renderer's
@@ -131,14 +153,14 @@ impl CelestialSphere {
         // Sun position relative to Earth in GCRF (inertial), meters; rotate to
         // ITRF (Earth-fixed) and permute into the world frame.
         let sun_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sun ephemeris lookup");
-        let sun_itrf = qgcrf2itrf_approx(time) * sun_gcrf;
+        let sun_itrf = qgcrf2itrf(time) * sun_gcrf;
         let sun_dir = (p * nvec(sun_itrf)).normalize();
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
         // back to Y-up, so the equirectangular lookup's pole tracks the
         // celestial pole. As time advances this rotates the star map at the
         // sidereal rate, consistent with the Sun's motion above.
-        let q = qitrf2gcrf_approx(time);
+        let q = qitrf2gcrf(time);
         let r_itrf2gcrf = Mat3::from_cols(
             nvec(q * unit(1.0, 0.0, 0.0)),
             nvec(q * unit(0.0, 1.0, 0.0)),

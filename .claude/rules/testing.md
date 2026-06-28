@@ -25,6 +25,44 @@
   and shader sides and re-run — bit-identical output is the goal for neutral
   changes.
 
+## Astronomical correctness verification (Sun + star backdrop)
+
+How to prove the celestial sphere is astronomically right (not just that it
+renders), independent of satkit. Used to validate the full IERS-2010 switch.
+
+**Independent oracle.** Implement Meeus (*Astronomical Algorithms* 2nd ed.) in
+pure Python — solar position ch. 25 (apparent RA/Dec, ~0.01 deg) + sidereal
+time ch. 12 (GMST/GAST). Shares no code or data with satkit/DE440, so agreement
+is a real cross-check. Expect ~0.01 deg residual (Meeus's own theory error), no
+systematic bias.
+
+**Sun / Earth orientation — use the printed subsolar point.** `render` prints
+`subsolar: lat L lon O`. The relationships:
+- `subsolar_lat = solar declination` (delta).
+- `subsolar_lon = RA_sun - GAST` (reduce to +/-180). This is epoch-clean (GHA
+  is a physical ECEF angle), so it validates the Sun ephemeris AND the sidereal
+  Earth-rotation phase that also orients the stars. Run a spread of dates
+  (equinoxes/solstices + arbitrary + old, to exercise the EOP range); both
+  agree to <0.01 deg.
+
+**Star frame — instrument `star_rot_inv`, then revert.** Behind an env guard in
+`CelestialSphere::at`, map a world axis `w` to standard equatorial GCRF via
+`p.transpose() * (star_rot_inv * w)` (undo the Y-up permutation), then
+`RA=atan2(y,x)`, `Dec=asin(z)`. Check at **J2000.0** (`2000-01-01T12:00:00Z`),
+where the J2000/GCRF backdrop and the of-date sky coincide (epoch-clean):
+- Earth pole `w=(0,1,0)` -> **Dec = 90.000** (pole sits on the celestial pole).
+- Prime-meridian/equator point `w=(0,0,1)` -> **RA = GAST** (the star frame's
+  absolute rotational pinning equals sidereal time).
+- `star_rot_inv * sun_dir` -> Sun's RA/Dec on the backdrop, matches Meeus (Sun
+  lands among the correct constellations).
+
+**Precession sanity (what the IERS tables drive).** Away from J2000 the J2000-
+framed pole tilts off Dec 90 by general precession ~20"/yr: at 2024 the pole
+reads **Dec ~89.86** (0.136 deg over 24.5 yr) and RA quantities carry the
+matching ~0.3 deg precession-in-RA offset vs of-date GAST. These offsets are
+correct evolution of the of-date sky relative to the fixed ICRF backdrop, NOT
+bugs — their magnitude == precession is the confirmation.
+
 ## wgpu 27->29 migration notes (reference for a future version bump)
 
 From the phase-2 migration, in case wgpu bumps again:

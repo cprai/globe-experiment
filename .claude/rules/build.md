@@ -15,11 +15,15 @@ file so deleting one triggers a re-download or re-bake on the next build.
 ## EMBEDS table — verbatim downloads
 
 `embed_verbatim(embed, out_dir)` downloads to `OUT_DIR` unless already
-present. Currently seven entries:
+present. Currently ten entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) — embedded into
   the binary; loaded via `jplephem::init_from_bytes`.
 - **CelesTrak `EOP-All.csv`** (~2-3 MiB) — embedded; loaded via
   `earth_orientation_params::init_from_bytes`.
+- **IERS 2010 tables** `tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` (KB each,
+  from satkit's astrokit-astro-data bucket) — embedded; loaded via
+  `frametransform::init_iers_table_from_bytes` for the full celestial-sphere
+  GCRF<->ITRF transforms.
 - **Five 8K Earth/star textures** (JPEG/TIFF verbatim, ~21 MB total):
   `8k_earth_daymap.jpg`, `8k_earth_nightmap.jpg`, `8k_earth_normal_map.tif`,
   `8k_earth_specular_map.tif`, `8k_stars_milky_way.jpg`. Decoded at **runtime**

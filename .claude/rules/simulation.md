@@ -19,40 +19,46 @@ paths:
 The **world** frame is ITRF with axes permuted: `world (X,Y,Z) = ITRF (Y,Z,X)`.
 See `P` in `coordinates.md`.
 
-## init_satkit — must seed both (do not drop either seed)
+## init_satkit — must seed all three (do not drop any seed)
 
-**`init_satkit()` must seed both the ephemeris and the EOP table** before
-any satkit use. Call it once at the start of each scenario's `run()`.
+**`init_satkit()` must seed the ephemeris, the EOP table, and the three IERS
+nutation/CIO tables** before any satkit use. Call it once at the start of each
+scenario's `run()`.
 
 ```rust
 satkit::jplephem::init_from_bytes(EPHEMERIS)        // DE440 OnceLock
 satkit::earth_orientation_params::init_from_bytes(EOP)
 satkit::earth_orientation_params::disable_eop_time_warning()
+init_iers_table_from_bytes(IersTableId::Tab5A, TAB5A)   // CIP X series
+init_iers_table_from_bytes(IersTableId::Tab5B, TAB5B)   // CIP Y series
+init_iers_table_from_bytes(IersTableId::Tab5D, TAB5D)   // CIO locator s
 ```
 
-Where `EPHEMERIS` and `EOP` are embedded via `include_bytes!` from `OUT_DIR`.
+Where `EPHEMERIS`, `EOP`, and `TAB5A`/`TAB5B`/`TAB5D` are embedded via
+`include_bytes!` from `OUT_DIR`.
 
-**Why both seeds are required:**
+**Why every seed is required:**
 1. **Accuracy**: real EOP (polar motion + UT1-UTC) makes the satellite's
    `qteme2itrf` sub-arcsec. Without the EOP seed, all frame transforms
    silently fall back to zeros for EOP.
-2. **No stray dir**: every frame transform (including the `*_approx` ones)
-   reads satkit's global EOP table on first use. Satkit's default lazy loader
-   *creates an empty `satkit-data` dir next to the binary* as a side effect
-   (`datadir()` calls `create_dir_all`). Seeding up front consumes the
-   one-shot `DEFAULT_LOAD_ONCE` so that dir is never created.
+2. **No stray dir**: every frame transform reads satkit's global EOP table on
+   first use, and the full GCRF transforms additionally read the three IERS
+   tables. Satkit's default lazy loader *creates an empty `satkit-data` dir
+   next to the binary* as a side effect (`datadir()` calls `create_dir_all`)
+   and the IERS resolver also `from_file(..).unwrap()`s, panicking if absent.
+   Seeding all of them up front consumes the one-shot loads so that dir is
+   never created.
 
-**Full IERS-2010 for the celestial sphere** additionally needs the IERS
-nutation tables (Tab5A/5B/5D) bundled and seeded — not done. Without seeding
-those, the full (non-approx) GCRF transforms would panic + recreate
-`satkit-data`. See `backlog.md`.
+The IERS tables are needed because the celestial sphere now uses the **full
+IERS-2010** GCRF<->ITRF transforms (`qgcrf2itrf`/`qitrf2gcrf`), not the
+`*_approx` ones.
 
 ## Ephemeris-driven Sun & star map
 
 Star map and Sun are **ephemeris-driven** — do not replace with a sun-attached
 rotation:
-- `sun_dir`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF (approx)
-  -> world via P -> normalize.
+- `sun_dir`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF
+  (full `qgcrf2itrf`) -> world via P -> normalize.
 - `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> equatorial celestial). This
   is the frame the camera rig is built from (see `camera.md`). As time
   advances, the celestial sphere rotates at the sidereal rate consistent with
@@ -65,9 +71,9 @@ rotation:
   brought into the permuted axes (`P R_EQU2GAL P^T`). Uploaded to the shader as
   `star_rot_inv`; the equatorial `star_rot_inv` stays on the camera rig only.
 
-The Sun/star backdrop uses `*_approx` transforms (~1 arcsec): real UT1-UTC
-via `gmst` but approximate nutation and no polar motion. The satellite uses
-the full `qteme2itrf` (sub-arcsec).
+The Sun/star backdrop uses the full IERS-2010 transforms
+(`qgcrf2itrf`/`qitrf2gcrf`, sub-arcsec): real UT1-UTC, polar motion, and the
+IERS nutation/CIO tables. This matches the satellite's full `qteme2itrf`.
 
 ## Satellite pipeline (satellite.rs)
 
@@ -100,10 +106,13 @@ km world space.
 
 **Frame transforms (frametransform module)**:
 - `qteme2itrf(tm)` — full, reads EOP (real polar motion + UT1-UTC).
+- `qgcrf2itrf(tm)` / `qitrf2gcrf(tm)` — full IERS-2010, sub-arcsec; read EOP +
+  the three IERS nutation/CIO tables. Used by the celestial sphere. The tables
+  are seeded in `init_satkit` via
+  `init_iers_table_from_bytes(IersTableId::{Tab5A,Tab5B,Tab5D}, ..)`.
 - `qgcrf2itrf_approx(tm)` / `qitrf2gcrf_approx(tm)` — IAU-76/FK5, ~1 arcsec;
   read UT1-UTC via `gmst` but neglect polar motion + use approximate nutation.
-- Full `qgcrf2itrf`/`qitrf2gcrf` (IERS-2010) additionally needs
-  `ierstable::init_from_bytes` for Tab5A/5B/5D — not done.
+  No longer used in this project.
 - Apply quaternion to vector: `q * v`; `Quaternion` is `Copy`.
 
 **EOP valid range**: 1962-01-01 to last `EOP-All.csv` entry (~build date).

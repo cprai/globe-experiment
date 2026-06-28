@@ -15,6 +15,10 @@ use std::path::{Path, PathBuf};
 ///   (measured) plus a few months of predictions; since this is a past-only
 ///   simulation tool the frozen-at-build-time snapshot stays valid for every
 ///   in-range date (delete the cached file to refresh).
+/// - The IERS Conventions 2010 nutation/CIO tables `tab5.2a/2b/2d.txt` (KB
+///   each): CIP X/Y series + CIO locator s series, loaded via
+///   `frametransform::init_iers_table_from_bytes`. Required by the full
+///   (non-approx) GCRF<->ITRF transforms the celestial sphere uses.
 ///
 /// Earth/star textures (original JPEG/TIFF, embedded as-is):
 /// - The runtime decodes these with the `image` crate and uploads them as
@@ -32,6 +36,23 @@ const EMBEDS: &[Embed] = &[
         url: "https://celestrak.org/SpaceData/EOP-All.csv",
         // A few MiB of text; generous cap.
         limit: 64 * 1024 * 1024,
+    },
+    // IERS Conventions 2010 nutation/CIO tables (KB each), from satkit's own
+    // data bucket so the byte format matches `ierstable::from_bytes`. Seeded
+    // into satkit's IERS-table singletons; required by the full (non-approx)
+    // GCRF<->ITRF transforms the celestial sphere uses. Tab5A/5B = CIP X/Y
+    // series, Tab5D = CIO locator s series.
+    Embed {
+        url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2a.txt",
+        limit: 1024 * 1024,
+    },
+    Embed {
+        url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2b.txt",
+        limit: 1024 * 1024,
+    },
+    Embed {
+        url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2d.txt",
+        limit: 1024 * 1024,
     },
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg",
