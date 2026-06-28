@@ -31,6 +31,7 @@ use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
 
 use crate::moon;
+use crate::planet::{self, Planet, Rotation};
 
 /// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it
 /// straight into `OUT_DIR` so this `include_bytes!` can pick it up - no runtime
@@ -125,6 +126,12 @@ pub fn init_satkit() {
 pub struct CelestialSphere {
     /// Unit vector toward the Sun in the Earth-fixed (ECEF) world frame.
     pub sun_dir: Vec3,
+    /// Sun position in the Earth-fixed (ECEF) world frame, km (true
+    /// geocentric). Used to light the planets, which sit far enough from
+    /// Earth that the Sun direction *at the planet*
+    /// (`normalize(sun_pos_world - planet_center)`) differs from Earth's
+    /// `sun_dir`; the Earth/Moon keep using `sun_dir`.
+    pub sun_pos_world: Vec3,
     /// Rotation taking world (ECEF) view directions into the *equatorial*
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
     /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
@@ -160,6 +167,27 @@ pub struct CelestialSphere {
     pub sublunar_lon_deg: f32,
     /// Earth-Moon center distance, km (for display).
     pub moon_distance_km: f32,
+    /// The seven planets' world-frame centers + orientations this frame, in
+    /// `planet::ALL` order. True geocentric positions (DE440) and IAU
+    /// orientation - consumed by the solar-system scenario; ignored by the
+    /// Earth/Moon scenarios.
+    pub planets: [PlanetState; 7],
+}
+
+/// One planet's world-frame placement for a single frame: its center (true
+/// geocentric, km) and the body-fixed -> world rotation (ephemeris Earth
+/// orientation composed with the IAU planet rotation). The mesh + texture come
+/// from the renderer; this is just where to put and how to orient it.
+#[derive(Clone, Copy, Debug)]
+pub struct PlanetState {
+    pub planet: Planet,
+    /// Planet center in the Earth-fixed (ECEF) world frame, km. At true scale
+    /// and distance (millions to billions of km), so it is rendered with a
+    /// floating origin (see `RenderState::render_origin`).
+    pub pos_world: Vec3,
+    /// Rotation taking a vector in the planet's body-fixed frame into the world
+    /// frame. Pure rotation, so it carries normals too.
+    pub rot: Mat3,
 }
 
 impl CelestialSphere {
@@ -177,7 +205,12 @@ impl CelestialSphere {
         // ITRF (Earth-fixed) and permute into the world frame.
         let sun_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sun ephemeris lookup");
         let sun_itrf = qgcrf2itrf(time) * sun_gcrf;
+        // Keep `sun_dir` as the exact pre-planet expression (so Earth/Moon
+        // renders stay bit-identical); `sun_pos_world` is the same vector scaled
+        // to km, computed separately for the planets' lighting. Normalizing the
+        // unscaled vs /1000 vector would differ by ~1 ULP - hence not folded.
         let sun_dir = (p * nvec(sun_itrf)).normalize();
+        let sun_pos_world = p * (nvec(sun_itrf) / 1000.0);
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
         // back to Y-up, so the equirectangular lookup's pole tracks the
@@ -223,6 +256,24 @@ impl CelestialSphere {
         );
         let moon_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
 
+        // The planets: true geocentric position from the same DE440 ephemeris,
+        // and a body->world rotation built like the Moon's but from the IAU
+        // planet rotation (axial tilt + spin, no libration series). Same `P^T`
+        // un-permute of the mesh's project-convention axes into the standard
+        // (Z=pole) frame the IAU elements are defined in.
+        let planets = std::array::from_fn(|i| {
+            let planet = planet::ALL[i];
+            let body_gcrf =
+                geocentric_pos(planet_body(planet), time).expect("planet ephemeris lookup");
+            let pos_world = p * (nvec(q_gcrf2itrf * body_gcrf) / 1000.0);
+            let rot = p * r_gcrf2itrf * iau_body_to_gcrf(planet.rotation(), time) * p.transpose();
+            PlanetState {
+                planet,
+                pos_world,
+                rot,
+            }
+        });
+
         let moon_distance_km = moon_pos_world.length();
         let moon_dir = moon_pos_world / moon_distance_km;
         let sublunar_lat_deg = moon_dir.y.asin().to_degrees();
@@ -230,6 +281,7 @@ impl CelestialSphere {
 
         Self {
             sun_dir,
+            sun_pos_world,
             star_rot_inv,
             star_tex_rot_inv,
             subsolar_lat_deg,
@@ -240,7 +292,23 @@ impl CelestialSphere {
             sublunar_lat_deg,
             sublunar_lon_deg,
             moon_distance_km,
+            planets,
         }
+    }
+}
+
+/// The satkit ephemeris body for one of our planets. Kept here (not in
+/// `planet`) so that module stays free of any satkit dependency, exactly like
+/// `earth`/`moon`.
+fn planet_body(planet: Planet) -> SolarSystem {
+    match planet {
+        Planet::Mercury => SolarSystem::Mercury,
+        Planet::Venus => SolarSystem::Venus,
+        Planet::Mars => SolarSystem::Mars,
+        Planet::Jupiter => SolarSystem::Jupiter,
+        Planet::Saturn => SolarSystem::Saturn,
+        Planet::Uranus => SolarSystem::Uranus,
+        Planet::Neptune => SolarSystem::Neptune,
     }
 }
 
@@ -313,12 +381,33 @@ fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
         + 0.0019 * sin_e(12)
         - 0.0044 * sin_e(13);
 
-    let (alpha0, delta0, w) = (alpha0.to_radians(), delta0.to_radians(), w.to_radians());
+    body_basis(alpha0.to_radians(), delta0.to_radians(), w.to_radians())
+}
 
-    // Build the body basis in GCRF directly from the standard definition: the
-    // pole z at (alpha0, delta0); the ascending node Q of the body equator on
-    // the ICRF equator at RA = alpha0 + 90 deg; the prime meridian x = Q rotated
-    // east by W about z; y completes the right-handed triad (90 deg east).
+/// Rotation from a planet's body-fixed (Z=pole) frame to GCRF, from its IAU
+/// rotational elements (`crate::planet::Rotation`). The planet twin of
+/// [`lunar_body_to_gcrf`] without the libration series: the pole `alpha0` /
+/// `delta0` carry a linear rate in Julian centuries `T`, and the prime meridian
+/// `W` advances at the (possibly retrograde) sidereal spin rate in days `d`.
+/// Both `T` and `d` are TT since J2000, matching the lunar model.
+fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> Mat3 {
+    let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
+    let t = d / 36_525.0;
+
+    let alpha0 = (rot.ra0_deg + rot.ra0_rate_per_century * t).to_radians();
+    let delta0 = (rot.dec0_deg + rot.dec0_rate_per_century * t).to_radians();
+    let w = (rot.w0_deg + rot.w_rate_per_day * d).to_radians();
+
+    body_basis(alpha0, delta0, w)
+}
+
+/// Builds a body->GCRF rotation from the standard IAU pole + prime-meridian
+/// angles (radians): the pole z at (alpha0, delta0); the ascending node Q of
+/// the body equator on the ICRF equator at RA = alpha0 + 90 deg; the prime
+/// meridian x = Q rotated east by W about z; y completes the right-handed triad
+/// (90 deg east). Shared by the Moon (libration folded into the angles) and the
+/// planets. Columns are the GCRF images of the body x/y/z axes.
+fn body_basis(alpha0: f64, delta0: f64, w: f64) -> Mat3 {
     let (sa, ca) = (alpha0.sin() as f32, alpha0.cos() as f32);
     let (sd, cd) = (delta0.sin() as f32, delta0.cos() as f32);
     let z = Vec3::new(cd * ca, cd * sa, sd);
@@ -327,8 +416,6 @@ fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
     let x = q * (w.cos() as f32) + q_east * (w.sin() as f32);
     let y = z.cross(x);
 
-    // Columns are the GCRF images of the body x (prime meridian), y (90 deg
-    // east), z (pole) axes - i.e. the body->GCRF rotation.
     Mat3::from_cols(x, y, z)
 }
 

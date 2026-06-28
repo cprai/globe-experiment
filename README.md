@@ -41,8 +41,9 @@ cargo run --release -- render --output frame.png --width 1920 --height 1080 \
 
 The `--scene` JSON has a `simulation` section (`datetime`, RFC3339 UTC, fixes the
 celestial positions), a `camera` section (`longitude`/`latitude`/`distance` in
-km/`tilt`, plus an optional `target` of `"earth"` (default) or `"moon"` to orbit
-the Moon instead — frame it with a much smaller `distance`), and an optional `ui`
+km/`tilt`, plus an optional `target` of `"earth"` (default), `"moon"`, or any
+planet (`"mercury"`, ..., `"neptune"`) to orbit that body instead — frame it with
+a `distance` scaled to the body), and an optional `ui`
 section that overlays mock UI panels for debugging UI layouts headlessly (see
 `src/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
 written as a PNG and a short summary (resolved datetime, subsolar point, camera)
@@ -83,15 +84,25 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   shadow darkens a spot on the Earth during a solar eclipse, and the Earth's
   shadow turns the Moon a dim coppery red during a lunar eclipse (a "blood
   moon"). A depth buffer makes the Earth correctly occlude the more distant Moon.
+- The whole solar system: the `solar_system` scenario draws the seven planets
+  (Mercury through Neptune) at their true DE440 positions and scale, shaped as
+  oblate ellipsoids (Saturn and Jupiter visibly flattened), oriented by the IAU
+  planet rotation and lit by the Sun with the correct phase. A body-selector
+  panel (one key per body, ordered by distance from the Sun) flies the camera to
+  and orbits any of Earth, the Moon, or a planet. Because the
+  outer planets sit billions of km away - beyond single-precision range - the
+  scene is rendered relative to the orbited body so it stays crisp. (Saturn's
+  rings are not yet drawn.)
 - Real Earth-orientation parameters: satellite positions use measured polar
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP
   record (1962 onward); the tool simulates past scenarios only.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
   any zoom level, from full-globe spins down to country level. The camera orbits
-  a chosen body - always the Earth for satellite scenarios, and either the Earth
+  a chosen body - always the Earth for satellite scenarios, either the Earth
   or the Moon in the eclipse scenarios (an EARTH / MOON selector in the panel),
-  with pan/tilt/zoom scaled to whichever body is targeted.
+  and any of nine bodies in the solar-system scenario (a key per body in the
+  panel), with pan/tilt/zoom scaled to whichever body is targeted.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.

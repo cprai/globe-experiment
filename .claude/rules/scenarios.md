@@ -51,6 +51,23 @@ a disjoint `request_*` flag; the scenario's `advance()` calls
 the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
 the clock's Run toggle vs speed slider). Satellite scenarios skip all this and
 inherit the Earth-only default.
+
+### Multi-body selection (solar_system)
+
+The `solar_system` scenario (empty, no satellites; clock from 2025-06-01) offers
+**nine** orbit bodies, so it holds a `simulation::BodySelector` instead of
+`TargetSelector`. `SELECTABLE_BODIES` lists them ordered by distance from the
+Sun with the Moon right after Earth (Mercury, Venus, Earth, Moon, Mars, Jupiter,
+Saturn, Uranus, Neptune); `selected` defaults to `EARTH_INDEX` so the scenario
+starts on the Earth (matching the default full-globe camera). The panel shows
+**one always-visible latching key per body** (a single column, the chosen one
+lit), so each key callback needs a **disjoint** `request_*` field — hence nine
+named flags (not an array, whose elements can't be captured disjointly), in
+`SELECTABLE_BODIES` order, that `apply_requests` folds into `selected`. Its
+`resolve(&celestial)` fills the chosen body's center from `celestial.planets`
+(in `planet::ALL` order). `frame_state` fills `RenderState.planets`
+(`celestial.planets.to_vec()`) + `render_origin` from the resolved target. The
+panel is appended in `get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, and reads sun/star values from

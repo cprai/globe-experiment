@@ -92,11 +92,15 @@ impl Simulation for IssSimulation {
         RenderState {
             view_proj,
             camera_pos: eye,
+            // Earth target: the origin stays at Earth (planet-free scene).
+            render_origin: Vec3::ZERO,
             sun_dir: celestial.sun_dir,
+            sun_pos_world: celestial.sun_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
             moon_pos_world: celestial.moon_pos_world,
             moon_rot: celestial.moon_rot,
             moon_radius_km: celestial.moon_radius_km,
+            planets: Vec::new(),
             markers,
         }
     }

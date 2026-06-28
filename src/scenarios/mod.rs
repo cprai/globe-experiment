@@ -15,3 +15,4 @@ pub mod iss;
 pub mod iss_and_hubble;
 pub mod lunar_eclipse;
 pub mod solar_eclipse;
+pub mod solar_system;

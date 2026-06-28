@@ -22,6 +22,16 @@ struct Uniforms {
     // (km); z = the Sun's angular radius (rad), which sets the penumbra
     // softness; w = unused.
     moon_params: vec4<f32>,
+    // Floating origin (km): the world-space point the scene is drawn relative
+    // to. Subtracted from every world position before view_proj, so a far
+    // planet target renders near the numerical origin (f32-precise). ZERO for
+    // Earth/Moon targets, where this is a no-op. `view_proj` is built against
+    // the same origin (see Camera::view_proj).
+    render_origin: vec3<f32>,
+    // Sun position in the world frame (km), true geocentric. Used to light the
+    // planets (`normalize(sun_pos_world - world_pos)`); the Earth/Moon keep
+    // using `sun_dir`.
+    sun_pos_world: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -57,7 +67,9 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
+    // Clip in the render frame (world - render_origin); world_pos below stays
+    // true-world for lighting. ZERO origin for Earth -> bit-identical.
+    out.position = uniforms.view_proj * vec4<f32>(in.position - uniforms.render_origin, 1.0);
     out.uv = in.uv;
     // The ellipsoid normal is supplied per vertex (it is no longer just the
     // normalized position).
@@ -413,7 +425,7 @@ fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
     // normal (not the ellipsoid position) so it is a true sphere at the
     // top-of-atmosphere radius, in km.
     let world = in.normal * ATMOSPHERE_TOP_KM;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.position = uniforms.view_proj * vec4<f32>(world - uniforms.render_origin, 1.0);
     out.world_pos = world;
     return out;
 }
@@ -535,7 +547,7 @@ fn vs_stars(in: VertexInput) -> StarsOutput {
     // shell, where the two formulations give the same per-pixel direction).
     let relative = in.normal * STARS_RADIUS_KM;
     let world = uniforms.camera_pos + relative;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.position = uniforms.view_proj * vec4<f32>(world - uniforms.render_origin, 1.0);
 
     // Linear in the vertex position, so interpolation is exact; both
     // outputs are normalized per fragment.
@@ -561,8 +573,17 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
     // stars, so the two stay locked under rotation and zoom. The globe
     // draws after the backdrop and occludes it; the atmosphere pass
     // then glows over it near the limb.
+    //
+    // The direction is the one the ORBITED BODY sees the Sun in
+    // (`sun_pos_world - render_origin`), not the Earth-fixed `sun_dir`: from a
+    // distant planet the Sun is in a wholly different direction than from Earth,
+    // and this is what makes the drawn disc agree with that planet's terminator
+    // (`fs_planet` lights from `sun_pos_world - world_pos`, the same direction).
+    // For Earth/Moon targets `render_origin` is 0, so this is the Earth->Sun
+    // direction as before. Using `render_origin` (not `camera_pos`) keeps the
+    // disc parallax-free under local orbit/zoom.
     let view = normalize(in.view);
-    let sun = normalize(uniforms.sun_dir);
+    let sun = normalize(uniforms.sun_pos_world - uniforms.render_origin);
     let angle = acos(clamp(dot(view, sun), -1.0, 1.0));
 
     // Anti-aliased disc core plus a soft glow falloff.
@@ -616,7 +637,7 @@ fn vs_marker(@builtin(vertex_index) vertex_index: u32, inst: MarkerInstance) -> 
     out.uv = corner;
 
     // Hidden (occluded by the globe): emit an off-screen, clipped vertex.
-    let clip = uniforms.view_proj * vec4<f32>(inst.position, 1.0);
+    let clip = uniforms.view_proj * vec4<f32>(inst.position - uniforms.render_origin, 1.0);
     if inst.visible < 0.5 || clip.w <= 0.0 {
         out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
         return out;
@@ -677,7 +698,7 @@ fn vs_moon(in: VertexInput) -> MoonOutput {
     // to the Moon's world center. The rotation is orthonormal, so it carries
     // the normal too.
     let world = uniforms.moon_rot * in.position + uniforms.moon_pos_world;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.position = uniforms.view_proj * vec4<f32>(world - uniforms.render_origin, 1.0);
     out.uv = in.uv;
     out.normal = uniforms.moon_rot * in.normal;
     out.world_pos = world;
@@ -702,5 +723,68 @@ fn fs_moon(in: MoonOutput) -> @location(0) vec4<f32> {
     // Coppery umbral glow, only where the Moon would otherwise be sunlit.
     color += MOON_ECLIPSE_GLOW * (1.0 - eclipse) * sunlit * albedo;
 
+    return vec4<f32>(color, 1.0);
+}
+
+// A planet: the oblate planet mesh, oriented into world space by the ephemeris
+// + IAU planet rotation and placed at its true world center, lit by the Sun
+// with a simple Lambert term (albedo x diffuse + small ambient) - no
+// atmosphere, no eclipse shadow. Each planet is drawn in its own pass with its
+// own group-1 bind group (per-planet uniform + texture), which keeps the seven
+// planet textures out of the shared group-0 layout (so its 9 sampled textures
+// never grow toward the portable 16-per-stage limit). The shared group-0
+// uniforms supply view_proj, render_origin, and the Sun position.
+
+// Faint fill on the planet night side, so the unlit limb is not pure black.
+const PLANET_AMBIENT: f32 = 0.02;
+
+// Per-planet model + texture (one bound per planet draw).
+struct PlanetUniform {
+    // Body-fixed -> world rotation (ephemeris Earth orientation x IAU planet
+    // rotation); a pure rotation, so it carries the normal too.
+    rot: mat3x3<f32>,
+    // Planet center in the world frame (km), true geocentric.
+    pos_world: vec3<f32>,
+    // Mean radius (km); currently unused by the shading, kept for parity with
+    // the Moon's params and future use (e.g. ring/eclipse geometry).
+    radius_km: f32,
+};
+
+@group(1) @binding(0) var<uniform> planet: PlanetUniform;
+@group(1) @binding(1) var planet_texture: texture_2d<f32>;
+@group(1) @binding(2) var planet_sampler: sampler;
+
+struct PlanetOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_planet(in: VertexInput) -> PlanetOutput {
+    var out: PlanetOutput;
+    // Body-fixed mesh -> true world, then clip in the render frame (world -
+    // render_origin), which for a planet target puts this planet near the
+    // numerical origin. world_pos stays true-world for lighting.
+    let world = planet.rot * in.position + planet.pos_world;
+    out.position = uniforms.view_proj * vec4<f32>(world - uniforms.render_origin, 1.0);
+    out.uv = in.uv;
+    out.normal = planet.rot * in.normal;
+    out.world_pos = world;
+    return out;
+}
+
+@fragment
+fn fs_planet(in: PlanetOutput) -> @location(0) vec4<f32> {
+    let albedo = textureSample(planet_texture, planet_sampler, in.uv).rgb;
+    let n = normalize(in.normal);
+    // The Sun direction AT this planet (it is far enough from Earth that the
+    // Earth-frame sun_dir would be wrong). A difference of true-world
+    // positions, so the floating origin cancels.
+    let sun = normalize(uniforms.sun_pos_world - in.world_pos);
+    let sunlit = max(dot(n, sun), 0.0);
+
+    let color = albedo * (PLANET_AMBIENT + sunlit);
     return vec4<f32>(color, 1.0);
 }

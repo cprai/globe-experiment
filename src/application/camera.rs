@@ -131,7 +131,14 @@ impl Camera {
     pub fn view_proj(&self, aspect: f32, celestial_to_world: Mat3) -> Mat4 {
         let (eye, target, up) = self.world_frame(celestial_to_world);
 
-        let view = Mat4::look_at_rh(eye, target, up);
+        // Floating origin: build the view in the render frame (world shifted by
+        // -render_origin) so a far planet target sits near the numerical origin
+        // where f32 is precise. The renderer subtracts the SAME render_origin in
+        // clip space (and `eye()` still returns the true-world eye for the
+        // uniforms). For Earth/Moon the origin is ZERO, so this is `- 0.0` and
+        // the matrix is bit-identical to the pre-planet renderer.
+        let origin = self.target.render_origin();
+        let view = Mat4::look_at_rh(eye - origin, target - origin, up);
         let proj = Mat4::perspective_rh(
             Self::FOV_Y.to_radians(),
             aspect.max(0.01),
@@ -210,12 +217,15 @@ impl Camera {
             self.distance = self.default_distance();
             self.tilt = 0.0;
 
-            if let CameraTarget::Moon { center_world } = target {
-                // Aim at the near side: look toward the Moon from its
-                // Earth-facing side, the same mapping `looking_toward` uses with
-                // a world look direction of +moon_dir.
+            // Aim at the body: for an off-origin target (the Moon or a planet)
+            // look toward its center from the camera, the same mapping
+            // `looking_toward` uses with a world look direction of +center. An
+            // Earth target keeps the existing longitude/latitude (any inertial
+            // direction frames the Earth at the origin).
+            let center = self.target.center_world();
+            if center != Vec3::ZERO {
                 let star_rot_inv = celestial_to_world.transpose();
-                let radial = -(star_rot_inv * center_world.normalize_or_zero());
+                let radial = -(star_rot_inv * center.normalize_or_zero());
                 self.longitude = radial.x.atan2(radial.z).to_degrees();
                 self.latitude = radial.y.clamp(-1.0, 1.0).asin().to_degrees();
             }

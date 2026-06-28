@@ -1,6 +1,7 @@
 mod application;
 mod earth;
 mod moon;
+mod planet;
 mod renderer;
 mod scenarios;
 mod simulation;
@@ -51,10 +52,10 @@ enum Cli {
     Render {
         /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
         /// {"longitude", "latitude", "distance" (km), "tilt", "target":
-        /// "earth"|"moon"}, "ui": [panels]}`. `camera.target` and `ui` are
-        /// optional (target defaults to "earth"; omit `ui` for a globe-only
-        /// frame). See `snapshot::SceneSpec` / `ui::UiPanel`. Unknown keys
-        /// are rejected.
+        /// "earth"|"moon"|"mercury"|...|"neptune"}, "ui": [panels]}`.
+        /// `camera.target` and `ui` are optional (target defaults to "earth";
+        /// omit `ui` for a globe-only frame). See `snapshot::SceneSpec` /
+        /// `ui::UiPanel`. Unknown keys are rejected.
         #[arg(long)]
         scene: String,
         /// Output image width in pixels.
@@ -88,6 +89,10 @@ enum ScenarioName {
     /// side).
     #[value(name = "solar_eclipse")]
     SolarEclipse,
+    /// The whole solar system: fly the camera to and orbit any of Earth, the
+    /// Moon, or the seven planets (no satellites).
+    #[value(name = "solar_system")]
+    SolarSystem,
 }
 
 fn main() {
@@ -97,6 +102,7 @@ fn main() {
             ScenarioName::IssAndHubble => scenarios::iss_and_hubble::run(),
             ScenarioName::LunarEclipse => scenarios::lunar_eclipse::run(),
             ScenarioName::SolarEclipse => scenarios::solar_eclipse::run(),
+            ScenarioName::SolarSystem => scenarios::solar_system::run(),
         },
         // Bare `scenario` with no name: list what's available instead of erroring.
         Cli::Scenario { name: None } => list_scenarios(),

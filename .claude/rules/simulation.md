@@ -98,6 +98,24 @@ The Moon is positioned and oriented per frame in `CelestialSphere::at`:
 - Test: `moon_near_side_faces_earth` asserts the sub-Earth point faces Earth
   within the optical libration (~8 deg), validating the model render-free.
 
+## Ephemeris-driven planets (celestial_sphere.rs)
+
+`CelestialSphere::at` also fills `sun_pos_world` (km, for planet lighting) and a
+`PlanetState[7]` (in `planet::ALL` order), each per frame from the same DE440:
+- **Position**: `geocentric_pos(SolarSystem::X, time)` -> ITRF via the same
+  `qgcrf2itrf` -> world via `P`, /1000 for km. True geocentric, so the outer
+  planets are billions of km out (hence the **floating origin**, see `camera.md`).
+- **Orientation** (`iau_body_to_gcrf`, the planet twin of `lunar_body_to_gcrf`
+  without the libration series, sharing the `body_basis` helper): pole
+  `alpha0(T)`/`delta0(T)` + prime meridian `W = W0 + W_dot*d` from the IAU
+  constants in `src/planet.rs` (`w_dot` negative for the retrograde rotators
+  Venus, Uranus). `planet_rot = P * R_gcrf2itrf * iau_body_to_gcrf * P^T`, same
+  `P^T` un-permute as the Moon.
+- Planets are **oblate ellipsoids** (`src/planet.rs`: equatorial vs polar radii;
+  Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sun direction
+  *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
+  `celestial_sphere` so `planet.rs` stays satkit-free (like `earth`/`moon`).
+
 ## Satellite pipeline (satellite.rs)
 
 Each `Satellite` is element-set agnostic — TLEs live in the scenarios, not
@@ -127,10 +145,11 @@ north. Our world is X = 90°E, Y = north, Z = prime meridian. Bridge via P
 **Units**: SGP4 output and `ITRFCoord` are in **meters**. Divide by 1000 for
 km world space.
 
-**Ephemeris bodies**: `geocentric_pos(SolarSystem::Sun, tm)` and
-`geocentric_pos(SolarSystem::Moon, tm)` both return GCRF `Vector3` in meters
-(`None` outside DE440 range). **Time scales**: `as_jd_with_scale(TimeScale::TT)`
-gives TT Julian days (J2000 = 2451545.0 TT); used by the IAU lunar rotation.
+**Ephemeris bodies**: `geocentric_pos(SolarSystem::{Sun,Moon,Mercury..Neptune},
+tm)` returns GCRF `Vector3` in meters (`None` outside DE440 range) — `SolarSystem`
+exposes **every** planet, so planet positions are free (no extra ephemeris).
+**Time scales**: `as_jd_with_scale(TimeScale::TT)` gives TT Julian days (J2000 =
+2451545.0 TT); used by the IAU lunar + planet rotations.
 satkit exposes **no lunar body-fixed frame** — the IAU rotation is implemented
 in `celestial_sphere.rs`.
 

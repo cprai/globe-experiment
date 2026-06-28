@@ -34,6 +34,10 @@ src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
                          run() launches orbiting the Moon (Moon-target
                          looking_toward); TargetSelector (default Moon)
+src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
+                         clock starts 2025-06-01; draws all 7 planets at true
+                         pos/scale; BodySelector (one key per body: Earth, Moon,
+                         the 7 planets) drives camera_target; default Earth view
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
                          orbiting a CameraTarget (Earth/Moon); per-frame retarget
@@ -80,26 +84,39 @@ src/earth.rs             WGS84 constants + surface_position / geodetic_normal he
 src/moon.rs              lunar constants (triaxial ellipsoid radii, mean radius)
                          + surface_position / geodetic_normal (body-fixed frame);
                          the Earth-style single source of truth for Moon geometry
+src/planet.rs            the 7 planets: Planet enum + ALL + data-driven table
+                         (oblate radii, IAU rotation constants, texture file) +
+                         surface_position / geodetic_normal. satkit-free, like
+                         earth/moon
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
-                         (5 pipelines incl. Moon; reversed-Z Depth32Float buffer)
+                         (6 pipelines incl. Moon + planets; reversed-Z
+                         Depth32Float buffer). Planets use a separate group-1
+                         bind group (per-planet uniform + texture)
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
                          (+ matching depth buffer)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
-                         wgs84_ellipsoid + moon_ellipsoid wrappers
+                         wgs84_ellipsoid + moon_ellipsoid + planet_ellipsoid
 src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          to Earth), SimulationState (core: clock + celestial
                          sphere) + its shared-core impl UIDrawable, RenderState
-                         (incl. moon fields), SatelliteTelemetry, CameraTarget
-                         (Earth/Moon orbit body, consumed by application's Camera)
-                         + TargetSelector (EARTH/MOON radio panel for eclipses)
+                         (moon fields + render_origin/sun_pos_world/planets),
+                         SatelliteTelemetry, CameraTarget (Earth/Moon/Planet
+                         orbit body + render_origin(), consumed by application's
+                         Camera), TargetSelector (EARTH/MOON, eclipses),
+                         BodySelector (one latching key per body, 9 bodies
+                         ordered by distance from the Sun, solar_system)
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
-                         + Moon position (DE440) and IAU lunar rotation
+                         + Moon position (DE440) and IAU lunar rotation;
+                         sun_pos_world + the 7 planets' position (DE440) and IAU
+                         planet rotation (PlanetState[]); iau_body_to_gcrf helper
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/globe.wgsl       ALL shader code (5 passes in one module; + analytic
-                         eclipse shadows)
-OUT_DIR/                 gitignored; include_bytes!'d: 6 JPEG/TIFF textures +
-                         3 f16 LUT KTX2 + DE440 ephemeris + EOP-All.csv
+shaders/globe.wgsl       ALL shader code (6 passes in one module: + planets; all
+                         vertex passes subtract uniforms.render_origin; analytic
+                         eclipse shadows). Planet uniform/texture are group 1
+OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Earth x4,
+                         stars, Moon, 7 planets) + 3 f16 LUT KTX2 + DE440
+                         ephemeris + EOP-All.csv
 ```
 
 ## Module dependency graph
@@ -108,11 +125,12 @@ OUT_DIR/                 gitignored; include_bytes!'d: 6 JPEG/TIFF textures +
 main        -> application, simulation, renderer, scenarios
 application -> simulation, renderer, ui, earth, (winit, egui, egui_winit, glam)
 ui          -> (egui)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState), earth, moon, (wgpu, egui_wgpu, ktx2, glam)
-simulation  -> earth, moon, ui, (satkit, egui via ui, glam)   # impl UIDrawable
+renderer    -> simulation (RenderState), earth, moon, planet, (wgpu, egui_wgpu, ktx2, glam)
+simulation  -> earth, moon, planet, ui, (satkit, egui via ui, glam)  # impl UIDrawable
                                        # for SimulationState; NO winit/wgpu/Camera
 earth       -> (glam)
 moon        -> (glam)
+planet      -> (glam)   # satkit-free body geometry, like earth/moon
 scenarios   -> simulation, ui, application
 ```
 

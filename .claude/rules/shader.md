@@ -36,9 +36,19 @@ paths:
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
   top) so it is compatible with the depth attachment.
-- **Draw order: stars -> Earth surface -> Moon -> atmosphere -> markers**, one
-  render pass. The Moon draws between the surface and atmosphere so the depth
-  buffer resolves Earth/Moon occlusion before the additive atmosphere.
+- **Draw order: stars -> Earth surface -> Moon -> planets -> atmosphere ->
+  markers**, one render pass. The Moon + planets (solid bodies, depth write +
+  `Greater`) draw between the surface and atmosphere so the depth buffer resolves
+  occlusion before the additive atmosphere. The planets use a separate pipeline +
+  group-1 bind group (`vs_planet`/`fs_planet`); only the solar-system scenario
+  fills them.
+- **Floating origin: every vertex pass clips in `world - uniforms.render_origin`.**
+  A planet target sets `render_origin` to the planet center (far past f32
+  precision otherwise) and `Camera::view_proj` is built against the same origin;
+  `world_pos` passed to fragments stays true-world for lighting. For Earth/Moon
+  `render_origin` is `ZERO`, so the clip subtraction is `- 0.0` (geometry
+  bit-identical). Planets are lit by the Sun direction *at the planet*
+  (`normalize(sun_pos_world - world_pos)`), not Earth's `sun_dir`.
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
   per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
 - **Mutual eclipse shadows are analytic** (`sun_visibility` in `globe.wgsl`):
@@ -56,14 +66,17 @@ paths:
   rotation. The matrix uploaded to the shader additionally folds in a static
   galactic->equatorial offset (`star_tex_rot_inv`), because the star texture is
   drawn in galactic coordinates; see `simulation.md`.
-- **Backdrop anchoring**: star lookup and sun disc are functions of the
-  camera-relative view direction, not position on the celestial sphere. Changing
-  this reintroduces parallax between sun and stars (a fixed bug). The star shell
-  is **centered on the camera** (`vs_stars`: `camera_pos + normal *
+- **Backdrop anchoring**: star lookup is a function of the camera-relative view
+  direction, not position on the celestial sphere. Changing the *star* anchoring
+  reintroduces parallax between sun and stars (a fixed bug). The star shell is
+  **centered on the camera** (`vs_stars`: `camera_pos + normal *
   STARS_RADIUS_KM`), so it always encloses the eye - required for non-Earth
   targets (orbiting the Moon is ~384,000 km outside an origin-centered shell;
-  the Sun and half the sky vanished). No-op for Earth orbits (eye was always
-  inside the old shell). See `camera.md`.
+  the Sun and half the sky vanished). The **sun disc** is drawn in the orbited
+  body's direction to the Sun (`normalize(sun_pos_world - render_origin)`), NOT
+  the Earth-fixed `sun_dir` - so it agrees with each planet's terminator
+  (`fs_planet` lights from the same `sun_pos_world - world_pos`). Earth/Moon
+  (`render_origin` 0) get the Earth->Sun direction as before. See `camera.md`.
 
 ## Look-tuning discipline
 

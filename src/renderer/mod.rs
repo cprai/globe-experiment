@@ -10,6 +10,7 @@ use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::earth;
+use crate::planet;
 use crate::simulation::RenderState;
 use mesh::Vertex;
 
@@ -392,6 +393,41 @@ struct Uniforms {
     /// Eclipse params: x = Moon mean radius km, y = Earth mean radius km,
     /// z = Sun angular radius rad, w = unused.
     moon_params: [f32; 4],
+    /// Floating-origin world point (km); subtracted from world positions in
+    /// every vertex shader. ZERO for Earth/Moon targets.
+    render_origin: [f32; 3],
+    _pad3: f32,
+    /// Sun position in the world frame (km), for planet lighting.
+    sun_pos_world: [f32; 3],
+    _pad4: f32,
+}
+
+/// Per-planet model uniform (group 1). Layout must match `PlanetUniform` in
+/// globe.wgsl: the mat3x3 columns are padded to vec4 stride and the vec3 center
+/// is followed by the radius (filling its pad slot).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PlanetUniform {
+    /// Body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
+    rot: [[f32; 4]; 3],
+    /// Planet center in the world frame (km).
+    pos_world: [f32; 3],
+    /// Planet mean radius (km).
+    radius_km: f32,
+}
+
+/// Long-lived GPU resources for one planet: its mesh, its per-frame model
+/// uniform, and the group-1 bind group (uniform + texture + sampler) bound when
+/// it is drawn. One per planet, in `planet::ALL` order.
+struct PlanetGpu {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
+    /// Per-planet `PlanetUniform`, rewritten each frame in `prepare`.
+    uniform: wgpu::Buffer,
+    /// group-1 bind group: this planet's uniform + texture + the shared
+    /// sampler.
+    bind_group: wgpu::BindGroup,
 }
 
 /// One on-screen satellite marker, as instance data for the marker pipeline.
@@ -440,6 +476,16 @@ struct GlobeRenderer {
     moon_vertices: wgpu::Buffer,
     moon_indices: wgpu::Buffer,
     moon_index_count: u32,
+    /// Planet pipeline (`vs_planet`/`fs_planet`), shared by all seven planets;
+    /// each draw swaps its group-1 bind group + mesh.
+    planet_pipeline: wgpu::RenderPipeline,
+    /// Per-planet GPU resources, in `planet::ALL` order. Always built (textures
+    /// upload at init), but only drawn when `RenderState::planets` is
+    /// non-empty.
+    planets: Vec<PlanetGpu>,
+    /// Number of planets to draw this frame (0 except the solar-system
+    /// scenario).
+    planet_count: u32,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Per-satellite marker instance data (position + visibility), drawn
@@ -784,9 +830,127 @@ impl GlobeRenderer {
             ],
         });
 
+        // --- Planets (group 1) ---
+        // Each planet's texture + per-planet model uniform live in their own
+        // bind group, used only by the planet pipeline, so the seven planet
+        // textures never enter the shared group-0 layout (whose 9 sampled
+        // textures stay well under the portable 16-per-stage limit, leaving room
+        // for Saturn's rings later). The textures decode in parallel like the
+        // others. Order matches planet::ALL (and the build.rs download list).
+        let planet_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("planet bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        // The embedded planet albedo maps, in planet::ALL order. The literal
+        // include_bytes! paths must match `Planet::texture_file()` (the single
+        // source of the planet<->file mapping), which is also used as the upload
+        // label below; build.rs downloads exactly these names into OUT_DIR.
+        let planet_texture_bytes: [&[u8]; 7] = [
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_venus_surface.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mars.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_jupiter.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_saturn.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/2k_uranus.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/2k_neptune.jpg")),
+        ];
+        let planet_views: Vec<wgpu::TextureView> = planet::ALL
+            .par_iter()
+            .zip(planet_texture_bytes.par_iter())
+            .map(|(body, &bytes)| upload_image(device, queue, body.texture_file(), bytes, true))
+            .collect();
+
+        let planets: Vec<PlanetGpu> = planet::ALL
+            .iter()
+            .zip(planet_views)
+            .map(|(&body, view)| {
+                let planet_mesh = mesh::planet_ellipsoid(STACKS, SLICES, body);
+                let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("planet vertices"),
+                    contents: bytemuck::cast_slice(&planet_mesh.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("planet indices"),
+                    contents: bytemuck::cast_slice(&planet_mesh.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("planet uniform"),
+                    size: std::mem::size_of::<PlanetUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                // The planet's group-1 bind group reuses the shared `sampler`
+                // (repeat U / clamp V), the same wrap the globe + moon use.
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("planet bind group"),
+                    layout: &planet_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                });
+                PlanetGpu {
+                    vertices,
+                    indices,
+                    index_count: planet_mesh.indices.len() as u32,
+                    uniform,
+                    bind_group,
+                }
+            })
+            .collect();
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("globe pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        // The planet pipeline binds group 0 (shared frame uniforms) AND group 1
+        // (the per-planet uniform + texture), so it needs its own layout.
+        let planet_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("planet pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&planet_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -1038,6 +1202,51 @@ impl GlobeRenderer {
             })
         };
 
+        // The planet pipeline: same vertex format and reversed-Z solid-body
+        // depth setup as the Moon (planets are opaque bodies that the depth
+        // buffer resolves against each other), differing only in entry points
+        // and the two-group layout. Built after the join (it borrows
+        // `planet_layout`); one extra pipeline compile is cheap.
+        let make_planet_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("planet pipeline"),
+                layout: Some(&planet_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_planet"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x3,
+                            2 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_planet"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
         let (
             render_pipeline,
             (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, moon_pipeline))),
@@ -1048,6 +1257,8 @@ impl GlobeRenderer {
                 })
             })
         });
+
+        let planet_pipeline = make_planet_pipeline();
 
         Self {
             render_pipeline,
@@ -1061,6 +1272,9 @@ impl GlobeRenderer {
             moon_vertices,
             moon_indices,
             moon_index_count: moon_mesh.indices.len() as u32,
+            planet_pipeline,
+            planets,
+            planet_count: 0,
             uniforms,
             bind_group,
             markers,
@@ -1113,8 +1327,26 @@ impl GlobeRenderer {
                 SUN_ANGULAR_RADIUS_RAD,
                 0.0,
             ],
+            render_origin: render.render_origin.to_array(),
+            _pad3: 0.0,
+            sun_pos_world: render.sun_pos_world.to_array(),
+            _pad4: 0.0,
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+
+        // One model uniform per planet to draw this frame. `render.planets` is
+        // in planet::ALL order (empty for non-solar scenarios), the same order
+        // as `self.planets`, so they zip 1:1; `planet_count` gates the draw.
+        self.planet_count = render.planets.len() as u32;
+        for (gpu, state) in self.planets.iter().zip(&render.planets) {
+            let rot_cols = state.rot.to_cols_array_2d();
+            let planet_uniform = PlanetUniform {
+                rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
+                pos_world: state.pos_world.to_array(),
+                radius_km: state.planet.mean_radius_km(),
+            };
+            queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&planet_uniform));
+        }
 
         // One marker instance per tracked satellite. Grow the buffer first if
         // this frame has more markers than it currently holds (only ever
@@ -1158,6 +1390,20 @@ impl GlobeRenderer {
         render_pass.set_vertex_buffer(0, self.moon_vertices.slice(..));
         render_pass.set_index_buffer(self.moon_indices.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
+
+        // The planets: each its own mesh + group-1 bind group (model uniform +
+        // texture), the same solid-body depth setup as the Moon. Only the
+        // solar-system scenario fills `planets` (planet_count > 0); every other
+        // scenario skips the pipeline entirely. group 0 stays bound from above.
+        if self.planet_count > 0 {
+            render_pass.set_pipeline(&self.planet_pipeline);
+            for gpu in self.planets.iter().take(self.planet_count as usize) {
+                render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, gpu.vertices.slice(..));
+                render_pass.set_index_buffer(gpu.indices.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+            }
+        }
 
         // The atmosphere reuses the globe shell mesh - rebind it.
         render_pass.set_vertex_buffer(0, self.vertices.slice(..));

@@ -15,17 +15,24 @@ Look-tuning constants in `globe.wgsl` in particular drift between sessions.
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
 globe in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
-(star-fixed) camera that orbits a selectable **target** (Earth, or the Moon in
-the eclipse scenarios via an EARTH/MOON panel; headless `render` picks the body
-with `camera.target` "earth"/"moon"), simulation clock (1x-100x, plays from
-launch). The Moon is
+(star-fixed) camera that orbits a selectable **target** (Earth, the Moon, or
+any of the **seven planets** in the `solar_system` scenario via a body-selector
+panel (one key per body); the Moon in the eclipse scenarios via an EARTH/MOON
+panel; headless
+`render` picks the body with `camera.target` "earth"/"moon"/"mars"/... ),
+simulation clock (1x-100x, plays from launch). The Moon is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
 rotation (correct near side + libration), lit by the Sun, with **mutual
 Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood
-moon"). A **reversed-Z depth buffer** (Depth32Float) makes Earth occlude the
+moon"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
+geocentric position/scale (DE440), oriented by the IAU planet rotation and
+sun-lit with simple Lambert; because they sit millions-to-billions of km out, a
+planet target renders with a **floating origin** (the scene is drawn relative to
+the orbited planet's center; Earth/Moon keep the origin at Earth, bit-identical
+to before). A **reversed-Z depth buffer** (Depth32Float) makes Earth occlude the
 Moon. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
-reintroduce it.
+reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
 ---
 
@@ -54,11 +61,12 @@ cargo run --release -- render --output mock.png --scene \
                     {"slider":{"position":[0,114],"value":0.5,"range":[0,4.6]}}]}]}'
 ```
 
-First build: slow (~1.5 min extra), needs network. `build.rs` downloads 5
-textures (JPEG/TIFF verbatim), the JPL ephemeris (~98 MB), and
-`EOP-All.csv` into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2.
-Subsequent builds reuse cached files. Delete a file in `OUT_DIR` to
-re-download it.
+First build: slow (~1.5 min extra), needs network. `build.rs` downloads 13
+textures (JPEG verbatim: Earth x4, stars, Moon, + 7 planets — five 8K, two 2K),
+the JPL ephemeris (~98 MB), and `EOP-All.csv` into `OUT_DIR`; bakes 3 atmosphere
+LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
+`OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the seven native-res
+planet textures add ~686 MB; see `constraints.md`).
 
 **WGSL is compiled by naga at runtime, not during `cargo build`.** Validate
 after every shader edit:

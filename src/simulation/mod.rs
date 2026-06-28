@@ -16,12 +16,13 @@ use satkit::Instant;
 
 pub use clock::Clock;
 
+use crate::planet::Planet;
 use crate::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 use crate::{earth, moon};
-use celestial_sphere::CelestialSphere;
+use celestial_sphere::{CelestialSphere, PlanetState};
 
 /// The body the orbital camera orbits, with its world-space center (km). Plain
 /// astronomical data - no `Camera` or windowing dependency - so it can cross
@@ -35,28 +36,60 @@ use celestial_sphere::CelestialSphere;
 #[derive(Clone, Copy)]
 pub enum CameraTarget {
     Earth,
-    Moon { center_world: Vec3 },
+    Moon {
+        center_world: Vec3,
+    },
+    /// One of the seven planets, at its true geocentric center (km). Because
+    /// that center can be billions of km out - far past f32 precision in
+    /// world-km - a planet target renders with a floating origin (the scene is
+    /// drawn relative to `render_origin`, which equals this center; see
+    /// `RenderState::render_origin` and `Camera::view_proj`). Earth/Moon keep
+    /// the origin at Earth.
+    Planet {
+        planet: Planet,
+        center_world: Vec3,
+    },
 }
 
 impl CameraTarget {
-    /// Whether two targets name the same body, ignoring the (per-frame) Moon
-    /// center. The camera uses this to detect a genuine body switch (and
-    /// reframe) without treating the Moon's normal drift as a change. A
-    /// derived `PartialEq` would compare the centers and so fire every
-    /// frame.
+    /// Whether two targets name the same body, ignoring the (per-frame) Moon/
+    /// planet center. The camera uses this to detect a genuine body switch (and
+    /// reframe) without treating a body's normal ephemeris drift as a change. A
+    /// derived `PartialEq` would compare the centers and so fire every frame.
+    /// Two `Planet` targets match only when they are the *same* planet, so
+    /// cycling Mars -> Jupiter reframes.
     pub fn same_kind(&self, other: &CameraTarget) -> bool {
-        matches!(
-            (self, other),
-            (CameraTarget::Earth, CameraTarget::Earth)
-                | (CameraTarget::Moon { .. }, CameraTarget::Moon { .. })
-        )
+        match (self, other) {
+            (CameraTarget::Earth, CameraTarget::Earth) => true,
+            (CameraTarget::Moon { .. }, CameraTarget::Moon { .. }) => true,
+            (CameraTarget::Planet { planet: a, .. }, CameraTarget::Planet { planet: b, .. }) => {
+                a == b
+            }
+            _ => false,
+        }
     }
 
     /// The body center in the world frame (km). Earth is the origin.
     pub fn center_world(&self) -> Vec3 {
         match self {
             CameraTarget::Earth => Vec3::ZERO,
-            CameraTarget::Moon { center_world } => *center_world,
+            CameraTarget::Moon { center_world } | CameraTarget::Planet { center_world, .. } => {
+                *center_world
+            }
+        }
+    }
+
+    /// The world-space origin the scene is rendered relative to for this target
+    /// (the "floating origin"). Earth and the Moon are close enough to the
+    /// Earth origin that f32 world-km is precise, so they keep the origin at
+    /// Earth (`ZERO`) - which makes their render output bit-identical to the
+    /// pre-planet renderer. A planet sits too far out for that, so the origin
+    /// shifts to the planet's center, keeping the orbited body near the
+    /// numerical origin where f32 precision is restored.
+    pub fn render_origin(&self) -> Vec3 {
+        match self {
+            CameraTarget::Earth | CameraTarget::Moon { .. } => Vec3::ZERO,
+            CameraTarget::Planet { center_world, .. } => *center_world,
         }
     }
 
@@ -67,6 +100,7 @@ impl CameraTarget {
         match self {
             CameraTarget::Earth => earth::MEAN_RADIUS_KM,
             CameraTarget::Moon { .. } => moon::MEAN_RADIUS_KM,
+            CameraTarget::Planet { planet, .. } => planet.mean_radius_km(),
         }
     }
 
@@ -77,6 +111,7 @@ impl CameraTarget {
         match self {
             CameraTarget::Earth => earth::surface_position(latitude, longitude),
             CameraTarget::Moon { .. } => moon::surface_position(latitude, longitude),
+            CameraTarget::Planet { planet, .. } => planet.surface_position(latitude, longitude),
         }
     }
 
@@ -86,6 +121,7 @@ impl CameraTarget {
         match self {
             CameraTarget::Earth => earth::geodetic_normal(latitude, longitude),
             CameraTarget::Moon { .. } => moon::geodetic_normal(latitude, longitude),
+            CameraTarget::Planet { planet, .. } => planet.geodetic_normal(latitude, longitude),
         }
     }
 }
@@ -137,8 +173,18 @@ pub struct RenderState {
     pub view_proj: Mat4,
     /// Camera eye position in the Earth-fixed world frame (km).
     pub camera_pos: Vec3,
+    /// World-space origin the renderer draws relative to (the floating origin):
+    /// `camera_target.render_origin()`. `ZERO` for Earth/Moon (output
+    /// unchanged); the planet center for a planet target, which restores f32
+    /// precision for far bodies. The renderer subtracts it in clip space and
+    /// the camera builds `view_proj` against it; the two must agree.
+    pub render_origin: Vec3,
     /// Unit vector toward the Sun in the world frame.
     pub sun_dir: Vec3,
+    /// Sun position in the world frame, km (true geocentric). Lights the
+    /// planets, which need the Sun direction *at the planet*, not Earth's
+    /// `sun_dir`.
+    pub sun_pos_world: Vec3,
     /// World -> star-texture (galactic) rotation for the equirectangular
     /// star-map lookup (uploaded as `star_rot_inv`). This is the
     /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
@@ -152,6 +198,10 @@ pub struct RenderState {
     pub moon_rot: Mat3,
     /// Moon mean radius (km), for the analytic eclipse-shadow geometry.
     pub moon_radius_km: f32,
+    /// The planets to draw this frame (centers + orientations), in
+    /// `planet::ALL` order. Empty for every scenario except the solar-system
+    /// one, so the planet pipeline never runs elsewhere.
+    pub planets: Vec<PlanetState>,
     /// One marker per tracked satellite, in the same order as the scenario's
     /// satellite list. The renderer draws them instanced.
     pub markers: Vec<SatelliteMarker>,
@@ -331,6 +381,220 @@ impl TargetSelector {
             anchor: PanelAnchor::TopRight,
             offset: [10.0, 10.0],
             size: [212.0, 64.0],
+            elements,
+        }
+    }
+}
+
+/// One body the solar-system scenario's camera can orbit. Earth and the Moon
+/// sit at the Earth origin; the planets carry their own geometry via
+/// [`Planet`].
+#[derive(Clone, Copy)]
+enum SelectableBody {
+    Earth,
+    Moon,
+    Planet(Planet),
+}
+
+impl SelectableBody {
+    /// Display name for the selector key (delegates to [`Planet::name`]).
+    fn name(self) -> &'static str {
+        match self {
+            SelectableBody::Earth => "Earth",
+            SelectableBody::Moon => "Moon",
+            SelectableBody::Planet(planet) => planet.name(),
+        }
+    }
+}
+
+/// Every selectable body, ordered by distance from the Sun, with the Moon
+/// placed right after its parent Earth. This is also the top-to-bottom order of
+/// the selector panel's keys. The `request_*` fields of [`BodySelector`] and
+/// the `apply_requests` branches mirror this order index-for-index; keep all
+/// three in sync if the list changes.
+const SELECTABLE_BODIES: [SelectableBody; 9] = [
+    SelectableBody::Planet(Planet::Mercury),
+    SelectableBody::Planet(Planet::Venus),
+    SelectableBody::Earth,
+    SelectableBody::Moon,
+    SelectableBody::Planet(Planet::Mars),
+    SelectableBody::Planet(Planet::Jupiter),
+    SelectableBody::Planet(Planet::Saturn),
+    SelectableBody::Planet(Planet::Uranus),
+    SelectableBody::Planet(Planet::Neptune),
+];
+
+/// Index of Earth in [`SELECTABLE_BODIES`] - the scenario's start target.
+const EARTH_INDEX: usize = 2;
+
+/// Tracks which solar-system body the camera orbits and builds the selector
+/// panel: one always-visible latching key per body (the chosen one lit), so the
+/// whole solar system is selectable at a glance.
+///
+/// The panel's element callbacks all coexist, so each must capture a *disjoint*
+/// mutable field (the same rule the clock's Run toggle and speed slider
+/// follow); hence one `request_*` flag per body rather than a single shared
+/// selection a key could write. A click sets that body's flag;
+/// [`apply_requests`] folds it into `selected` once per frame, before
+/// [`Simulation::camera_target`] reads it
+/// - the same one-frame latency as [`TargetSelector`].
+pub struct BodySelector {
+    /// Index into [`SELECTABLE_BODIES`].
+    selected: usize,
+    /// One per body, set by that body's key and cleared in `apply_requests`.
+    /// Disjoint fields (not an array) so the key callbacks can each capture one
+    /// without borrowing a shared place. In [`SELECTABLE_BODIES`] order.
+    request_mercury: bool,
+    request_venus: bool,
+    request_earth: bool,
+    request_moon: bool,
+    request_mars: bool,
+    request_jupiter: bool,
+    request_saturn: bool,
+    request_uranus: bool,
+    request_neptune: bool,
+}
+
+impl Default for BodySelector {
+    fn default() -> Self {
+        // Start on the Earth (the familiar full globe).
+        Self {
+            selected: EARTH_INDEX,
+            request_mercury: false,
+            request_venus: false,
+            request_earth: false,
+            request_moon: false,
+            request_mars: false,
+            request_jupiter: false,
+            request_saturn: false,
+            request_uranus: false,
+            request_neptune: false,
+        }
+    }
+}
+
+impl BodySelector {
+    /// Applies any pending key press into the live selection, then clears every
+    /// flag. Call once per frame *before* [`Simulation::camera_target`] is read
+    /// (at the top of the scenario's `advance`). At most one key can be pressed
+    /// per frame from a mouse; the branch order only breaks an impossible tie.
+    /// The indices match [`SELECTABLE_BODIES`].
+    pub fn apply_requests(&mut self) {
+        if self.request_mercury {
+            self.selected = 0;
+        } else if self.request_venus {
+            self.selected = 1;
+        } else if self.request_earth {
+            self.selected = 2;
+        } else if self.request_moon {
+            self.selected = 3;
+        } else if self.request_mars {
+            self.selected = 4;
+        } else if self.request_jupiter {
+            self.selected = 5;
+        } else if self.request_saturn {
+            self.selected = 6;
+        } else if self.request_uranus {
+            self.selected = 7;
+        } else if self.request_neptune {
+            self.selected = 8;
+        }
+        self.request_mercury = false;
+        self.request_venus = false;
+        self.request_earth = false;
+        self.request_moon = false;
+        self.request_mars = false;
+        self.request_jupiter = false;
+        self.request_saturn = false;
+        self.request_uranus = false;
+        self.request_neptune = false;
+    }
+
+    /// Resolves the current choice into a [`CameraTarget`], filling the body
+    /// center from the live ephemeris (`celestial.planets` is in `planet::ALL`
+    /// order, so every planet is present).
+    pub fn resolve(&self, celestial: &CelestialSphere) -> CameraTarget {
+        match SELECTABLE_BODIES[self.selected] {
+            SelectableBody::Earth => CameraTarget::Earth,
+            SelectableBody::Moon => CameraTarget::Moon {
+                center_world: celestial.moon_pos_world,
+            },
+            SelectableBody::Planet(planet) => {
+                let state = celestial
+                    .planets
+                    .iter()
+                    .find(|s| s.planet == planet)
+                    .expect("selected planet present in celestial sphere");
+                CameraTarget::Planet {
+                    planet,
+                    center_world: state.pos_world,
+                }
+            }
+        }
+    }
+
+    /// The top-right selector panel: a header plus one latching key per body,
+    /// in a single column ordered by distance from the Sun (the chosen body
+    /// lit). `selected` is snapshotted up front so no shared borrow
+    /// outlives into the per-key callbacks, which each set a disjoint
+    /// `request_*` flag.
+    pub fn panel(&mut self) -> UIDrawablePanel<'_> {
+        let selected = self.selected;
+        // One key per body, in its own row; index i lines up with
+        // SELECTABLE_BODIES so the label + `active` reflect the live selection.
+        let key = |i: usize| Toggle {
+            position: [0.0, 26.0 + i as f32 * 28.0],
+            label: SELECTABLE_BODIES[i].name().to_string(),
+            active: selected == i,
+        };
+        let elements: Vec<Box<dyn Instrument + '_>> = vec![
+            Box::new(Header {
+                position: [0.0, 0.0],
+                title: "Camera Target".to_string(),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(0),
+                on_toggle: Box::new(|| self.request_mercury = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(1),
+                on_toggle: Box::new(|| self.request_venus = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(2),
+                on_toggle: Box::new(|| self.request_earth = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(3),
+                on_toggle: Box::new(|| self.request_moon = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(4),
+                on_toggle: Box::new(|| self.request_mars = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(5),
+                on_toggle: Box::new(|| self.request_jupiter = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(6),
+                on_toggle: Box::new(|| self.request_saturn = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(7),
+                on_toggle: Box::new(|| self.request_uranus = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: key(8),
+                on_toggle: Box::new(|| self.request_neptune = true),
+            }),
+        ];
+
+        UIDrawablePanel {
+            anchor: PanelAnchor::TopRight,
+            offset: [10.0, 10.0],
+            // Tall single column: header + 9 rows at 28px pitch.
+            size: [150.0, 282.0],
             elements,
         }
     }

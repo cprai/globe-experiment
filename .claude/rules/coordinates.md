@@ -50,6 +50,17 @@ So P is consistent with every WGS84 helper and with every satkit result.
   see `simulation.md`). The `P^T` inside `moon_rot` converts the mesh's
   project-convention axes into the standard (Z=pole) frame the IAU model uses.
 
+## Planet body frames
+
+- `src/planet.rs` is the multi-body twin of `earth.rs`/`moon.rs`: each of the 7
+  planets is an **oblate ellipsoid of revolution** (equatorial radius on +X/+Z,
+  polar radius on +Y) in the **same body convention** — +Y = north (rotation
+  pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`
+  scales the sphere direction per axis; `geodetic_normal` is the gradient
+  (`x/req^2, y/rpol^2, z/req^2`), not radial.
+- Oriented into the world per frame by `planet_rot` = `P * R_gcrf2itrf *
+  iau_body_to_gcrf * P^T` (same `P^T` un-permute as the Moon; see `simulation.md`).
+
 ## Equirectangular UV mapping
 
 - Forward (mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at south.

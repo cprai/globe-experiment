@@ -43,11 +43,13 @@ surface lost/timeout recovery.
 
 ## `GlobeRenderer::new` parallelization
 
-`create_shader_module` runs on one rayon task while 9 texture inputs load in
-parallel via `into_par_iter`. A nested `rayon::join` compiles the 5 render
-pipelines concurrently (globe surface, atmosphere, stars, markers, Moon). This
-is the **sanctioned** parallel decode — do not confuse it with the phase-1
-reverted `thread::scope` approach.
+`create_shader_module` runs on one rayon task while 9 group-0 texture inputs
+load in parallel via `into_par_iter` (the 7 planet textures decode in a separate
+`par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 5
+group-0 render pipelines concurrently (globe surface, atmosphere, stars, markers,
+Moon); the **planet pipeline** (a 6th) is built after the join (it borrows
+`planet_layout`). This is the **sanctioned** parallel decode — do not confuse it
+with the phase-1 reverted `thread::scope` approach.
 
 ## `Gfx::init` device setup
 
@@ -77,6 +79,12 @@ moon_rot:     mat3x3<f32>            // body-fixed -> world; cols padded to [f32
 moon_pos_world: vec3<f32> + 1 f32 pad (_pad2)   // Moon center, km
 moon_params:  vec4<f32>              // x = Moon radius km; y = Earth radius km;
                                      //   z = Sun angular radius rad; w = unused
+render_origin: vec3<f32> + 1 f32 pad (_pad3)    // floating origin, km; ZERO for
+                                     //   Earth/Moon. Subtracted in every vertex
+                                     //   shader's clip computation.
+sun_pos_world: vec3<f32> + 1 f32 pad (_pad4)    // Sun pos km; lights the planets
+                                     //   AND aims the backdrop sun disc
+                                     //   (normalize(sun_pos_world-render_origin))
 ```
 
 Key: WGSL `mat3x3` columns have `vec4` stride, so the Rust struct pads each
@@ -87,6 +95,16 @@ in `prepare` (`queue.write_buffer`). The Moon mesh is a separate vertex/index
 buffer (`mesh::moon_ellipsoid`), drawn with its own model transform via
 `moon_rot`/`moon_pos_world`; the Earth shell mesh is rebound for the atmosphere
 pass that follows it.
+
+**Planets (group 1).** Each planet has its own mesh (`mesh::planet_ellipsoid`),
+a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos_world` vec3 +
+`radius_km`), and a group-1 bind group (uniform + texture + the shared sampler).
+The planet pipeline (`vs_planet`/`fs_planet`, layout `[group0, group1]`, same
+solid-body reversed-Z depth as the Moon) draws each planet in `RenderState.planets`
+order (empty except the solar-system scenario, so `planet_count` gates it). The 7
+planet textures live ONLY in group 1, so group 0 stays at 9 sampled textures —
+clear of the portable 16-per-stage limit. **Draw order: stars -> Earth surface
+-> Moon -> planets -> atmosphere -> markers.**
 
 ## Bind group 0 layout
 
@@ -105,23 +123,35 @@ pass that follows it.
 | 10 | stars texture | `Rgba8UnormSrgb` (decoded JPEG) |
 | 11 | moon texture | `Rgba8UnormSrgb`, 8192x4096 (decoded JPEG; lunar albedo) |
 
-`earth_sampler` is shared by all image textures including stars and the moon;
-`lut_sampler` by the three LUTs. LUTs are read with `textureSampleLevel(...,
-0.0)` (used in non-uniform control flow; no mips anyway). Normal map linear
-format is load-bearing — sRGB decode would warp the tangent vectors.
+`earth_sampler` is shared by all image textures including stars, the moon, and
+the planets; `lut_sampler` by the three LUTs. LUTs are read with
+`textureSampleLevel(..., 0.0)` (used in non-uniform control flow; no mips
+anyway). Normal map linear format is load-bearing — sRGB decode would warp the
+tangent vectors.
+
+## Bind group 1 layout (planets)
+
+Used only by the planet pipeline; one bind group per planet, the right one set
+per draw.
+
+| binding | resource | notes |
+|---|---|---|
+| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos_world` + `radius_km` |
+| 1 | planet texture | `Rgba8UnormSrgb` (8K for inner/gas, 2K for ice giants) |
+| 2 | sampler | the shared `earth_sampler` (repeat U / clamp V) |
 
 ## Depth buffer
 
 `Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
 `depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
 target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
-`0.0`) build both. All five globe pipelines declare `depth_stencil`; egui's
+`0.0`) build both. All six globe pipelines declare `depth_stencil`; egui's
 overlay pipeline is built with `depth_stencil_format: Some(DEPTH_FORMAT)`.
 
 ## Renderer constants
 
-`STACKS 64`, `SLICES 128` (mesh resolution; shared by the Earth and Moon
-meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
+`STACKS 64`, `SLICES 128` (mesh resolution; shared by the Earth, Moon, and
+planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
 `SUN_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra width).
 
 ## Headless render mode (`HeadlessRenderer` + `snapshot`)
@@ -134,7 +164,10 @@ meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
 - **No EOP range check** in render mode. Out-of-range datetimes render and
   silently degrade. This is deliberate — documented in `snapshot.rs` and
   `scenarios.md`.
-- **No markers** in render mode (`RenderState.markers` is empty).
+- **No markers** in render mode (`RenderState.markers` is empty). All 7 planets
+  are filled in `RenderState.planets`, so `camera.target` can be any of `"earth"`,
+  `"moon"`, or a planet (`"mars"`, ..., `"neptune"`); the camera's
+  `render_origin` is set from the resolved target.
 - **One `--scene` JSON drives the whole frame** (`snapshot::SceneSpec`,
   `deny_unknown_fields`): a `simulation` section (datetime), a `camera` section,
   and an optional `ui` section (`Vec<ui::UiPanel>`). The output target

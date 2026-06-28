@@ -30,6 +30,7 @@ use std::time::UNIX_EPOCH;
 use satkit::Instant;
 
 use crate::application::Camera;
+use crate::planet::Planet;
 use crate::renderer::{HeadlessRenderer, MAX_FRAME_DIMENSION, UiFrame};
 use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{self, CameraTarget, RenderState};
@@ -94,15 +95,55 @@ struct CameraSpec {
 }
 
 /// The orbit body for the render camera. Mirrors the runtime [`CameraTarget`]
-/// kinds, but center-free: the Moon's world center is filled from the ephemeris
+/// kinds, but center-free: a body's world center is filled from the ephemeris
 /// at render time (the JSON only names the body). Lowercase JSON tokens
-/// (`"earth"` / `"moon"`); defaults to Earth so existing scenes are unchanged.
+/// (`"earth"`, `"moon"`, `"mars"`, ...); defaults to Earth so existing scenes
+/// are unchanged. A planet target renders with a floating origin (see
+/// `CameraTarget::render_origin`).
 #[derive(serde::Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum CameraTargetSpec {
     #[default]
     Earth,
     Moon,
+    Mercury,
+    Venus,
+    Mars,
+    Jupiter,
+    Saturn,
+    Uranus,
+    Neptune,
+}
+
+impl CameraTargetSpec {
+    /// The planet this token names, or `None` for Earth/Moon.
+    fn planet(self) -> Option<Planet> {
+        match self {
+            CameraTargetSpec::Earth | CameraTargetSpec::Moon => None,
+            CameraTargetSpec::Mercury => Some(Planet::Mercury),
+            CameraTargetSpec::Venus => Some(Planet::Venus),
+            CameraTargetSpec::Mars => Some(Planet::Mars),
+            CameraTargetSpec::Jupiter => Some(Planet::Jupiter),
+            CameraTargetSpec::Saturn => Some(Planet::Saturn),
+            CameraTargetSpec::Uranus => Some(Planet::Uranus),
+            CameraTargetSpec::Neptune => Some(Planet::Neptune),
+        }
+    }
+
+    /// Lowercase body name, for the summary line.
+    fn name(self) -> &'static str {
+        match self {
+            CameraTargetSpec::Earth => "earth",
+            CameraTargetSpec::Moon => "moon",
+            CameraTargetSpec::Mercury => "mercury",
+            CameraTargetSpec::Venus => "venus",
+            CameraTargetSpec::Mars => "mars",
+            CameraTargetSpec::Jupiter => "jupiter",
+            CameraTargetSpec::Saturn => "saturn",
+            CameraTargetSpec::Uranus => "uranus",
+            CameraTargetSpec::Neptune => "neptune",
+        }
+    }
 }
 
 /// Renders one frame per `params`, writes it to `params.output` as a PNG, and
@@ -153,6 +194,22 @@ pub fn run(params: RenderParams) {
         CameraTargetSpec::Moon => CameraTarget::Moon {
             center_world: celestial.moon_pos_world,
         },
+        // A planet: pull its live center from the celestial sphere (in
+        // `planet::ALL` order, so every planet is present).
+        other => {
+            let planet = other
+                .planet()
+                .expect("non-earth/moon target names a planet");
+            let state = celestial
+                .planets
+                .iter()
+                .find(|s| s.planet == planet)
+                .expect("planet present in celestial sphere");
+            CameraTarget::Planet {
+                planet,
+                center_world: state.pos_world,
+            }
+        }
     };
     let camera = Camera {
         longitude: scene.camera.longitude,
@@ -169,11 +226,16 @@ pub fn run(params: RenderParams) {
     let render = RenderState {
         view_proj: camera.view_proj(aspect, celestial_to_world),
         camera_pos: eye,
+        render_origin: camera.target.render_origin(),
         sun_dir: celestial.sun_dir,
+        sun_pos_world: celestial.sun_pos_world,
         star_rot_inv: celestial.star_tex_rot_inv,
         moon_pos_world: celestial.moon_pos_world,
         moon_rot: celestial.moon_rot,
         moon_radius_km: celestial.moon_radius_km,
+        // All planets are available so any of them can be the render target;
+        // when Earth/Moon is targeted they sit far off-screen.
+        planets: celestial.planets.to_vec(),
         // Pure globe: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };
@@ -292,10 +354,7 @@ fn print_summary(
         celestial.sublunar_lat_deg, celestial.sublunar_lon_deg, celestial.moon_distance_km
     );
     println!("  moon-aim:  camera lon {aim_lon:.3} lat {aim_lat:.3} deg (look toward the Moon)");
-    let target = match camera.target {
-        CameraTargetSpec::Earth => "earth",
-        CameraTargetSpec::Moon => "moon",
-    };
+    let target = camera.target.name();
     println!(
         "  camera:    orbit {target}, lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",
         camera.longitude, camera.latitude, distance, camera.tilt

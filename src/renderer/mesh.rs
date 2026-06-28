@@ -3,6 +3,7 @@ use glam::Vec3;
 
 use crate::earth;
 use crate::moon;
+use crate::planet::Planet;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -97,5 +98,19 @@ pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
         slices,
         moon::surface_position,
         moon::geodetic_normal,
+    )
+}
+
+/// Generates an oblate planet ellipsoid, in kilometers, in the planet's
+/// body-fixed frame (the same +Y-north / +Z-prime-meridian convention as the
+/// globe). The renderer orients it into world space with the ephemeris-driven
+/// IAU rotation; the per-planet radii live in the `position`/`normal` closures
+/// (`crate::planet`), so the geometry stays in one place.
+pub fn planet_ellipsoid(stacks: u32, slices: u32, planet: Planet) -> Mesh {
+    ellipsoid(
+        stacks,
+        slices,
+        |lat, lon| planet.surface_position(lat, lon),
+        |lat, lon| planet.geodetic_normal(lat, lon),
     )
 }

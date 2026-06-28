@@ -15,7 +15,7 @@ file so deleting one triggers a re-download or re-bake on the next build.
 ## EMBEDS table — verbatim downloads
 
 `embed_verbatim(embed, out_dir)` downloads to `OUT_DIR` unless already
-present. Currently eleven entries:
+present. Currently eighteen entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) — embedded into
   the binary; loaded via `jplephem::init_from_bytes`.
 - **CelesTrak `EOP-All.csv`** (~2-3 MiB) — embedded; loaded via
@@ -29,6 +29,12 @@ present. Currently eleven entries:
   `8k_stars_milky_way.jpg`, `8k_moon.jpg` (lunar albedo). Decoded at **runtime**
   by `renderer::upload_image` (not at build time). Whether each is sRGB or
   linear is decided in the renderer, not here.
+- **Seven planet textures** (JPEG verbatim, sRGB): `8k_mercury.jpg`,
+  `8k_venus_surface.jpg`, `8k_mars.jpg`, `8k_jupiter.jpg`, `8k_saturn.jpg` (8K),
+  `2k_uranus.jpg`, `2k_neptune.jpg` (2K). The filename<->planet mapping is owned
+  by `Planet::texture_file()` (`src/planet.rs`); the renderer's `include_bytes!`
+  list + this table must stay in `planet::ALL` order. ~686 MB VRAM total — see
+  `constraints.md`.
 
 ## Atmosphere LUT bake
 

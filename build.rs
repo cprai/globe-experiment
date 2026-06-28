@@ -82,6 +82,38 @@ const EMBEDS: &[Embed] = &[
         url: "https://www.solarsystemscope.com/textures/download/8k_moon.jpg",
         limit: 256 * 1024 * 1024,
     },
+    // Planet albedo maps (equirectangular, body-fixed prime-meridian frame),
+    // decoded + uploaded exactly like the Moon map (sRGB color). The inner and
+    // gas-giant maps are 8K; the two ice-giant maps are only published at 2K.
+    // Saturn's rings are not yet rendered, so only its globe map is fetched.
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_mercury.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_venus_surface.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_mars.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_jupiter.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_saturn.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/2k_uranus.jpg",
+        limit: 256 * 1024 * 1024,
+    },
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/2k_neptune.jpg",
+        limit: 256 * 1024 * 1024,
+    },
 ];
 
 struct Embed {

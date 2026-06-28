@@ -6,7 +6,12 @@
 - **`Features::empty()`** — no optional GPU features. Textures upload
   **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`). Do not re-add
   `TEXTURE_COMPRESSION_BC` — it panics on Apple Silicon (Metal exposes only
-  ASTC/ETC2, not BC/S3TC).
+  ASTC/ETC2, not BC/S3TC). The 7 planet textures are likewise uploaded
+  uncompressed `Rgba8UnormSrgb`, no feature.
+- **Sampled-texture count stays portable.** `max_sampled_textures_per_shader_stage
+  = 16` (default). Group 0 holds 9; the planet textures live in a dedicated
+  group-1 bind group (one per planet draw), so no shader stage exceeds 16. Don't
+  fold planet textures into group 0. See `constraints.md`.
 - **No host-arch or OS assumptions in the build.** `build.rs` and deps must
   compile natively on all six targets (including aarch64). No single-arch
   prebuilt build tools or platform-gated link flags without owner sign-off.
