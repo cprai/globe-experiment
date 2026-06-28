@@ -6,12 +6,16 @@
 //! ([`request_adapter_device`]) with the windowed [`Gfx`](super::Gfx); the only
 //! differences are the presentation target (an owned color texture + a readback
 //! buffer instead of a swapchain surface) and that the UI is optional. The
-//! globe draw sequence is identical: clear to black, then stars -> surface ->
-//! atmosphere (markers are skipped because render mode tracks none). When the
+//! globe draw sequence is identical: clear to black (and the reversed-Z depth
+//! to 0.0), then stars -> surface -> moon -> atmosphere (markers are skipped
+//! because render mode tracks none). When the
 //! caller supplies a [`UiFrame`] (from the `render --scene` `ui` mock layouts),
 //! an egui overlay is composited on top, exactly as in the windowed path.
 
-use super::{GlobeRenderer, MAX_FRAME_DIMENSION, UiFrame, request_adapter_device};
+use super::{
+    DEPTH_FORMAT, GlobeRenderer, MAX_FRAME_DIMENSION, UiFrame, create_depth_view, depth_attachment,
+    request_adapter_device,
+};
 use crate::simulation::RenderState;
 
 /// Offscreen color format. **Non-sRGB on purpose.** Every look-tuning constant
@@ -37,6 +41,9 @@ pub struct HeadlessRenderer {
     egui_renderer: egui_wgpu::Renderer,
     /// The offscreen render target (RENDER_ATTACHMENT | COPY_SRC).
     color: wgpu::Texture,
+    /// Reversed-Z depth buffer matching the color target (same role as the
+    /// windowed `Gfx::depth_view`).
+    depth_view: wgpu::TextureView,
     /// CPU-mappable buffer the color texture is copied into (rows padded).
     readback: wgpu::Buffer,
     width: u32,
@@ -72,8 +79,16 @@ impl HeadlessRenderer {
 
         let globe = GlobeRenderer::new(&device, &queue, FORMAT);
 
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&device, FORMAT, egui_wgpu::RendererOptions::default());
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            FORMAT,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: Some(DEPTH_FORMAT),
+                ..Default::default()
+            },
+        );
+
+        let depth_view = create_depth_view(&device, width, height);
 
         let color = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("headless color target"),
@@ -107,6 +122,7 @@ impl HeadlessRenderer {
             globe,
             egui_renderer,
             color,
+            depth_view,
             readback,
             width,
             height,
@@ -115,8 +131,8 @@ impl HeadlessRenderer {
     }
 
     /// Renders one frame from `render` and returns it as an RGBA8 image. Writes
-    /// the uniforms, draws the scene into the offscreen target in a single pass
-    /// (no depth, draw-order occlusion - same invariant as the windowed path),
+    /// the uniforms, draws the scene into the offscreen target in a single
+    /// depth-buffered pass (same depth/draw setup as the windowed path),
     /// optionally composites an egui overlay from `ui` (the mock-UI layouts),
     /// copies the result into the readback buffer, blocks until it is mapped,
     /// then un-pads the rows into a tight RGBA8 buffer.
@@ -177,7 +193,7 @@ impl HeadlessRenderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(depth_attachment(&self.depth_view)),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,

@@ -143,6 +143,9 @@ pub fn run(params: RenderParams) {
         camera_pos: eye,
         sun_dir: celestial.sun_dir,
         star_rot_inv: celestial.star_tex_rot_inv,
+        moon_pos_world: celestial.moon_pos_world,
+        moon_rot: celestial.moon_rot,
+        moon_radius_km: celestial.moon_radius_km,
         // Pure globe: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };
@@ -249,6 +252,18 @@ fn print_summary(
         "  subsolar:  lat {:.3} lon {:.3} deg",
         celestial.subsolar_lat_deg, celestial.subsolar_lon_deg
     );
+    // The inertial camera longitude/latitude whose look axis points straight at
+    // the Moon (earth in the foreground); offset a few degrees off it to clear
+    // the Earth's limb and frame the Moon. Parallels the subsolar aim hint.
+    let moon_dir = celestial.moon_pos_world.normalize();
+    let aim = -(celestial.star_rot_inv * moon_dir);
+    let aim_lon = aim.x.atan2(aim.z).to_degrees();
+    let aim_lat = aim.y.asin().to_degrees();
+    println!(
+        "  moon:      sublunar lat {:.3} lon {:.3} deg, distance {:.0} km",
+        celestial.sublunar_lat_deg, celestial.sublunar_lon_deg, celestial.moon_distance_km
+    );
+    println!("  moon-aim:  camera lon {aim_lon:.3} lat {aim_lat:.3} deg (look toward the Moon)");
     println!(
         "  camera:    lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",
         camera.longitude, camera.latitude, distance, camera.tilt

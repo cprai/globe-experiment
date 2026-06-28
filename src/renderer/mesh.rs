@@ -1,6 +1,8 @@
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 
 use crate::earth;
+use crate::moon;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -21,16 +23,22 @@ pub struct Mesh {
     pub indices: Vec<u32>,
 }
 
-/// Generates a WGS84 reference-ellipsoid globe, in kilometers.
+/// Generates a triaxial-ellipsoid body, in kilometers, from caller-supplied
+/// surface-point and outward-normal functions of geodetic latitude/longitude
+/// (radians). This is the shared core of every body mesh; the per-body
+/// constants live in the position/normal closures (so a body's geometry stays
+/// in one place - `earth`/`moon`).
 ///
 /// `u` maps longitude (-180 deg at u=0 to +180 deg at u=1) and `v` maps
-/// geodetic latitude from the north pole (v=0) to the south pole (v=1),
-/// matching an equirectangular texture. The seam column at u=0/u=1 is
-/// duplicated so the texture can wrap. Longitude 0 deg, latitude 0 deg faces
-/// +Z; +Y is north. Vertex positions are on the oblate WGS84 ellipsoid; the
-/// stored normal is the geodetic (surface) normal, which has the same lat/lon
-/// direction as a sphere would.
-pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
+/// latitude from the north pole (v=0) to the south pole (v=1), matching an
+/// equirectangular texture. The seam column at u=0/u=1 is duplicated so the
+/// texture can wrap. Longitude 0 deg, latitude 0 deg faces +Z; +Y is north.
+fn ellipsoid(
+    stacks: u32,
+    slices: u32,
+    position: impl Fn(f32, f32) -> Vec3,
+    normal: impl Fn(f32, f32) -> Vec3,
+) -> Mesh {
     let mut vertices = Vec::with_capacity(((stacks + 1) * (slices + 1)) as usize);
 
     for i in 0..=stacks {
@@ -42,8 +50,8 @@ pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
             let lon = (360.0 * u - 180.0).to_radians();
 
             vertices.push(Vertex {
-                position: earth::surface_position(lat, lon).to_array(),
-                normal: earth::geodetic_normal(lat, lon).to_array(),
+                position: position(lat, lon).to_array(),
+                normal: normal(lat, lon).to_array(),
                 uv: [u, v],
             });
         }
@@ -65,4 +73,29 @@ pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
     }
 
     Mesh { vertices, indices }
+}
+
+/// Generates a WGS84 reference-ellipsoid globe, in kilometers. Positions lie on
+/// the oblate WGS84 ellipsoid; the stored normal is the geodetic (surface)
+/// normal, which has the same lat/lon direction as a sphere would.
+pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
+    ellipsoid(
+        stacks,
+        slices,
+        earth::surface_position,
+        earth::geodetic_normal,
+    )
+}
+
+/// Generates the triaxial lunar ellipsoid, in kilometers, in the Moon's
+/// body-fixed (selenographic) frame. The renderer orients it into world space
+/// with the ephemeris-driven lunar rotation; here it is built in the same
+/// +Y-north / +Z-sub-Earth convention as the globe.
+pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
+    ellipsoid(
+        stacks,
+        slices,
+        moon::surface_position,
+        moon::geodetic_normal,
+    )
 }

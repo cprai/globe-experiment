@@ -37,6 +37,19 @@ So P is consistent with every WGS84 helper and with every satkit result.
   6460`. These must match between `build.rs mod atmosphere` and
   `shaders/globe.wgsl`.
 
+## Moon body frame
+
+- `src/moon.rs` is the lunar twin of `earth.rs`: a **triaxial** ellipsoid
+  (semi-axes ~1737.4 / 1735.7 / 1734.5 km) in the **same body convention** as
+  Earth — +Y = north (rotation pole), selenographic lon0/lat0 (the mean
+  sub-Earth point) -> +Z, +X = 90 deg east. `surface_position` scales the
+  sphere direction per axis; `geodetic_normal` is the ellipsoid gradient
+  (`x/rx^2, y/ry^2, z/rz^2`), not radial.
+- The mesh is built in this body frame and oriented into the world per frame by
+  `moon_rot` (ephemeris Earth orientation composed with the IAU lunar rotation;
+  see `simulation.md`). The `P^T` inside `moon_rot` converts the mesh's
+  project-convention axes into the standard (Z=pole) frame the IAU model uses.
+
 ## Equirectangular UV mapping
 
 - Forward (mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at south.

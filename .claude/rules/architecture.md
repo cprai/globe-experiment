@@ -25,6 +25,12 @@ src/snapshot.rs          headless single-frame render mode (no EOP range check);
 src/scenarios/mod.rs     scenario registry
 src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
+src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
+                         clock starts from the 2024-04-08 eclipse datetime;
+                         run() frames the day side via Camera::looking_toward
+src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
+                         clock starts from the 2025-03-14 eclipse datetime;
+                         run() frames the eclipsed Moon (aim + limb offset)
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
@@ -66,17 +72,26 @@ src/ui/spec.rs           the serde-deserialized render --scene `ui` overlay: a
                          type - the bare structs derive Deserialize, so each
                          element clones into an inert boxed Instrument
 src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
+src/moon.rs              lunar constants (triaxial ellipsoid radii, mean radius)
+                         + surface_position / geodetic_normal (body-fixed frame);
+                         the Earth-style single source of truth for Moon geometry
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
+                         (5 pipelines incl. Moon; reversed-Z Depth32Float buffer)
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
-src/renderer/mesh.rs     WGS84 ellipsoid mesh generator (km, geodetic normals)
+                         (+ matching depth buffer)
+src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
+                         wgs84_ellipsoid + moon_ellipsoid wrappers
 src/simulation/mod.rs    Simulation trait (UI-agnostic), SimulationState
                          (core: clock + celestial sphere) + its shared-core
-                         impl UIDrawable, RenderState, SatelliteTelemetry
+                         impl UIDrawable, RenderState (incl. moon fields),
+                         SatelliteTelemetry
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
+                         + Moon position (DE440) and IAU lunar rotation
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/globe.wgsl       ALL shader code (4 passes in one module)
-OUT_DIR/                 gitignored; include_bytes!'d: 5 JPEG/TIFF textures +
+shaders/globe.wgsl       ALL shader code (5 passes in one module; + analytic
+                         eclipse shadows)
+OUT_DIR/                 gitignored; include_bytes!'d: 6 JPEG/TIFF textures +
                          3 f16 LUT KTX2 + DE440 ephemeris + EOP-All.csv
 ```
 
@@ -86,10 +101,11 @@ OUT_DIR/                 gitignored; include_bytes!'d: 5 JPEG/TIFF textures +
 main        -> application, simulation, renderer, scenarios
 application -> simulation, renderer, ui, earth, (winit, egui, egui_winit, glam)
 ui          -> (egui)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState), earth, (wgpu, egui_wgpu, ktx2, glam)
-simulation  -> earth, ui, (satkit, egui via ui, glam)   # impl UIDrawable for
-                                       # SimulationState; NO winit / wgpu / Camera
+renderer    -> simulation (RenderState), earth, moon, (wgpu, egui_wgpu, ktx2, glam)
+simulation  -> earth, moon, ui, (satkit, egui via ui, glam)   # impl UIDrawable
+                                       # for SimulationState; NO winit/wgpu/Camera
 earth       -> (glam)
+moon        -> (glam)
 scenarios   -> simulation, ui, application
 ```
 

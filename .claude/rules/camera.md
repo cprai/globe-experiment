@@ -32,6 +32,13 @@ the re-orientation does not move existing scenarios' framing.
 `Camera.longitude` / `Camera.latitude` are **inertial directions**, not
 geographic coordinates. Do not move the camera into the ECEF/world frame.
 
+`Camera::looking_toward(star_rot_inv, world_look, distance)` builds a camera
+whose look axis points along a **world-frame** direction (it maps the direction
+back through `star_rot_inv` into the inertial rig). Scenarios use it with
+`ApplicationState::with_camera(sim, camera)` to frame an event on launch (e.g.
+the eclipse scenarios aim at `-sun_dir` / `moon_pos_world`); the default
+constructor `::new` still gives the full-globe view.
+
 ## Backdrop anchoring
 
 Star lookup and sun disc are functions of the **camera-relative view
@@ -47,10 +54,16 @@ feel is preserved:
 - `FOV_Y = 45 deg`
 - `MIN_DISTANCE ~63.7 km` (0.01 * R)
 - `MAX_DISTANCE ~63710 km` (10 * R)
-- `NEAR_PLANE ~63.7 km`, `FAR_PLANE ~318550 km` (50 * R)
+- `NEAR_PLANE ~63.7 km` (0.01 * R); `FAR_PLANE = 500_000 km` (a fixed value,
+  NOT a multiple of R) — it must enclose the Moon at lunar apogee (~406,700 km)
+  plus the camera distance; the star shell (222,985 km) is well inside it.
 - `MAX_TILT = 80 deg`
 - Default distance `~12742 km` (2 * R); lat clamp +/- 89 deg
 
-The `_rh` projection variants give wgpu's 0..1 depth (no depth buffer is
-used; near/far only bound clipping, and the star shell must fit inside
-`FAR_PLANE`).
+`view_proj` uses a **reversed-Z** projection: it post-multiplies a Z-flip
+matrix onto `Mat4::perspective_rh` so the near plane maps to depth 1 and the
+far plane to 0. This is paired with the renderer's `Depth32Float` buffer
+cleared to `0.0` and a `Greater` depth test (see `shader.md`); across the huge
+~64 km -> 500,000 km near/far span a forward-Z float buffer would have almost
+no precision near the Moon, so reversed-Z is load-bearing for the Earth-occludes-
+Moon test. The clear value, compare op, and projection sign must all agree.

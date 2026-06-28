@@ -76,6 +76,12 @@ const EMBEDS: &[Embed] = &[
         url: "https://www.solarsystemscope.com/textures/download/8k_stars_milky_way.jpg",
         limit: 256 * 1024 * 1024,
     },
+    // Lunar albedo map (equirectangular, selenographic mean-Earth frame),
+    // decoded + uploaded exactly like the Earth day map (sRGB color).
+    Embed {
+        url: "https://www.solarsystemscope.com/textures/download/8k_moon.jpg",
+        limit: 256 * 1024 * 1024,
+    },
 ];
 
 struct Embed {

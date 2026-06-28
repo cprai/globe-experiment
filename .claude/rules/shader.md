@@ -21,11 +21,26 @@ paths:
 
 ## Rendering invariants
 
-- **No depth buffer.** Draw order handles all occlusion: stars -> surface ->
-  atmosphere -> markers, one render pass. Convex-sphere assumption. Do not
-  add geometry that breaks this without also adding a depth attachment.
+- **Reversed-Z depth buffer (`Depth32Float`).** Cleared to `0.0` (the far
+  plane), `depth_compare: Greater` (nearer = larger depth). It exists so the
+  Earth occludes the much more distant Moon (incl. a partial limb). Per-pass
+  policy (in `GlobeRenderer::new`): the **solid bodies** (Earth surface, Moon)
+  write depth + test `Greater`; the **backdrop, atmosphere, markers** neither
+  write nor test (`Always`, no write) so they keep their exact draw-order
+  layering. The camera projection is reversed-Z (`Camera::view_proj` post-
+  multiplies a Z-flip onto `perspective_rh`); the clear value, compare op, and
+  projection must all agree or geometry vanishes. egui's overlay pipeline is
+  built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
+  top) so it is compatible with the depth attachment.
+- **Draw order: stars -> Earth surface -> Moon -> atmosphere -> markers**, one
+  render pass. The Moon draws between the surface and atmosphere so the depth
+  buffer resolves Earth/Moon occlusion before the additive atmosphere.
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
-  per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth.
+  per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
+- **Mutual eclipse shadows are analytic** (`sun_visibility` in `globe.wgsl`):
+  the soft two-disk overlap of the Sun and an occluding sphere. The Moon
+  shadows the Earth in `fs_main` (solar-eclipse spot); the Earth shadows the
+  Moon in `fs_moon` (lunar-eclipse coppery glow). No shadow maps.
 - **Idle = zero GPU work.** Never add an unconditional vsync loop.
   `ControlFlow::Wait` + targeted `request_redraw`. The clock starts playing,
   so the app is non-idle from launch until paused.
@@ -87,8 +102,13 @@ STARS_RADIUS_KM 222985.0   STARS_BRIGHTNESS 0.8
 SUN_ANGULAR_RADIUS 0.012   SUN_GLOW_RADIUS 0.12
 SUN_GLOW_STRENGTH 0.5      SUN_COLOR (1.0, 0.96, 0.9)
 MARKER_FILL (1.0, 0.25, 0.2)  MARKER_RING (1.0, 1.0, 1.0)
+MOON_AMBIENT 0.02          MOON_ECLIPSE_GLOW (0.06, 0.012, 0.004)
 terminator: smoothstep(-0.12, 0.18, cos_sun)
 ```
+
+**`src/renderer/mod.rs`** (depth/eclipse): `DEPTH_FORMAT Depth32Float`,
+`SUN_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra; distinct from the star
+pass's `SUN_ANGULAR_RADIUS` disc-size cheat).
 
 **`build.rs mod atmosphere`**:
 ```

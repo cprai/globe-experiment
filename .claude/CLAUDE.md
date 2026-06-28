@@ -13,10 +13,14 @@ Look-tuning constants in `globe.wgsl` in particular drift between sessions.
 ## What this is
 
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
-globe in world-space km, Hillaire-2020 atmosphere, star/sun from JPL DE440
-ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
-(star-fixed) camera, simulation clock (1x-100x, plays from launch).
-**Past scenarios only** (before build date) — what makes full EOP accuracy
+globe in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
+DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
+(star-fixed) camera, simulation clock (1x-100x, plays from launch). The Moon is
+a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
+rotation (correct near side + libration), lit by the Sun, with **mutual
+Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood
+moon"). A **reversed-Z depth buffer** (Depth32Float) makes Earth occlude the
+Moon. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it.
 

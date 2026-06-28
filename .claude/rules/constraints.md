@@ -7,8 +7,9 @@
   `max_texture_dimension_2d = 8192` with zero headroom. Don't grow a texture
   past 8192 without raising the limit (narrows the platform matrix) or first
   downsizing the existing textures.
-- **~670 MB VRAM** for 5 uncompressed 8K textures — accepted cost of the
-  no-feature portability.
+- **~800 MB VRAM** for 6 uncompressed 8K textures (the Moon albedo added one,
+  ~134 MB) plus a `Depth32Float` buffer at the window size — accepted cost of
+  the no-feature portability.
 - **No `.cargo/config.toml`** — deleted when `intel_tex_2` was removed; its
   `-lstdc++` was its only purpose. Do not re-add.
 - **Build requires a C compiler** (`ring` via `ureq` in `build.rs`, build-

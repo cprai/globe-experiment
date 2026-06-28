@@ -1,5 +1,6 @@
 mod application;
 mod earth;
+mod moon;
 mod renderer;
 mod scenarios;
 mod simulation;
@@ -79,6 +80,13 @@ enum ScenarioName {
     /// The International Space Station and the Hubble Space Telescope.
     #[value(name = "iss_and_hubble")]
     IssAndHubble,
+    /// The 2025-03-14 total lunar eclipse (no satellites; framed on the Moon).
+    #[value(name = "lunar_eclipse")]
+    LunarEclipse,
+    /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
+    /// side).
+    #[value(name = "solar_eclipse")]
+    SolarEclipse,
 }
 
 fn main() {
@@ -86,6 +94,8 @@ fn main() {
         Cli::Scenario { name: Some(name) } => match name {
             ScenarioName::Iss => scenarios::iss::run(),
             ScenarioName::IssAndHubble => scenarios::iss_and_hubble::run(),
+            ScenarioName::LunarEclipse => scenarios::lunar_eclipse::run(),
+            ScenarioName::SolarEclipse => scenarios::solar_eclipse::run(),
         },
         // Bare `scenario` with no name: list what's available instead of erroring.
         Cli::Scenario { name: None } => list_scenarios(),

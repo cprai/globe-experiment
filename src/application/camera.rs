@@ -1,4 +1,4 @@
-use glam::{Mat3, Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 
 use crate::earth;
 
@@ -45,10 +45,15 @@ impl Camera {
     // ~0.01 Earth radii above the surface up to ~10 radii out, in km.
     const MIN_DISTANCE: f32 = 0.01 * earth::MEAN_RADIUS_KM;
     const MAX_DISTANCE: f32 = 10.0 * earth::MEAN_RADIUS_KM;
-    // Near/far planes, in km (~0.01 and ~50 Earth radii). No depth buffer is
-    // used, so these only bound clipping; the star shell must fit inside far.
+    // Near plane, in km (~0.01 Earth radii). The far plane is a fixed 500,000
+    // km (NOT a multiple of the Earth radius like the other limits): it must
+    // enclose the Moon at lunar apogee (~406,700 km) plus the camera's own
+    // distance (up to ~63,710 km), and the star shell (222,985 km) sits well
+    // inside it. Spanning ~64 km to 500,000 km is a ~4-orders-of-magnitude
+    // depth range, which is why `view_proj` uses a reversed-Z projection (see
+    // there) - it keeps depth precision usable across the whole range.
     const NEAR_PLANE: f32 = 0.01 * earth::MEAN_RADIUS_KM;
-    const FAR_PLANE: f32 = 50.0 * earth::MEAN_RADIUS_KM;
+    const FAR_PLANE: f32 = 500_000.0;
     const MAX_TILT: f32 = 80.0;
 
     /// Moves the look-at point by the given degrees, wrapping longitude
@@ -97,12 +102,49 @@ impl Camera {
             Self::FAR_PLANE,
         );
 
-        proj * view
+        // Reversed-Z: remap clip depth so the near plane maps to 1 and the far
+        // plane to 0 (paired with a depth buffer cleared to 0.0 and a `Greater`
+        // depth test in the renderer). Across this scene's enormous near/far
+        // span the floating-point depth buffer would otherwise have almost no
+        // precision far from the camera (where the Moon is); reversed-Z spreads
+        // the mantissa's precision evenly, so the Earth still occludes the Moon
+        // cleanly. `z_clip' = w_clip - z_clip`, i.e. negate the proj Z row and
+        // add the W row.
+        let reverse_z = Mat4::from_cols(
+            Vec4::new(1.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 1.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, -1.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0, 1.0),
+        );
+
+        reverse_z * proj * view
     }
 
     /// The camera position in the Earth-fixed world frame (km).
     pub fn eye(&self, celestial_to_world: Mat3) -> Vec3 {
         self.world_frame(celestial_to_world).0
+    }
+
+    /// An inertial camera whose look axis points along `world_look` - a
+    /// direction in the Earth-fixed world frame (e.g. toward the Sun's day side
+    /// or the Moon) - viewed from `distance` km with no tilt. `star_rot_inv` is
+    /// the celestial sphere's world->celestial (equatorial) rotation, mapping
+    /// the world direction back into the inertial frame the rig is built in.
+    /// Used by the eclipse scenarios to frame their event on launch; the camera
+    /// stays fully interactive afterward.
+    pub fn looking_toward(star_rot_inv: Mat3, world_look: Vec3, distance: f32) -> Self {
+        // The rig's look axis (toward the target) is `-radial`; resolved into
+        // the world it is `-celestial_to_world * radial = -star_rot_inv^T *
+        // radial`. Setting that equal to `world_look` gives
+        // `radial = -(star_rot_inv * world_look)` - the inertial direction the
+        // eye sits along.
+        let radial = -(star_rot_inv * world_look.normalize_or_zero());
+        Self {
+            longitude: radial.x.atan2(radial.z).to_degrees(),
+            latitude: radial.y.clamp(-1.0, 1.0).asin().to_degrees(),
+            distance: Self::clamp_distance(distance),
+            tilt: 0.0,
+        }
     }
 
     /// The rig rotated from the inertial frame into the Earth-fixed world

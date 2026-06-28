@@ -74,6 +74,14 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   re-oriented to the equatorial sky by a fixed galactic->equatorial rotation, so
   the Milky Way crosses the sky at its true angle. The camera is fixed relative
   to the stars, so the Earth visibly rotates beneath it.
+- An astronomically-placed Moon: positioned from the same JPL DE440 ephemeris
+  at its true distance and scale, shaped as a triaxial ellipsoid, and oriented
+  by the full IAU lunar rotation model so the correct near side faces Earth
+  (with real libration). It is lit by the Sun with a hard terminator and the
+  right phase, and the Earth and Moon cast shadows on each other: the Moon's
+  shadow darkens a spot on the Earth during a solar eclipse, and the Earth's
+  shadow turns the Moon a dim coppery red during a lunar eclipse (a "blood
+  moon"). A depth buffer makes the Earth correctly occlude the more distant Moon.
 - Real Earth-orientation parameters: satellite positions use measured polar
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP

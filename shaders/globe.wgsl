@@ -12,6 +12,16 @@ struct Uniforms {
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
     // Per-marker world position + visibility are per-instance (see vs_marker).
     marker: vec4<f32>,
+    // Rotation from the Moon's body-fixed (selenographic) frame to world space:
+    // the ephemeris + IAU lunar orientation. Applied to the lunar mesh's
+    // positions and normals (a pure rotation, so normals need no transpose).
+    moon_rot: mat3x3<f32>,
+    // Moon center in the world frame (km), at true scale/distance.
+    moon_pos_world: vec3<f32>,
+    // Eclipse-geometry params: x = Moon mean radius (km); y = Earth mean radius
+    // (km); z = the Sun's angular radius (rad), which sets the penumbra
+    // softness; w = unused.
+    moon_params: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -25,6 +35,7 @@ struct Uniforms {
 @group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
 @group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
 @group(0) @binding(10) var stars_texture: texture_2d<f32>;
+@group(0) @binding(11) var moon_texture: texture_2d<f32>;
 
 // World space is kilometers, planet center at the origin. `position` is the
 // WGS84 ellipsoid surface point; `normal` is the outward geodetic unit
@@ -220,6 +231,52 @@ fn ray_sphere(origin: vec3<f32>, dir: vec3<f32>, radius: f32) -> vec2<f32> {
     return vec2<f32>(-b - s, -b + s);
 }
 
+// Fraction of disk 1 (radius r1) covered by disk 2 (radius r2) when their
+// centers are `sep` apart - the standard two-circle lens-area overlap, divided
+// by disk 1's area. Used for the eclipse soft shadow: disk 1 is the Sun, disk 2
+// the occluding body, all as angular radii. Returns 0 (no overlap) to 1 (disk 1
+// fully covered).
+fn disk_overlap_fraction(sep: f32, r1: f32, r2: f32) -> f32 {
+    if sep >= r1 + r2 {
+        return 0.0;
+    }
+    if sep <= abs(r1 - r2) {
+        // One disk lies entirely within the other.
+        let rmin = min(r1, r2);
+        return rmin * rmin / (r1 * r1);
+    }
+    let r1s = r1 * r1;
+    let r2s = r2 * r2;
+    let a1 = acos(clamp((sep * sep + r1s - r2s) / (2.0 * sep * r1), -1.0, 1.0));
+    let a2 = acos(clamp((sep * sep + r2s - r1s) / (2.0 * sep * r2), -1.0, 1.0));
+    let tri = 0.5
+        * sqrt(max((-sep + r1 + r2) * (sep + r1 - r2) * (sep - r1 + r2) * (sep + r1 + r2), 0.0));
+    let area = r1s * a1 + r2s * a2 - tri;
+    return area / (PI * r1s);
+}
+
+// Fraction of sunlight reaching a surface point `p` (world km) that is NOT
+// blocked by a spherical occluder of radius `occ_radius` centered at `occ`
+// (world km), with the Sun toward unit `sun`. This is the analytic eclipse
+// shadow shared by both directions: the Moon shadowing the Earth (solar
+// eclipse) and the Earth shadowing the Moon (lunar eclipse). 1 = fully lit, 0 =
+// total (umbral) shadow; the penumbra is soft because the Sun has a finite
+// angular radius (`uniforms.moon_params.z`). Both bodies are spheres at this
+// scale - exact enough, since the penumbra dwarfs the triaxial/oblate detail.
+fn sun_visibility(p: vec3<f32>, sun: vec3<f32>, occ: vec3<f32>, occ_radius: f32) -> f32 {
+    let oc = occ - p;
+    let t = dot(oc, sun);
+    // The occluder must lie toward the Sun to cast a shadow here.
+    if t <= 0.0 {
+        return 1.0;
+    }
+    let perp = length(oc - sun * t);
+    let ang_sep = atan(perp / t);
+    let ang_occ = atan(occ_radius / t);
+    let sun_ang = uniforms.moon_params.z;
+    return 1.0 - disk_overlap_fraction(ang_sep, sun_ang, ang_occ);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let albedo = textureSample(day_texture, earth_sampler, in.uv).rgb;
@@ -280,7 +337,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the terminator the blue is scattered away on the long grazing path
     // and the remaining light turns orange.
     let cos_sun = dot(n_geo, sun);
-    let sun_light = sun_transmittance(PLANET_RADIUS_KM + 0.1, cos_sun);
+    // The Moon can eclipse the Sun for this point (solar eclipse): darken the
+    // incoming sunlight by the analytic shadow. Multiplying the transmittance
+    // dims both the diffuse and specular sun terms consistently; the small
+    // DAY_AMBIENT term is left untouched, so the umbra is dark but not black
+    // (as a real eclipse shadow, lit by scattered skylight, is not).
+    let eclipse = sun_visibility(
+        in.world_pos,
+        sun,
+        uniforms.moon_pos_world,
+        uniforms.moon_params.x,
+    );
+    let sun_light = sun_transmittance(PLANET_RADIUS_KM + 0.1, cos_sun) * eclipse;
 
     let day_lit = albedo
         * (vec3<f32>(DAY_AMBIENT)
@@ -554,4 +622,62 @@ fn fs_marker(in: MarkerOutput) -> @location(0) vec4<f32> {
     let ring = smoothstep(0.6 - aa, 0.6 + aa, r);
     let color = mix(MARKER_FILL, MARKER_RING, ring);
     return vec4<f32>(color, alpha);
+}
+
+// The Moon: the triaxial lunar mesh, oriented into world space by the
+// ephemeris + IAU lunar rotation (`uniforms.moon_rot`) and placed at its true
+// world position. Lit by the same Sun as the Earth, but with no atmosphere
+// (a hard terminator) and its own eclipse shadow: the Earth can block the Sun
+// (lunar eclipse), darkening the lit disk and leaving a faint coppery glow from
+// sunlight refracted through Earth's atmosphere. Drawn with the depth buffer so
+// the Earth correctly occludes it; the Moon is always farther than the Earth
+// from any near-Earth camera, so this is what hides it behind the planet.
+
+// Faint fill on the lunar night side (earthshine + scattered light), so the
+// unlit limb is not pure black.
+const MOON_AMBIENT: f32 = 0.02;
+// Coppery glow on the eclipsed (umbral) Moon, from sunlight refracted through
+// Earth's atmosphere - the "blood moon". Dim and red-biased.
+const MOON_ECLIPSE_GLOW: vec3<f32> = vec3<f32>(0.06, 0.012, 0.004);
+
+struct MoonOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) world_pos: vec3<f32>,
+};
+
+@vertex
+fn vs_moon(in: VertexInput) -> MoonOutput {
+    var out: MoonOutput;
+    // Body-fixed mesh -> world: rotate by the lunar orientation, then translate
+    // to the Moon's world center. The rotation is orthonormal, so it carries
+    // the normal too.
+    let world = uniforms.moon_rot * in.position + uniforms.moon_pos_world;
+    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.uv = in.uv;
+    out.normal = uniforms.moon_rot * in.normal;
+    out.world_pos = world;
+    return out;
+}
+
+@fragment
+fn fs_moon(in: MoonOutput) -> @location(0) vec4<f32> {
+    let albedo = textureSample(moon_texture, earth_sampler, in.uv).rgb;
+    let n = normalize(in.normal);
+    let sun = normalize(uniforms.sun_dir);
+
+    // Hard (atmosphere-free) terminator: plain Lambert, with the slightest
+    // softening for edge antialiasing.
+    let sunlit = max(dot(n, sun), 0.0);
+
+    // Earth shadow on the Moon (lunar eclipse): the Earth (sphere at the origin)
+    // can block the Sun. Soft penumbra from the Sun's angular size.
+    let eclipse = sun_visibility(in.world_pos, sun, vec3<f32>(0.0), uniforms.moon_params.y);
+
+    var color = albedo * (MOON_AMBIENT + sunlit * eclipse);
+    // Coppery umbral glow, only where the Moon would otherwise be sunlit.
+    color += MOON_ECLIPSE_GLOW * (1.0 - eclipse) * sunlit * albedo;
+
+    return vec4<f32>(color, 1.0);
 }

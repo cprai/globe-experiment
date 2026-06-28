@@ -9,6 +9,7 @@ use winit::dpi::PhysicalSize;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+use crate::earth;
 use crate::simulation::RenderState;
 use mesh::Vertex;
 
@@ -19,6 +20,50 @@ const SLICES: u32 = 128;
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
+
+/// Depth buffer format. A 32-bit float depth, paired with the camera's
+/// reversed-Z projection (near -> 1, far -> 0), cleared to 0.0 and tested
+/// `Greater`. This is what lets the Earth correctly occlude the much more
+/// distant Moon across the scene's enormous near/far span (see
+/// `Camera::view_proj`).
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// The Sun's angular radius seen from Earth/Moon (~0.266 deg), in radians. Sets
+/// the soft penumbra width of the analytic eclipse shadows in the shader.
+const SUN_ANGULAR_RADIUS_RAD: f32 = 0.004652;
+
+/// Creates a depth texture view sized to the render target. Recreated whenever
+/// the target is resized (the depth attachment must match the color size).
+fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("depth texture"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// The reversed-Z depth attachment, cleared to 0.0 (the far plane). Shared by
+/// the windowed and headless passes so they depth-test identically.
+fn depth_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassDepthStencilAttachment<'_> {
+    wgpu::RenderPassDepthStencilAttachment {
+        view,
+        depth_ops: Some(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(0.0),
+            store: wgpu::StoreOp::Store,
+        }),
+        stencil_ops: None,
+    }
+}
 
 /// Maximum width or height (pixels) for a single-frame [`HeadlessRenderer`]
 /// target. Matches wgpu's default 2D texture dimension limit
@@ -42,6 +87,8 @@ pub struct Gfx {
     config: wgpu::SurfaceConfiguration,
     globe: GlobeRenderer,
     egui_renderer: egui_wgpu::Renderer,
+    /// Reversed-Z depth buffer, recreated on resize to match the surface size.
+    depth_view: wgpu::TextureView,
 }
 
 /// What happened when a frame was submitted, so the caller can drive window
@@ -113,11 +160,20 @@ impl Gfx {
         // internally with rayon (see GlobeRenderer::new).
         let globe = GlobeRenderer::new(&device, &queue, config.format);
 
+        // The egui overlay shares the frame pass, which now has a depth
+        // attachment, so its pipeline must declare the matching depth format
+        // (egui builds it depth-test-off / no-write, so the overlay still draws
+        // on top regardless of depth).
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format,
-            egui_wgpu::RendererOptions::default(),
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: Some(DEPTH_FORMAT),
+                ..Default::default()
+            },
         );
+
+        let depth_view = create_depth_view(&device, config.width, config.height);
 
         Self {
             surface,
@@ -126,14 +182,17 @@ impl Gfx {
             config,
             globe,
             egui_renderer,
+            depth_view,
         }
     }
 
-    /// Reconfigures the surface to a new size. The caller requests a redraw.
+    /// Reconfigures the surface to a new size and resizes the depth buffer to
+    /// match. The caller requests a redraw.
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.depth_view = create_depth_view(&self.device, self.config.width, self.config.height);
     }
 
     /// The surface size in pixels (width, height). The caller uses it to build
@@ -143,11 +202,11 @@ impl Gfx {
     }
 
     /// Renders one frame: applies egui's texture-set deltas, writes the
-    /// uniforms from `render`, then draws the scene (stars -> surface ->
-    /// atmosphere -> marker) and the egui overlay in a single pass, and
-    /// presents. `window` is borrowed only for the pre-present latency hint.
-    /// Returns a [`FrameOutcome`] so the caller can reveal the window /
-    /// reschedule a redraw.
+    /// uniforms from `render`, then draws the scene (stars -> surface -> moon
+    /// -> atmosphere -> marker, depth-buffered) and the egui overlay in a
+    /// single pass, and presents. `window` is borrowed only for the
+    /// pre-present hint. Returns a [`FrameOutcome`] so the caller can
+    /// reveal the window / reschedule a redraw.
     ///
     /// The egui texture-set deltas are applied **first, before the surface
     /// acquire**, so they survive a frame that never presents - see the comment
@@ -229,7 +288,7 @@ impl Gfx {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(depth_attachment(&self.depth_view)),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -325,6 +384,14 @@ struct Uniforms {
     /// z = radius px, w = unused. (Per-marker position/visibility is
     /// per-instance, in the marker instance buffer, not here.)
     marker: [f32; 4],
+    /// Moon body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
+    moon_rot: [[f32; 4]; 3],
+    /// Moon center in the world frame (km).
+    moon_pos_world: [f32; 3],
+    _pad2: f32,
+    /// Eclipse params: x = Moon mean radius km, y = Earth mean radius km,
+    /// z = Sun angular radius rad, w = unused.
+    moon_params: [f32; 4],
 }
 
 /// One on-screen satellite marker, as instance data for the marker pipeline.
@@ -362,10 +429,17 @@ struct GlobeRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
+    moon_pipeline: wgpu::RenderPipeline,
     marker_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    /// Lunar mesh (triaxial ellipsoid, body-fixed frame). Separate buffers from
+    /// the globe because the Moon has its own geometry and is drawn with its
+    /// own model transform (`moon_rot` + `moon_pos_world`).
+    moon_vertices: wgpu::Buffer,
+    moon_indices: wgpu::Buffer,
+    moon_index_count: u32,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Per-satellite marker instance data (position + visibility), drawn
@@ -394,6 +468,18 @@ impl GlobeRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let moon_mesh = mesh::moon_ellipsoid(STACKS, SLICES);
+        let moon_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("moon vertices"),
+            contents: bytemuck::cast_slice(&moon_mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let moon_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("moon indices"),
+            contents: bytemuck::cast_slice(&moon_mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globe uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -418,7 +504,7 @@ impl GlobeRenderer {
         // the produced views/module are all Send + Sync. (Decoding 33 MP images
         // is CPU-heavy, so this parallelism matters more than it did for the old
         // memcpy-only BC7 uploads.)
-        let texture_inputs: [(&str, &[u8], TexKind); 8] = [
+        let texture_inputs: [(&str, &[u8], TexKind); 9] = [
             (
                 "earth day texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.jpg")),
@@ -461,6 +547,11 @@ impl GlobeRenderer {
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.jpg")),
                 TexKind::ColorSrgb,
             ),
+            (
+                "moon texture",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
+                TexKind::ColorSrgb,
+            ),
         ];
 
         let (module, views) = rayon::join(
@@ -495,7 +586,8 @@ impl GlobeRenderer {
             inscatter_rayleigh_view,
             inscatter_mie_view,
             stars_view,
-        ]: [wgpu::TextureView; 8] = views
+            moon_view,
+        ]: [wgpu::TextureView; 9] = views
             .try_into()
             .expect("upload_ktx2 returns one view per input");
 
@@ -624,6 +716,16 @@ impl GlobeRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -675,6 +777,10 @@ impl GlobeRenderer {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(&stars_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&moon_view),
+                },
             ],
         });
 
@@ -683,6 +789,21 @@ impl GlobeRenderer {
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
+
+        // Reversed-Z depth state, parameterized per pass. The solid bodies
+        // (Earth surface, Moon) write depth and test `Greater` (nearer = larger
+        // depth) so the Earth occludes the far-off Moon. The backdrop, the
+        // additive atmosphere, and the screen-space markers neither write nor
+        // test depth (`Always`, no write) - they keep their exact draw-order
+        // behavior, layered by the order in `render`.
+        let depth_state =
+            |write_enabled: bool, compare: wgpu::CompareFunction| wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(write_enabled),
+                depth_compare: Some(compare),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            };
 
         // The three pipelines share the module and layout but each does
         // independent backend pipeline-state compilation, so they build
@@ -721,7 +842,7 @@ impl GlobeRenderer {
                     cull_mode: Some(wgpu::Face::Back),
                     ..Default::default()
                 },
-                depth_stencil: None,
+                depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -775,7 +896,9 @@ impl GlobeRenderer {
                     cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
-                depth_stencil: None,
+                // Additive aerial perspective over the disk: keep its exact
+                // draw-order look (no depth test/write), drawn after the solids.
+                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -816,7 +939,9 @@ impl GlobeRenderer {
                     cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
-                depth_stencil: None,
+                // The backdrop must never occlude the (more distant) Moon, so
+                // it neither writes nor tests depth.
+                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -861,28 +986,81 @@ impl GlobeRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: None,
+                // Screen overlays drawn last; CPU-occluded, so no depth.
+                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
             })
         };
 
-        let (render_pipeline, (atmosphere_pipeline, (stars_pipeline, marker_pipeline))) =
-            rayon::join(make_render_pipeline, || {
-                rayon::join(make_atmosphere_pipeline, || {
-                    rayon::join(make_stars_pipeline, make_marker_pipeline)
+        // The Moon: same vertex format as the globe, lit by the Sun with its
+        // own eclipse shadow. A solid body, so it writes depth and tests
+        // `Greater` like the Earth surface (the depth buffer is what makes the
+        // Earth occlude it).
+        let make_moon_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("moon pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_moon"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x3,
+                            2 => Float32x2,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_moon"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        let (
+            render_pipeline,
+            (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, moon_pipeline))),
+        ) = rayon::join(make_render_pipeline, || {
+            rayon::join(make_atmosphere_pipeline, || {
+                rayon::join(make_stars_pipeline, || {
+                    rayon::join(make_marker_pipeline, make_moon_pipeline)
                 })
-            });
+            })
+        });
 
         Self {
             render_pipeline,
             atmosphere_pipeline,
             stars_pipeline,
+            moon_pipeline,
             marker_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
+            moon_vertices,
+            moon_indices,
+            moon_index_count: moon_mesh.indices.len() as u32,
             uniforms,
             bind_group,
             markers,
@@ -912,6 +1090,7 @@ impl GlobeRenderer {
         // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
         // columns are padded to vec4 stride.
         let star_cols = render.star_rot_inv.to_cols_array_2d();
+        let moon_cols = render.moon_rot.to_cols_array_2d();
 
         let uniforms = Uniforms {
             view_proj: render.view_proj.to_cols_array(),
@@ -923,6 +1102,17 @@ impl GlobeRenderer {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
             marker: [width, height, MARKER_RADIUS_PX, 0.0],
+            moon_rot: std::array::from_fn(|c| {
+                [moon_cols[c][0], moon_cols[c][1], moon_cols[c][2], 0.0]
+            }),
+            moon_pos_world: render.moon_pos_world.to_array(),
+            _pad2: 0.0,
+            moon_params: [
+                render.moon_radius_km,
+                earth::MEAN_RADIUS_KM,
+                SUN_ANGULAR_RADIUS_RAD,
+                0.0,
+            ],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
@@ -952,15 +1142,26 @@ impl GlobeRenderer {
         render_pass.set_vertex_buffer(0, self.vertices.slice(..));
         render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
 
-        // Backdrop first, then the surface; the scattering pass then adds
-        // atmosphere over the whole disc (aerial perspective) and beyond
-        // the limb.
+        // Backdrop first, then the surface (which writes depth). The Moon then
+        // draws against that depth (the Earth occludes it), and the scattering
+        // pass adds atmosphere over the disc (aerial perspective) and the limb.
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
+        // The Moon: its own mesh + model transform. Drawn after the Earth so the
+        // depth buffer resolves their mutual occlusion (including a partial limb
+        // when the Moon is half-hidden behind the planet).
+        render_pass.set_pipeline(&self.moon_pipeline);
+        render_pass.set_vertex_buffer(0, self.moon_vertices.slice(..));
+        render_pass.set_index_buffer(self.moon_indices.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
+
+        // The atmosphere reuses the globe shell mesh - rebind it.
+        render_pass.set_vertex_buffer(0, self.vertices.slice(..));
+        render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.set_pipeline(&self.atmosphere_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 

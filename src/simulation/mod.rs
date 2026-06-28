@@ -68,6 +68,14 @@ pub struct RenderState {
     /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
     /// from the equatorial frame the camera rig uses.
     pub star_rot_inv: Mat3,
+    /// Moon center in the world frame (km), at true scale and distance.
+    pub moon_pos_world: Vec3,
+    /// Rotation from the Moon's body-fixed (selenographic) frame to the world
+    /// frame - the ephemeris + IAU lunar orientation. Applied to the lunar
+    /// mesh.
+    pub moon_rot: Mat3,
+    /// Moon mean radius (km), for the analytic eclipse-shadow geometry.
+    pub moon_radius_km: f32,
     /// One marker per tracked satellite, in the same order as the scenario's
     /// satellite list. The renderer draws them instanced.
     pub markers: Vec<SatelliteMarker>,

@@ -28,7 +28,9 @@
 use glam::{Mat3, Vec3};
 use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf, qitrf2gcrf};
 use satkit::jplephem::geocentric_pos;
-use satkit::{Instant, SolarSystem, Vector3};
+use satkit::{Instant, SolarSystem, TimeScale, Vector3};
+
+use crate::moon;
 
 /// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it
 /// straight into `OUT_DIR` so this `include_bytes!` can pick it up - no runtime
@@ -137,6 +139,27 @@ pub struct CelestialSphere {
     /// Subsolar geodetic latitude/longitude (degrees), for display.
     pub subsolar_lat_deg: f32,
     pub subsolar_lon_deg: f32,
+    /// Moon center in the Earth-fixed (ECEF) world frame, km. At true scale
+    /// (~384,400 km away), so the Moon renders at its real angular size and
+    /// distance.
+    pub moon_pos_world: Vec3,
+    /// Rotation taking a vector in the Moon's body-fixed (selenographic,
+    /// project +Y-north convention) frame into the world frame. Built from
+    /// the ephemeris Earth orientation and the IAU lunar rotation model, so
+    /// the near side faces Earth with the correct libration. Applied to the
+    /// lunar mesh's positions and normals; it is a pure rotation, so
+    /// normals need no inverse-transpose.
+    pub moon_rot: Mat3,
+    /// Moon mean radius, km - for the analytic eclipse-shadow geometry (the
+    /// Moon as a shadow caster/receiver is treated as a sphere of this radius).
+    pub moon_radius_km: f32,
+    /// Sublunar geodetic latitude/longitude (degrees) - the geographic point
+    /// directly beneath the Moon. For display / aiming, like the subsolar
+    /// point.
+    pub sublunar_lat_deg: f32,
+    pub sublunar_lon_deg: f32,
+    /// Earth-Moon center distance, km (for display).
+    pub moon_distance_km: f32,
 }
 
 impl CelestialSphere {
@@ -180,14 +203,133 @@ impl CelestialSphere {
         let subsolar_lat_deg = sun_dir.y.asin().to_degrees();
         let subsolar_lon_deg = sun_dir.x.atan2(sun_dir.z).to_degrees();
 
+        // Moon: position from the same DE440 ephemeris as the Sun (GCRF,
+        // inertial, meters), rotated into the Earth-fixed world frame. Rendered
+        // at true scale, so it sits ~384,400 km out and shows its real angular
+        // size.
+        let q_gcrf2itrf = qgcrf2itrf(time);
+        let moon_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("moon ephemeris lookup");
+        let moon_pos_world = p * (nvec(q_gcrf2itrf * moon_gcrf) / 1000.0);
+
+        // The lunar mesh is built in the project body convention (+Y north,
+        // +Z sub-Earth); compose its body->world rotation as
+        // P * R_gcrf2itrf * M_body2gcrf * P^T, where M_body2gcrf (standard
+        // Z=pole convention) is the IAU lunar rotation and the P^T un-permutes
+        // the mesh's project-convention axes into the standard ones M expects.
+        let r_gcrf2itrf = Mat3::from_cols(
+            nvec(q_gcrf2itrf * unit(1.0, 0.0, 0.0)),
+            nvec(q_gcrf2itrf * unit(0.0, 1.0, 0.0)),
+            nvec(q_gcrf2itrf * unit(0.0, 0.0, 1.0)),
+        );
+        let moon_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
+
+        let moon_distance_km = moon_pos_world.length();
+        let moon_dir = moon_pos_world / moon_distance_km;
+        let sublunar_lat_deg = moon_dir.y.asin().to_degrees();
+        let sublunar_lon_deg = moon_dir.x.atan2(moon_dir.z).to_degrees();
+
         Self {
             sun_dir,
             star_rot_inv,
             star_tex_rot_inv,
             subsolar_lat_deg,
             subsolar_lon_deg,
+            moon_pos_world,
+            moon_rot,
+            moon_radius_km: moon::MEAN_RADIUS_KM,
+            sublunar_lat_deg,
+            sublunar_lon_deg,
+            moon_distance_km,
         }
     }
+}
+
+/// Rotation from the Moon's body-fixed (mean-Earth/polar-axis, standard Z=pole)
+/// frame to GCRF, from the IAU lunar rotation model.
+///
+/// Implements the lunar rotational elements of the IAU/IAG Working Group on
+/// Cartographic Coordinates and Rotational Elements (2009 report, Archinal et
+/// al. 2011, Tables 2 and 3): the pole right ascension `alpha0` / declination
+/// `delta0` and the prime-meridian angle `W`, each a polynomial in time plus
+/// physical-libration series in the 13 lunar arguments `E1..E13`. The series
+/// resolve the near side's true orientation (and its libration) rather than a
+/// fixed tidal-lock approximation.
+///
+/// The IAU formulas take `d` = days and `T` = Julian centuries of *Barycentric
+/// Dynamical Time* since J2000; TT is used here (the TT-TDB difference is below
+/// a millisecond, far under the model's relevance), and the TT-UTC offset
+/// matters at the ~0.01 deg level in `W` - itself well below a rendered pixel.
+fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
+    // Days and centuries of TT since the J2000 epoch (JD 2451545.0 TT).
+    let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
+    let t = d / 36_525.0;
+
+    // The 13 lunar libration arguments E1..E13 (degrees), linear in d.
+    let e: [f64; 13] = [
+        125.045 - 0.0529921 * d,
+        250.089 - 0.1059842 * d,
+        260.008 + 13.0120009 * d,
+        176.625 + 13.3407154 * d,
+        357.529 + 0.9856003 * d,
+        311.589 + 26.4057084 * d,
+        134.963 + 13.0649930 * d,
+        276.617 + 0.3287146 * d,
+        34.226 + 1.7484877 * d,
+        15.134 - 0.1589763 * d,
+        119.743 + 0.0036096 * d,
+        239.961 + 0.1643573 * d,
+        25.053 + 12.9590088 * d,
+    ];
+    // 1-based access matching the IAU `E_n` numbering, in radians.
+    let sin_e = |n: usize| e[n - 1].to_radians().sin();
+    let cos_e = |n: usize| e[n - 1].to_radians().cos();
+
+    // Pole right ascension alpha0 (degrees).
+    let alpha0 = 269.9949 + 0.0031 * t - 3.8787 * sin_e(1) - 0.1204 * sin_e(2) + 0.0700 * sin_e(3)
+        - 0.0172 * sin_e(4)
+        + 0.0072 * sin_e(6)
+        - 0.0052 * sin_e(10)
+        + 0.0043 * sin_e(13);
+
+    // Pole declination delta0 (degrees).
+    let delta0 = 66.5392 + 0.0130 * t + 1.5419 * cos_e(1) + 0.0239 * cos_e(2) - 0.0278 * cos_e(3)
+        + 0.0068 * cos_e(4)
+        - 0.0029 * cos_e(6)
+        + 0.0009 * cos_e(7)
+        + 0.0008 * cos_e(10)
+        - 0.0009 * cos_e(13);
+
+    // Prime-meridian angle W (degrees), measured east from the ascending node.
+    let w = 38.3213 + 13.17635815 * d - 1.4e-12 * d * d + 3.5610 * sin_e(1) + 0.1208 * sin_e(2)
+        - 0.0642 * sin_e(3)
+        + 0.0158 * sin_e(4)
+        + 0.0252 * sin_e(5)
+        - 0.0066 * sin_e(6)
+        - 0.0047 * sin_e(7)
+        - 0.0046 * sin_e(8)
+        + 0.0028 * sin_e(9)
+        + 0.0052 * sin_e(10)
+        + 0.0040 * sin_e(11)
+        + 0.0019 * sin_e(12)
+        - 0.0044 * sin_e(13);
+
+    let (alpha0, delta0, w) = (alpha0.to_radians(), delta0.to_radians(), w.to_radians());
+
+    // Build the body basis in GCRF directly from the standard definition: the
+    // pole z at (alpha0, delta0); the ascending node Q of the body equator on
+    // the ICRF equator at RA = alpha0 + 90 deg; the prime meridian x = Q rotated
+    // east by W about z; y completes the right-handed triad (90 deg east).
+    let (sa, ca) = (alpha0.sin() as f32, alpha0.cos() as f32);
+    let (sd, cd) = (delta0.sin() as f32, delta0.cos() as f32);
+    let z = Vec3::new(cd * ca, cd * sa, sd);
+    let q = Vec3::new(-sa, ca, 0.0);
+    let q_east = z.cross(q);
+    let x = q * (w.cos() as f32) + q_east * (w.sin() as f32);
+    let y = z.cross(x);
+
+    // Columns are the GCRF images of the body x (prime meridian), y (90 deg
+    // east), z (pole) axes - i.e. the body->GCRF rotation.
+    Mat3::from_cols(x, y, z)
 }
 
 /// numeris column vector -> glam Vec3.
@@ -255,5 +397,37 @@ mod tests {
             "galactic center {gc_tex}"
         );
         assert!((ngp_tex - Vec3::Y).length() < 1e-5, "NGP {ngp_tex}");
+    }
+
+    /// The IAU lunar rotation must keep the Moon's near side facing Earth: the
+    /// mean sub-Earth point (selenographic lat 0 / lon 0, which is +Z in the
+    /// project body convention) should point from the Moon back toward Earth,
+    /// i.e. opposite the Earth->Moon direction. The residual is the optical
+    /// libration (up to ~8 deg), so a 10 deg tolerance both confirms the near
+    /// side faces Earth and that libration is present (not a rigid lock).
+    /// Validates the rotation model independent of any render.
+    #[test]
+    fn moon_near_side_faces_earth() {
+        // The celestial sphere reads satkit globals (ephemeris + EOP + IERS),
+        // so seed them once for this test.
+        super::init_satkit();
+
+        let time = Instant::from_datetime(2024, 6, 15, 0, 0, 0.0).expect("valid datetime");
+        let sphere = CelestialSphere::at(&time);
+
+        // Outward normal at the sub-Earth point in world space.
+        let sub_earth = sphere.moon_rot * Vec3::Z;
+        // Direction from the Moon back toward Earth (Earth is at the origin).
+        let toward_earth = (-sphere.moon_pos_world).normalize();
+
+        let angle = sub_earth
+            .dot(toward_earth)
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees();
+        assert!(
+            angle < 10.0,
+            "sub-Earth point off the Earth direction by {angle:.2} deg (libration should be < ~8)"
+        );
     }
 }

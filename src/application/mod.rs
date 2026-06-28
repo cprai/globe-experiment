@@ -93,6 +93,17 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             shown: false,
         }
     }
+
+    /// Builds the application with a specific initial camera instead of the
+    /// default full-globe view. Used by scenarios that want to frame a specific
+    /// event on launch (e.g. the eclipse scenarios aim at the Sun/Moon); the
+    /// camera is fully interactive afterward.
+    pub fn with_camera(simulation: S, camera: Camera) -> Self {
+        Self {
+            camera,
+            ..Self::new(simulation)
+        }
+    }
 }
 
 impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {

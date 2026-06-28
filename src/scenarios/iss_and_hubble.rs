@@ -101,11 +101,15 @@ impl Simulation for IssAndHubbleSimulation {
         // comes from the same propagation as the markers.
         self.last_telemetry = sat_telemetry;
 
+        let celestial = &self.simulation.celestial_sphere;
         RenderState {
             view_proj,
             camera_pos: eye,
-            sun_dir: self.simulation.celestial_sphere.sun_dir,
-            star_rot_inv: self.simulation.celestial_sphere.star_tex_rot_inv,
+            sun_dir: celestial.sun_dir,
+            star_rot_inv: celestial.star_tex_rot_inv,
+            moon_pos_world: celestial.moon_pos_world,
+            moon_rot: celestial.moon_rot,
+            moon_radius_km: celestial.moon_radius_km,
             markers,
         }
     }

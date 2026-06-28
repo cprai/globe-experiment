@@ -75,6 +75,29 @@ The Sun/star backdrop uses the full IERS-2010 transforms
 (`qgcrf2itrf`/`qitrf2gcrf`, sub-arcsec): real UT1-UTC, polar motion, and the
 IERS nutation/CIO tables. This matches the satellite's full `qteme2itrf`.
 
+## Ephemeris-driven Moon (celestial_sphere.rs)
+
+The Moon is positioned and oriented per frame in `CelestialSphere::at`:
+- **Position**: `geocentric_pos(SolarSystem::Moon, time)` (GCRF, meters) ->
+  ITRF via the same `qgcrf2itrf` as the Sun -> world via `P`, /1000 for km.
+  Rendered at true scale/distance (~384,400 km), so it shows real angular size
+  and the Earth must occlude it via the depth buffer (`renderer.md`).
+- **Orientation** (`lunar_body_to_gcrf`): the full **IAU/IAG 2009/2015 lunar
+  rotation** series — pole `alpha0(T)`/`delta0(T)` + prime-meridian `W(d)` with
+  the 13 libration arguments `E1..E13`. This gives the correct near side facing
+  Earth *with* libration, not a rigid tidal lock. satkit exposes no lunar body
+  frame, so this is implemented here. Time is TT days since J2000 via
+  `as_jd_with_scale(TimeScale::TT)`.
+- `moon_rot` (uploaded to the shader) = `P * R_gcrf2itrf * M_body2gcrf * P^T`.
+  The `P^T` un-permutes the lunar *mesh's* project-convention axes (+Y north,
+  +Z sub-Earth) into the standard (Z=pole) frame `M_body2gcrf` expects, so the
+  mesh shares Earth's body convention. It is a pure rotation (normals need no
+  transpose).
+- The Moon is a **triaxial ellipsoid** (`src/moon.rs`), the long axis toward
+  Earth; the deviation from a sphere is ~1-3 km (imperceptible) but modeled.
+- Test: `moon_near_side_faces_earth` asserts the sub-Earth point faces Earth
+  within the optical libration (~8 deg), validating the model render-free.
+
 ## Satellite pipeline (satellite.rs)
 
 Each `Satellite` is element-set agnostic — TLEs live in the scenarios, not
@@ -103,6 +126,13 @@ north. Our world is X = 90°E, Y = north, Z = prime meridian. Bridge via P
 
 **Units**: SGP4 output and `ITRFCoord` are in **meters**. Divide by 1000 for
 km world space.
+
+**Ephemeris bodies**: `geocentric_pos(SolarSystem::Sun, tm)` and
+`geocentric_pos(SolarSystem::Moon, tm)` both return GCRF `Vector3` in meters
+(`None` outside DE440 range). **Time scales**: `as_jd_with_scale(TimeScale::TT)`
+gives TT Julian days (J2000 = 2451545.0 TT); used by the IAU lunar rotation.
+satkit exposes **no lunar body-fixed frame** — the IAU rotation is implemented
+in `celestial_sphere.rs`.
 
 **Frame transforms (frametransform module)**:
 - `qteme2itrf(tm)` — full, reads EOP (real polar motion + UT1-UTC).

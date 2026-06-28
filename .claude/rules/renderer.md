@@ -43,10 +43,11 @@ surface lost/timeout recovery.
 
 ## `GlobeRenderer::new` parallelization
 
-`create_shader_module` runs on one rayon task while 8 texture inputs load in
-parallel via `into_par_iter`. A nested `rayon::join` compiles the 3 render
-pipelines concurrently. This is the **sanctioned** parallel decode — do not
-confuse it with the phase-1 reverted `thread::scope` approach.
+`create_shader_module` runs on one rayon task while 9 texture inputs load in
+parallel via `into_par_iter`. A nested `rayon::join` compiles the 5 render
+pipelines concurrently (globe surface, atmosphere, stars, markers, Moon). This
+is the **sanctioned** parallel decode — do not confuse it with the phase-1
+reverted `thread::scope` approach.
 
 ## `Gfx::init` device setup
 
@@ -72,13 +73,20 @@ camera_pos:   vec3<f32> + 1 f32 pad  (_pad0)   // km
 sun_dir:      vec3<f32> + 1 f32 pad  (_pad1)
 star_rot_inv: mat3x3<f32>            // Rust: 3 columns each padded to [f32;4]
 marker:       vec4<f32>              // x,y = viewport px; z = radius px; w = unused
+moon_rot:     mat3x3<f32>            // body-fixed -> world; cols padded to [f32;4]
+moon_pos_world: vec3<f32> + 1 f32 pad (_pad2)   // Moon center, km
+moon_params:  vec4<f32>              // x = Moon radius km; y = Earth radius km;
+                                     //   z = Sun angular radius rad; w = unused
 ```
 
 Key: WGSL `mat3x3` columns have `vec4` stride, so the Rust struct pads each
 column to 4 floats. Per-marker position + visibility live in the **marker
 instance buffer** (`MarkerInstance { position: vec3, visible: f32 }`), not
 in the uniform block. The uniform and marker instances are written every frame
-in `prepare` (`queue.write_buffer`).
+in `prepare` (`queue.write_buffer`). The Moon mesh is a separate vertex/index
+buffer (`mesh::moon_ellipsoid`), drawn with its own model transform via
+`moon_rot`/`moon_pos_world`; the Earth shell mesh is rebound for the atmosphere
+pass that follows it.
 
 ## Bind group 0 layout
 
@@ -95,15 +103,26 @@ in `prepare` (`queue.write_buffer`).
 | 8 | inscatter Rayleigh LUT | `Rgba16Float` 256x128 |
 | 9 | inscatter Mie LUT | `Rgba16Float` 256x128 |
 | 10 | stars texture | `Rgba8UnormSrgb` (decoded JPEG) |
+| 11 | moon texture | `Rgba8UnormSrgb`, 8192x4096 (decoded JPEG; lunar albedo) |
 
-`earth_sampler` is shared by all image textures including stars; `lut_sampler`
-by the three LUTs. LUTs are read with `textureSampleLevel(..., 0.0)` (used
-in non-uniform control flow; no mips anyway). Normal map linear format is
-load-bearing — sRGB decode would warp the tangent vectors.
+`earth_sampler` is shared by all image textures including stars and the moon;
+`lut_sampler` by the three LUTs. LUTs are read with `textureSampleLevel(...,
+0.0)` (used in non-uniform control flow; no mips anyway). Normal map linear
+format is load-bearing — sRGB decode would warp the tangent vectors.
+
+## Depth buffer
+
+`Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
+`depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
+target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
+`0.0`) build both. All five globe pipelines declare `depth_stencil`; egui's
+overlay pipeline is built with `depth_stencil_format: Some(DEPTH_FORMAT)`.
 
 ## Renderer constants
 
-`STACKS 64`, `SLICES 128` (mesh resolution), `MARKER_RADIUS_PX 6`.
+`STACKS 64`, `SLICES 128` (mesh resolution; shared by the Earth and Moon
+meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
+`SUN_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra width).
 
 ## Headless render mode (`HeadlessRenderer` + `snapshot`)
 
