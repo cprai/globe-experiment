@@ -430,6 +430,20 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
+    // The Moon (a solid body) occludes the Earth's atmosphere when it sits
+    // between the camera and the Earth. This pass deliberately does not depth-
+    // test (it layers its aerial perspective over the Earth's own near disc,
+    // whose depth is closer than this far-side shell), so without an explicit
+    // check the additive glow bleeds over the nearer Moon - visible as a faint
+    // spot on the lunar disc from a Moon-orbit view. Drop the fragment where the
+    // ray meets the Moon in front of where it enters the atmosphere. (The Moon is
+    // ~384,000 km out, so from an Earth orbit it is always far beyond the
+    // atmosphere and this never triggers.)
+    let moon = ray_sphere(origin - uniforms.moon_pos_world, dir, uniforms.moon_params.x);
+    if moon.y > 0.0 && moon.x > 0.0 && moon.x < shell.x {
+        return vec4<f32>(0.0);
+    }
+
     // Impact parameter: the ray's closest approach to the planet center.
     let b = length(origin - dot(origin, dir) * dir);
 
@@ -475,14 +489,15 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, 1.0);
 }
 
-// Star backdrop: the same sphere mesh inflated to enclose the camera at
-// any zoom and rendered inside-out, before everything else. It reuses the
-// mesh UVs, so the equirectangular star map shares the earth texture's
-// orientation (celestial poles over the geographic poles).
+// Star backdrop: the same sphere mesh inflated into a shell centered on the
+// camera and rendered inside-out, before everything else. It reuses the mesh
+// UVs, so the equirectangular star map shares the earth texture's orientation
+// (celestial poles over the geographic poles).
 
-// Must enclose the camera (max ~70000 km from center) but stay inside the
-// projection's far plane (~318550 km) from any camera position. ~35 mean
-// Earth radii, in km.
+// Shell radius, in km. The shell is centered on the camera (see vs_stars), so it
+// always encloses the eye whatever the orbit target; this radius only has to sit
+// between the near and far planes (the far plane is 500,000 km). ~35 mean Earth
+// radii.
 const STARS_RADIUS_KM: f32 = 222985.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
@@ -509,13 +524,21 @@ struct StarsOutput {
 @vertex
 fn vs_stars(in: VertexInput) -> StarsOutput {
     var out: StarsOutput;
-    // Inflate the unit normal into a km-scale sphere enclosing the camera.
-    let world = in.normal * STARS_RADIUS_KM;
+    // Inflate the unit normal into a km-scale shell centered on the CAMERA, not
+    // the Earth origin, so it encloses the eye at any orbit target - including
+    // the Moon, ~384,000 km from the origin and far outside an origin-centered
+    // shell (which is why half the sky and the Sun vanished from a Moon view).
+    // Centering on the camera also makes the camera-relative direction exactly
+    // the vertex normal direction (no camera_pos term), so the star/sun lookup
+    // is a pure function of view direction - a true backdrop at infinity - and
+    // the Earth-orbit framing is unchanged (the eye was always inside the old
+    // shell, where the two formulations give the same per-pixel direction).
+    let relative = in.normal * STARS_RADIUS_KM;
+    let world = uniforms.camera_pos + relative;
     out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
 
     // Linear in the vertex position, so interpolation is exact; both
     // outputs are normalized per fragment.
-    let relative = world - uniforms.camera_pos;
     out.dir = uniforms.star_rot_inv * relative;
     out.view = relative;
     return out;

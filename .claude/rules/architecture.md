@@ -20,20 +20,25 @@ src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
                          (render takes one --scene JSON + --output/width/height)
 src/snapshot.rs          headless single-frame render mode (no EOP range check);
                          SceneSpec = --scene JSON (simulation + camera +
-                         optional ui); optional mock-panel overlay
-                         (build_ui_frame)
+                         optional ui); camera.target "earth"/"moon"
+                         (CameraTargetSpec, default earth); optional mock-panel
+                         overlay (build_ui_frame)
 src/scenarios/mod.rs     scenario registry
 src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
 src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
-                         run() frames the day side via Camera::looking_toward
+                         run() frames the Earth day side via Camera::looking_toward;
+                         TargetSelector (default Earth) for the EARTH/MOON panel
 src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
-                         run() frames the eclipsed Moon (aim + limb offset)
+                         run() launches orbiting the Moon (Moon-target
+                         looking_toward); TargetSelector (default Moon)
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
-src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed zoom
+                         orbiting a CameraTarget (Earth/Moon); per-frame retarget
+src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed
+                         zoom, reset_animation (on target switch)
 src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          + PanelAnchor (egui-free data), and the egui
                          control_panel that frames each panel at its anchored
@@ -81,10 +86,12 @@ src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen rend
                          (+ matching depth buffer)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
                          wgs84_ellipsoid + moon_ellipsoid wrappers
-src/simulation/mod.rs    Simulation trait (UI-agnostic), SimulationState
-                         (core: clock + celestial sphere) + its shared-core
-                         impl UIDrawable, RenderState (incl. moon fields),
-                         SatelliteTelemetry
+src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
+                         to Earth), SimulationState (core: clock + celestial
+                         sphere) + its shared-core impl UIDrawable, RenderState
+                         (incl. moon fields), SatelliteTelemetry, CameraTarget
+                         (Earth/Moon orbit body, consumed by application's Camera)
+                         + TargetSelector (EARTH/MOON radio panel for eclipses)
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
                          + Moon position (DE440) and IAU lunar rotation
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
@@ -128,6 +135,12 @@ celestial_to_world(&self) -> Mat3
     Rotation from the inertial (star-fixed) camera rig frame to the
     Earth-fixed world frame. Called by the application before each frame to
     resolve the camera into world space.
+
+camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::Earth]
+    Which body the orbital camera orbits this frame. The application reads it
+    and calls Camera::retarget before resolving eye/view_proj. Earth-only
+    scenarios inherit the default; the eclipse scenarios override it from a
+    TargetSelector (panel-driven).
 
 frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState
     Propagate all satellites once, fill RenderState (renderer). Stashes the
@@ -216,4 +229,9 @@ need not know the `clock` submodule path.
   no live `Clock`.
 - **`Camera` type lives in `application` only.** Other modules see only a
   resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but
-  consumed by `renderer` — the one allowed edge.)
+  consumed by `renderer`, and `CameraTarget` is defined in `simulation` but
+  consumed by `application`'s `Camera` — the two allowed edges. `CameraTarget`
+  is plain data: it names no `Camera`/winit/wgpu type, only the orbit body +
+  its world center, with geometry accessors delegating to `earth`/`moon`. The
+  scenario→application *camera* channel is the `Simulation::camera_target`
+  return value, so the application still owns all camera mechanics.)

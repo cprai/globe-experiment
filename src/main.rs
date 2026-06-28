@@ -50,9 +50,10 @@ enum Cli {
     /// an accurate frame.
     Render {
         /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
-        /// {"longitude", "latitude", "distance" (km), "tilt"}, "ui":
-        /// [panels]}`. `ui` is optional (omit for a globe-only frame).
-        /// See `snapshot::SceneSpec` / `ui::UiPanel`. Unknown keys
+        /// {"longitude", "latitude", "distance" (km), "tilt", "target":
+        /// "earth"|"moon"}, "ui": [panels]}`. `camera.target` and `ui` are
+        /// optional (target defaults to "earth"; omit `ui` for a globe-only
+        /// frame). See `snapshot::SceneSpec` / `ui::UiPanel`. Unknown keys
         /// are rejected.
         #[arg(long)]
         scene: String,

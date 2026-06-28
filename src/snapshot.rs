@@ -32,7 +32,7 @@ use satkit::Instant;
 use crate::application::Camera;
 use crate::renderer::{HeadlessRenderer, MAX_FRAME_DIMENSION, UiFrame};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{self, RenderState};
+use crate::simulation::{self, CameraTarget, RenderState};
 use crate::ui::{self, PanelSet, UiPanel};
 
 /// Parameters for one single-frame render, built by `main` from the parsed CLI.
@@ -86,6 +86,23 @@ struct CameraSpec {
     distance: f32,
     /// Tilt off nadir, degrees (0 looks straight down).
     tilt: f32,
+    /// Which body the camera orbits: `"earth"` (default) or `"moon"`. The
+    /// distance/tilt are relative to the chosen body's surface, so framing the
+    /// Moon usually wants a much smaller `distance` than the Earth.
+    #[serde(default)]
+    target: CameraTargetSpec,
+}
+
+/// The orbit body for the render camera. Mirrors the runtime [`CameraTarget`]
+/// kinds, but center-free: the Moon's world center is filled from the ephemeris
+/// at render time (the JSON only names the body). Lowercase JSON tokens
+/// (`"earth"` / `"moon"`); defaults to Earth so existing scenes are unchanged.
+#[derive(serde::Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum CameraTargetSpec {
+    #[default]
+    Earth,
+    Moon,
 }
 
 /// Renders one frame per `params`, writes it to `params.output` as a PNG, and
@@ -128,13 +145,24 @@ pub fn run(params: RenderParams) {
     // is sampled with the galactic-corrected `star_tex_rot_inv` below.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    let distance = Camera::clamp_distance(scene.camera.distance);
+    // Resolve the orbit body: Earth at the origin, or the Moon at its live
+    // ephemeris center. The distance clamp then uses the chosen target's
+    // radius-scaled limits.
+    let target = match scene.camera.target {
+        CameraTargetSpec::Earth => CameraTarget::Earth,
+        CameraTargetSpec::Moon => CameraTarget::Moon {
+            center_world: celestial.moon_pos_world,
+        },
+    };
     let camera = Camera {
         longitude: scene.camera.longitude,
         latitude: scene.camera.latitude,
-        distance,
+        distance: scene.camera.distance,
         tilt: scene.camera.tilt,
+        target,
     };
+    let distance = camera.clamp_distance(scene.camera.distance);
+    let camera = Camera { distance, ..camera };
     let aspect = params.width as f32 / params.height.max(1) as f32;
     let eye = camera.eye(celestial_to_world);
 
@@ -264,8 +292,12 @@ fn print_summary(
         celestial.sublunar_lat_deg, celestial.sublunar_lon_deg, celestial.moon_distance_km
     );
     println!("  moon-aim:  camera lon {aim_lon:.3} lat {aim_lat:.3} deg (look toward the Moon)");
+    let target = match camera.target {
+        CameraTargetSpec::Earth => "earth",
+        CameraTargetSpec::Moon => "moon",
+    };
     println!(
-        "  camera:    lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",
+        "  camera:    orbit {target}, lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",
         camera.longitude, camera.latitude, distance, camera.tilt
     );
     println!(

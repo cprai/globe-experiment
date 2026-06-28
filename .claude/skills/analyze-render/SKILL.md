@@ -27,7 +27,11 @@ cargo run --release -- render --output /tmp/render.png --width 1280 --height 720
 The whole scene is one `--scene` JSON: a `simulation` section (`datetime`) and a
 `camera` section, both **required** (there is no default camera; unknown keys are
 rejected). `camera.distance` is in kilometers (Earth mean radius is ~6371 km;
-~12742 km gives a full-globe view). The output target (`--output`/`--width`/
+~12742 km gives a full-globe view). An optional `camera.target` (`"earth"`,
+default, or `"moon"`) picks the orbit body; with `"moon"` the lon/lat/distance/
+tilt are relative to the Moon's surface (mean radius ~1737 km, so frame it with a
+much smaller `distance`, e.g. ~2500-3500 km), and the printed `moon-aim` lon/lat
+points the camera at the lit near side. The output target (`--output`/`--width`/
 `--height`) stays as CLI flags. An optional `ui` section overlays mock UI panels
 (see the `build-and-run`/`src/ui/` docs) - not usually needed for look
 analysis. Then open `/tmp/render.png` with the Read tool and describe / compare

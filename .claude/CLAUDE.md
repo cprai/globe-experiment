@@ -15,7 +15,10 @@ Look-tuning constants in `globe.wgsl` in particular drift between sessions.
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
 globe in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
-(star-fixed) camera, simulation clock (1x-100x, plays from launch). The Moon is
+(star-fixed) camera that orbits a selectable **target** (Earth, or the Moon in
+the eclipse scenarios via an EARTH/MOON panel; headless `render` picks the body
+with `camera.target` "earth"/"moon"), simulation clock (1x-100x, plays from
+launch). The Moon is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
 rotation (correct near side + libration), lit by the Sun, with **mutual
 Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood

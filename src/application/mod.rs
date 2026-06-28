@@ -235,6 +235,16 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         let (width, height) = gfx.viewport();
         let aspect = width / height.max(1.0);
         let celestial_to_world = self.simulation.celestial_to_world();
+
+        // Re-aim the orbital camera at this frame's target (the scenario's
+        // chosen body, with the Moon's center refreshed from the ephemeris). On
+        // a genuine body switch the reframe invalidates any in-flight zoom/flick
+        // (they target the old body's scale), so cancel them.
+        let target = self.simulation.camera_target();
+        if self.camera.retarget(target, celestial_to_world) {
+            self.controller.reset_animation();
+        }
+
         let eye = self.camera.eye(celestial_to_world);
         let view_proj = self.camera.view_proj(aspect, celestial_to_world);
         let render_state = self.simulation.frame_state(eye, view_proj);

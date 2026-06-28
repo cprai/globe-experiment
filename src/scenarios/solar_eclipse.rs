@@ -9,7 +9,9 @@ use glam::{Mat3, Mat4, Vec3};
 use satkit::Instant;
 
 use crate::application::{self, ApplicationState, Camera};
-use crate::simulation::{self, RenderState, Simulation, SimulationState};
+use crate::simulation::{
+    self, CameraTarget, RenderState, Simulation, SimulationState, TargetSelector,
+};
 use crate::ui::{UIDrawable, UIDrawablePanel};
 
 /// Eye distance for the day-side framing (km): the Earth fills most of the
@@ -17,9 +19,12 @@ use crate::ui::{UIDrawable, UIDrawablePanel};
 const VIEW_DISTANCE_KM: f32 = 22000.0;
 
 /// Empty solar-eclipse simulation: just the shared core (clock + celestial
-/// sphere); no satellites.
+/// sphere); no satellites. Carries a [`TargetSelector`] so the view can be
+/// switched between orbiting the Earth (the default day-side framing) and
+/// orbiting the Moon.
 pub struct SolarEclipseSimulation {
     simulation: SimulationState,
+    selector: TargetSelector,
 }
 
 impl SolarEclipseSimulation {
@@ -32,17 +37,27 @@ impl SolarEclipseSimulation {
             Instant::from_datetime(2024, 4, 8, 17, 47, 0.0).expect("valid solar-eclipse datetime");
         Self {
             simulation: SimulationState::new(epoch),
+            // Default to orbiting the Earth (the day-side framing below).
+            selector: TargetSelector::new(false),
         }
     }
 }
 
 impl Simulation for SolarEclipseSimulation {
     fn advance(&mut self) -> bool {
+        // Fold in any pending target-selector key press before the camera target
+        // is read this frame.
+        self.selector.apply_requests();
         self.simulation.advance()
     }
 
     fn celestial_to_world(&self) -> Mat3 {
         self.simulation.celestial_to_world()
+    }
+
+    fn camera_target(&self) -> CameraTarget {
+        self.selector
+            .resolve(self.simulation.celestial_sphere.moon_pos_world)
     }
 
     fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
@@ -64,9 +79,12 @@ impl Simulation for SolarEclipseSimulation {
 
 impl UIDrawable for SolarEclipseSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // Just the shared-core panel (datetime + subsolar + run/speed); there is
-        // no satellite panel because nothing is tracked.
-        self.simulation.get_drawables()
+        // The shared-core panel (datetime + subsolar + run/speed) plus the
+        // EARTH / MOON camera-target selector. The two panels borrow disjoint
+        // fields (`simulation` vs `selector`), so both can be live at once.
+        let mut panels = self.simulation.get_drawables();
+        panels.push(self.selector.panel());
+        panels
     }
 }
 
@@ -83,8 +101,12 @@ pub fn run() {
     // by looking along -sun_dir, computed from the ephemeris at the start
     // instant. The view stays interactive afterward.
     let celestial = &sim.simulation.celestial_sphere;
-    let camera =
-        Camera::looking_toward(celestial.star_rot_inv, -celestial.sun_dir, VIEW_DISTANCE_KM);
+    let camera = Camera::looking_toward(
+        CameraTarget::Earth,
+        celestial.star_rot_inv,
+        -celestial.sun_dir,
+        VIEW_DISTANCE_KM,
+    );
 
     application::run(ApplicationState::with_camera(sim, camera));
 }

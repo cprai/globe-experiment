@@ -30,12 +30,27 @@ range-check it against the EOP window below).
 
 A scenario's `run()` can frame its event on launch instead of the default
 full-globe view: build the simulation, read its `celestial_sphere`, compute a
-`Camera` with `Camera::looking_toward(star_rot_inv, world_look, distance)`
-(aims the look axis along a world-frame direction — e.g. `-sun_dir` for the
-day side, or `moon_pos_world` for the Moon), and pass it to
-`ApplicationState::with_camera(sim, camera)` instead of `::new`. The camera is
-fully interactive afterward. The eclipse scenarios do this; the Moon also needs
-a small latitude offset so the Earth's limb doesn't occlude it.
+`Camera` with `Camera::looking_toward(target, star_rot_inv, world_look,
+distance)` (orbits `target` with the look axis along a world-frame direction —
+e.g. Earth target aimed at `-sun_dir` for the day side, or a Moon target aimed
+at `moon_pos_world`), and pass it to `ApplicationState::with_camera(sim, camera)`
+instead of `::new`. The camera is fully interactive afterward. The solar eclipse
+frames the Earth day side; the lunar eclipse launches **orbiting the Moon** (a
+Moon-target camera looking toward `moon_pos_world` sits on the Moon's
+Earth-facing side, so the Earth is behind the camera — no limb offset needed).
+
+### Camera-target selection (Earth or Moon)
+
+A scenario that offers more than the Earth holds a `simulation::TargetSelector`
+and overrides `Simulation::camera_target()` to return
+`self.selector.resolve(self.simulation.celestial_sphere.moon_pos_world)`. The
+selector's EARTH / MOON radio panel is appended in `get_drawables` (after the
+shared-core panel; the two panels borrow disjoint fields). A key press only sets
+a disjoint `request_*` flag; the scenario's `advance()` calls
+`self.selector.apply_requests()` *before* the frame's `camera_target` is read, so
+the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
+the clock's Run toggle vs speed slider). Satellite scenarios skip all this and
+inherit the Earth-only default.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, and reads sun/star values from

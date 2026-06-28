@@ -16,12 +16,79 @@ use satkit::Instant;
 
 pub use clock::Clock;
 
-use crate::earth;
 use crate::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
+use crate::{earth, moon};
 use celestial_sphere::CelestialSphere;
+
+/// The body the orbital camera orbits, with its world-space center (km). Plain
+/// astronomical data - no `Camera` or windowing dependency - so it can cross
+/// the camera-agnostic `simulation` boundary the same way [`RenderState`] does:
+/// it is defined here but consumed by the camera in `application`. The geometry
+/// accessors delegate to the single-source-of-truth body modules (`earth` /
+/// `moon`), so the camera rig never duplicates surface math.
+///
+/// Earth sits at the world origin; the Moon's center comes from the ephemeris
+/// and is refreshed every frame (it moves), so the `Moon` variant carries it.
+#[derive(Clone, Copy)]
+pub enum CameraTarget {
+    Earth,
+    Moon { center_world: Vec3 },
+}
+
+impl CameraTarget {
+    /// Whether two targets name the same body, ignoring the (per-frame) Moon
+    /// center. The camera uses this to detect a genuine body switch (and
+    /// reframe) without treating the Moon's normal drift as a change. A
+    /// derived `PartialEq` would compare the centers and so fire every
+    /// frame.
+    pub fn same_kind(&self, other: &CameraTarget) -> bool {
+        matches!(
+            (self, other),
+            (CameraTarget::Earth, CameraTarget::Earth)
+                | (CameraTarget::Moon { .. }, CameraTarget::Moon { .. })
+        )
+    }
+
+    /// The body center in the world frame (km). Earth is the origin.
+    pub fn center_world(&self) -> Vec3 {
+        match self {
+            CameraTarget::Earth => Vec3::ZERO,
+            CameraTarget::Moon { center_world } => *center_world,
+        }
+    }
+
+    /// Characteristic mean radius (km). The camera scales its distance/zoom
+    /// limits, near plane, and pan rate by this so the interaction feel is the
+    /// same fraction of the body whichever one is targeted.
+    pub fn mean_radius_km(&self) -> f32 {
+        match self {
+            CameraTarget::Earth => earth::MEAN_RADIUS_KM,
+            CameraTarget::Moon { .. } => moon::MEAN_RADIUS_KM,
+        }
+    }
+
+    /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
+    /// body frame (km). The camera treats this as an inertial-frame direction
+    /// (see `application::camera`); the magnitude is what differs per body.
+    pub fn surface_position(&self, latitude: f32, longitude: f32) -> Vec3 {
+        match self {
+            CameraTarget::Earth => earth::surface_position(latitude, longitude),
+            CameraTarget::Moon { .. } => moon::surface_position(latitude, longitude),
+        }
+    }
+
+    /// Outward unit normal of the body surface at `(lat, lon)` (radians), in
+    /// the body frame - the local "up" the eye offsets along.
+    pub fn geodetic_normal(&self, latitude: f32, longitude: f32) -> Vec3 {
+        match self {
+            CameraTarget::Earth => earth::geodetic_normal(latitude, longitude),
+            CameraTarget::Moon { .. } => moon::geodetic_normal(latitude, longitude),
+        }
+    }
+}
 
 /// The interface every scenario implements. `ApplicationState` is generic over
 /// `S: Simulation` and calls only these methods, so adding or swapping a
@@ -40,6 +107,15 @@ pub trait Simulation {
     /// Earth-fixed world frame. The application uses this to resolve the camera
     /// before computing eye and view_proj for `frame_state`.
     fn celestial_to_world(&self) -> Mat3;
+
+    /// Which body the orbital camera should center on this frame. Defaults to
+    /// the Earth, so every Earth-only scenario inherits it untouched; the
+    /// eclipse scenarios override it to return the user-selected body (the
+    /// Moon's center pulled from the ephemeris). The application reads this
+    /// each frame and re-aims the camera (see `application::camera`).
+    fn camera_target(&self) -> CameraTarget {
+        CameraTarget::Earth
+    }
 
     /// Produce this frame's render state from the application-resolved camera.
     /// Satellite propagation happens here, once per frame per satellite. The
@@ -162,6 +238,101 @@ impl SimulationState {
     /// transpose = inverse.)
     pub fn celestial_to_world(&self) -> Mat3 {
         self.celestial_sphere.star_rot_inv.transpose()
+    }
+}
+
+/// Tracks which body the user has chosen to orbit (Earth or Moon) and builds
+/// the EARTH / MOON selector panel. Shared by the scenarios that offer a Moon
+/// target (the eclipses); Earth-only scenarios never hold one.
+///
+/// Two radio toggles can't both `&mut` one selection field - a panel's element
+/// callbacks all coexist, so each must capture a *disjoint* mutable field (the
+/// same rule that makes the Run toggle and speed slider capture `paused` vs
+/// `multiplier` separately). So a key press only sets a disjoint `request_*`
+/// flag; [`apply_requests`](Self::apply_requests) reconciles it into
+/// `moon_selected` once per frame. That is a one-frame latency, imperceptible
+/// and identical to the existing clock-edit delay.
+pub struct TargetSelector {
+    moon_selected: bool,
+    /// Set by the EARTH key; cleared in `apply_requests`.
+    request_earth: bool,
+    /// Set by the MOON key; a field disjoint from `request_earth` so the two
+    /// key callbacks can coexist.
+    request_moon: bool,
+}
+
+impl TargetSelector {
+    /// Builds a selector with the initial choice (`true` = Moon).
+    pub fn new(moon_selected: bool) -> Self {
+        Self {
+            moon_selected,
+            request_earth: false,
+            request_moon: false,
+        }
+    }
+
+    /// Applies any pending key press into the live selection, then clears the
+    /// flags. Call once per frame *before* [`Simulation::camera_target`] is
+    /// read (i.e. at the top of the scenario's `advance`). A simultaneous
+    /// press of both keys in one frame is impossible from a mouse, but
+    /// resolve it to Moon for determinism.
+    pub fn apply_requests(&mut self) {
+        if self.request_moon {
+            self.moon_selected = true;
+        } else if self.request_earth {
+            self.moon_selected = false;
+        }
+        self.request_earth = false;
+        self.request_moon = false;
+    }
+
+    /// Resolves the current choice into a [`CameraTarget`], filling the Moon
+    /// center from the live ephemeris.
+    pub fn resolve(&self, moon_center: Vec3) -> CameraTarget {
+        if self.moon_selected {
+            CameraTarget::Moon {
+                center_world: moon_center,
+            }
+        } else {
+            CameraTarget::Earth
+        }
+    }
+
+    /// The top-right EARTH / MOON selector panel: a header plus two latching
+    /// keys, the chosen body lit. The keys' callbacks set disjoint request
+    /// flags (see the type docs); `moon_selected` is snapshotted up front so no
+    /// shared borrow outlives into the callbacks.
+    pub fn panel(&mut self) -> UIDrawablePanel<'_> {
+        let moon_active = self.moon_selected;
+        let elements: Vec<Box<dyn Instrument + '_>> = vec![
+            Box::new(Header {
+                position: [0.0, 0.0],
+                title: "Camera Target".to_string(),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: Toggle {
+                    position: [0.0, 26.0],
+                    label: "Earth".to_string(),
+                    active: !moon_active,
+                },
+                on_toggle: Box::new(|| self.request_earth = true),
+            }),
+            Box::new(InteractiveToggle {
+                toggle: Toggle {
+                    position: [104.0, 26.0],
+                    label: "Moon".to_string(),
+                    active: moon_active,
+                },
+                on_toggle: Box::new(|| self.request_moon = true),
+            }),
+        ];
+
+        UIDrawablePanel {
+            anchor: PanelAnchor::TopRight,
+            offset: [10.0, 10.0],
+            size: [212.0, 64.0],
+            elements,
+        }
     }
 }
 

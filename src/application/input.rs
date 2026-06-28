@@ -234,7 +234,7 @@ impl Controller {
                             delta
                         };
 
-                        zoom.target = Camera::clamp_distance(zoom.target * outstanding.exp());
+                        zoom.target = camera.clamp_distance(zoom.target * outstanding.exp());
                         zoom.half_life = half_life;
 
                         // Velocity follows the event rate; time-based
@@ -247,7 +247,7 @@ impl Controller {
                         // A first event carries no rate information, so
                         // the glide starts without coast velocity.
                         self.zoom = Some(Zoom {
-                            target: Camera::clamp_distance(camera.distance * delta.exp()),
+                            target: camera.clamp_distance(camera.distance * delta.exp()),
                             half_life,
                             velocity: 0.0,
                             bridged: 0.0,
@@ -321,7 +321,7 @@ impl Controller {
         zoom.velocity *= 0.5f32.powf(dt / ZOOM_COAST_HALF_LIFE);
         if zoom.velocity.abs() > ZOOM_STOP_RATE {
             let step = zoom.velocity * dt;
-            zoom.target = Camera::clamp_distance(zoom.target * step.exp());
+            zoom.target = camera.clamp_distance(zoom.target * step.exp());
             zoom.bridged += step;
         } else {
             zoom.velocity = 0.0;
@@ -339,6 +339,14 @@ impl Controller {
         }
 
         true
+    }
+
+    /// Drops any in-flight flick inertia and zoom glide. Called when the camera
+    /// switches orbit targets: both animations target the old body's distance
+    /// scale, so left running they would fight the reframe.
+    pub fn reset_animation(&mut self) {
+        self.inertia = None;
+        self.zoom = None;
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {

@@ -41,9 +41,10 @@ cargo run --release -- render --output frame.png --width 1920 --height 1080 \
 
 The `--scene` JSON has a `simulation` section (`datetime`, RFC3339 UTC, fixes the
 celestial positions), a `camera` section (`longitude`/`latitude`/`distance` in
-km/`tilt`), and an optional `ui` section that overlays mock UI panels for
-debugging UI layouts headlessly (see `src/ui/spec.rs`'s `UiPanel`). Unknown JSON
-keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
+km/`tilt`, plus an optional `target` of `"earth"` (default) or `"moon"` to orbit
+the Moon instead — frame it with a much smaller `distance`), and an optional `ui`
+section that overlays mock UI panels for debugging UI layouts headlessly (see
+`src/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
 written as a PNG and a short summary (resolved datetime, subsolar point, camera)
 is printed. Unlike the interactive scenarios, the datetime here is **not**
 range-checked against the bundled Earth-orientation data - times outside the
@@ -87,7 +88,10 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP
   record (1962 onward); the tool simulates past scenarios only.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
-  any zoom level, from full-globe spins down to country level.
+  any zoom level, from full-globe spins down to country level. The camera orbits
+  a chosen body - always the Earth for satellite scenarios, and either the Earth
+  or the Moon in the eclipse scenarios (an EARTH / MOON selector in the panel),
+  with pan/tilt/zoom scaled to whichever body is targeted.
 - Real-world geometry: the globe is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.

@@ -48,7 +48,8 @@ Six top-level modules + `earth`:
 - **Input feel constants**: `src/application/input.rs` top.
 - **Earth physical constants + helpers**: `src/earth.rs`.
 - **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
-  (in km).
+  — the distance/near/default limits are radius *ratios* (`*_RADII`), scaled at
+  use by the orbit target's `mean_radius_km()`; `FAR_PLANE` stays a fixed km.
 - **All build assets**: in `OUT_DIR`, `include_bytes!`-ed. No `assets/` dir.
 - **TLE data**: inline source `const`s in the scenario files, not in
   `satellite.rs`. The `ISS_TLE` literal is **deliberately duplicated** across

@@ -27,7 +27,11 @@ paths:
   policy (in `GlobeRenderer::new`): the **solid bodies** (Earth surface, Moon)
   write depth + test `Greater`; the **backdrop, atmosphere, markers** neither
   write nor test (`Always`, no write) so they keep their exact draw-order
-  layering. The camera projection is reversed-Z (`Camera::view_proj` post-
+  layering. Because the atmosphere does not depth-test, `fs_atmosphere` does an
+  explicit ray-sphere **Moon occlusion** check (drops the fragment where the ray
+  hits the Moon in front of the atmosphere) so the additive glow does not bleed
+  over a nearer Moon from a Moon-orbit view. The camera projection is reversed-Z
+  (`Camera::view_proj` post-
   multiplies a Z-flip onto `perspective_rh`); the clear value, compare op, and
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
@@ -53,9 +57,13 @@ paths:
   galactic->equatorial offset (`star_tex_rot_inv`), because the star texture is
   drawn in galactic coordinates; see `simulation.md`.
 - **Backdrop anchoring**: star lookup and sun disc are functions of the
-  camera-relative view direction (`world_pos - camera_pos`), not position on
-  the celestial sphere. Changing this reintroduces parallax between sun and
-  stars (a fixed bug).
+  camera-relative view direction, not position on the celestial sphere. Changing
+  this reintroduces parallax between sun and stars (a fixed bug). The star shell
+  is **centered on the camera** (`vs_stars`: `camera_pos + normal *
+  STARS_RADIUS_KM`), so it always encloses the eye - required for non-Earth
+  targets (orbiting the Moon is ~384,000 km outside an origin-centered shell;
+  the Sun and half the sky vanished). No-op for Earth orbits (eye was always
+  inside the old shell). See `camera.md`.
 
 ## Look-tuning discipline
 
@@ -133,11 +141,12 @@ MEAN_RADIUS_KM ~6371.0088     GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418
 ANGULAR_VELOCITY_RAD_S 7.292115e-5
 ```
 
-**`src/application/camera.rs`** (km; `<radii> * MEAN_RADIUS_KM`):
+**`src/application/camera.rs`** (limits are radius *ratios* `*_RADII`, scaled by
+the orbit target's `mean_radius_km()`; values below are the Earth target):
 ```
-FOV_Y 45 deg   MIN_DISTANCE ~63.7   MAX_DISTANCE ~63710
-NEAR_PLANE ~63.7   FAR_PLANE ~318550   MAX_TILT 80
-defaults: lon 0, lat 0, distance ~12742, tilt 0   lat clamp +/-89
+FOV_Y 45 deg   MIN_DISTANCE_RADII 0.01 (~63.7)   MAX_DISTANCE_RADII 10 (~63710)
+NEAR_PLANE_RADII 0.01 (~63.7)   FAR_PLANE 500000 (fixed km)   MAX_TILT 80
+DEFAULT_DISTANCE_RADII 2 (Earth ~12742)   defaults: lon 0, lat 0, tilt 0   lat clamp +/-89
 ```
 
 **`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128`, `MARKER_RADIUS_PX 6`.
