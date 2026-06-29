@@ -89,10 +89,14 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   oblate ellipsoids (Saturn and Jupiter visibly flattened), oriented by the IAU
   planet rotation and lit by the Sun with the correct phase. A body-selector
   panel (one key per body, ordered by distance from the Sun) flies the camera to
-  and orbits any of Earth, the Moon, or a planet. Because the
-  outer planets sit billions of km away - beyond single-precision range - the
-  scene is rendered relative to the orbited body so it stays crisp. (Saturn's
-  rings are not yet drawn.)
+  and orbits any of Earth, the Moon, or a planet. A planet that is too small on
+  screen to be worth a full mesh (every planet seen from Earth, and the distant
+  ones generally) is drawn instead as a billboard impostor - a camera-facing quad
+  that ray-traces the same lit, textured ellipsoid - so it still looks right
+  without the mesh cost; the body you are orbiting always draws as the full mesh.
+  Because the outer planets sit billions of km away - beyond single-precision
+  range - the scene is rendered relative to the orbited body so it stays crisp.
+  (Saturn's rings are not yet drawn.)
 - Real Earth-orientation parameters: satellite positions use measured polar
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP

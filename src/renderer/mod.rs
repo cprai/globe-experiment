@@ -33,6 +33,15 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// the soft penumbra width of the analytic eclipse shadows in the shader.
 const SUN_ANGULAR_RADIUS_RAD: f32 = 0.004652;
 
+/// Apparent-size cutoff (angular DIAMETER, arcsec) below which a planet is
+/// drawn as a billboard impostor (`vs_planet_billboard`) rather than a full
+/// mesh. A look/efficiency-tuning constant: comfortably above every planet's
+/// apparent size from Earth (Venus peaks ~66", Jupiter ~50"), so the Earth view
+/// billboards all seven; and comfortably below the orbited body's size (even at
+/// max zoom-out a planet subtends tens of thousands of arcsec), so whichever
+/// planet is being orbited always stays a mesh. ~0.5 deg.
+const PLANET_BILLBOARD_MAX_ARCSEC: f32 = 1800.0;
+
 /// Creates a depth texture view sized to the render target. Recreated whenever
 /// the target is resized (the depth attachment must match the color size).
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -401,7 +410,8 @@ struct Uniforms {
 
 /// Per-planet model uniform (group 1). Layout must match `PlanetUniform` in
 /// globe.wgsl: the mat3x3 columns are padded to vec4 stride and the vec3 center
-/// is followed by the radius (filling its pad slot).
+/// is followed by the equatorial radius (filling its pad slot), then the polar
+/// radius with its own padding.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct PlanetUniform {
@@ -412,8 +422,13 @@ struct PlanetUniform {
     /// origin), so its mesh is drawn in pure local coordinates - the key to
     /// killing the far-planet f32 jitter.
     pos: [f32; 3],
-    /// Planet mean radius (km).
-    radius_km: f32,
+    /// Equatorial semi-axis (+X/+Z) in km; the billboard impostor's ellipsoid.
+    equatorial_radius_km: f32,
+    /// Polar semi-axis (+Y) in km.
+    polar_radius_km: f32,
+    /// Pads the trailing `polar_radius_km` out to a vec4 stride (WGSL
+    /// alignment).
+    _pad: [f32; 3],
 }
 
 /// Long-lived GPU resources for one planet: its mesh, its per-frame model
@@ -479,13 +494,23 @@ struct GlobeRenderer {
     /// Planet pipeline (`vs_planet`/`fs_planet`), shared by all seven planets;
     /// each draw swaps its group-1 bind group + mesh.
     planet_pipeline: wgpu::RenderPipeline,
+    /// Billboard-impostor pipeline
+    /// (`vs_planet_billboard`/`fs_planet_billboard`) for distant planets: a
+    /// camera-facing quad (no vertex buffer) that ray-traces the ellipsoid,
+    /// depth-off like the backdrop. Same two-group layout, so it reuses
+    /// each planet's group-1 bind group.
+    planet_billboard_pipeline: wgpu::RenderPipeline,
     /// Per-planet GPU resources, in `planet::ALL` order. Always built (textures
     /// upload at init), but only drawn when `RenderState::planets` is
     /// non-empty.
     planets: Vec<PlanetGpu>,
-    /// Number of planets to draw this frame (0 except the solar-system
-    /// scenario).
-    planet_count: u32,
+    /// Indices into `planets` of the planets large enough to draw as meshes
+    /// this frame (apparent size >= threshold). Rebuilt each `prepare`.
+    mesh_planet_indices: Vec<usize>,
+    /// Indices into `planets` of the planets drawn as billboards this frame,
+    /// sorted far-to-near so the nearest disc paints last (correct overlap with
+    /// the depth-off impostor pass). Rebuilt each `prepare`.
+    billboard_planet_indices: Vec<usize>,
     /// Whether to draw the Earth system this frame: the Earth surface, the
     /// atmosphere, the Moon, and any satellite markers. True only when the
     /// camera target is Earth or the Moon (render origin at the Earth, so their
@@ -1268,6 +1293,41 @@ impl GlobeRenderer {
 
         let planet_pipeline = make_planet_pipeline();
 
+        // The billboard-impostor pipeline for distant planets: the same
+        // two-group layout (so it reuses each planet's group-1 bind group), but
+        // no vertex buffer (the quad comes from the vertex index) and depth-off
+        // like the backdrop/markers - billboards are always the far bodies, so
+        // the later opaque draws paint over them. Drawn just after the stars.
+        let planet_billboard_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("planet billboard pipeline"),
+                layout: Some(&planet_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_planet_billboard"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_planet_billboard"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+
         Self {
             render_pipeline,
             atmosphere_pipeline,
@@ -1281,8 +1341,10 @@ impl GlobeRenderer {
             moon_indices,
             moon_index_count: moon_mesh.indices.len() as u32,
             planet_pipeline,
+            planet_billboard_pipeline,
             planets,
-            planet_count: 0,
+            mesh_planet_indices: Vec::new(),
+            billboard_planet_indices: Vec::new(),
             draw_earth_system: true,
             uniforms,
             bind_group,
@@ -1356,17 +1418,45 @@ impl GlobeRenderer {
         // One model uniform per planet to draw this frame, each at its center
         // RELATIVE to the render origin. `render.planets` is in planet::ALL
         // order (empty for non-solar scenarios), the same order as
-        // `self.planets`, so they zip 1:1; `planet_count` gates the draw.
-        self.planet_count = render.planets.len() as u32;
-        for (gpu, state) in self.planets.iter().zip(&render.planets) {
+        // `self.planets`, so they zip 1:1. While here, classify each planet by
+        // its apparent size into the mesh vs billboard draw lists.
+        self.mesh_planet_indices.clear();
+        self.billboard_planet_indices.clear();
+        for (i, (gpu, state)) in self.planets.iter().zip(&render.planets).enumerate() {
+            let pos_render = state.pos_world - origin;
             let rot_cols = state.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
-                pos: (state.pos_world - origin).to_array(),
-                radius_km: state.planet.mean_radius_km(),
+                pos: pos_render.to_array(),
+                equatorial_radius_km: state.planet.equatorial_radius_km(),
+                polar_radius_km: state.planet.polar_radius_km(),
+                _pad: [0.0; 3],
             };
             queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&planet_uniform));
+
+            // Apparent angular DIAMETER from the camera (both in the render
+            // frame): 2*atan(req/distance). Below the threshold the planet is a
+            // few pixels at most, so it goes to the billboard impostor.
+            let distance = (pos_render - render.camera_pos).length();
+            let arcsec = 2.0
+                * (state.planet.equatorial_radius_km() / distance)
+                    .atan()
+                    .to_degrees()
+                * 3600.0;
+            if arcsec < PLANET_BILLBOARD_MAX_ARCSEC {
+                self.billboard_planet_indices.push(i);
+            } else {
+                self.mesh_planet_indices.push(i);
+            }
         }
+        // Paint the impostors far-to-near so the nearest disc wins on overlap
+        // (the impostor pass is depth-off). Cache the distance via the squared
+        // length to avoid a sqrt per comparison.
+        self.billboard_planet_indices.sort_by(|&a, &b| {
+            let da = (render.planets[a].pos_world - origin - render.camera_pos).length_squared();
+            let db = (render.planets[b].pos_world - origin - render.camera_pos).length_squared();
+            db.total_cmp(&da)
+        });
 
         // One marker instance per tracked satellite. Grow the buffer first if
         // this frame has more markers than it currently holds (only ever
@@ -1398,6 +1488,19 @@ impl GlobeRenderer {
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
+        // Distant planets as billboard impostors, right after the backdrop so
+        // the opaque Earth/Moon/mesh-planets that follow paint over (occlude)
+        // them - billboards are always the far bodies. No vertex/index buffer:
+        // the camera-facing quad is built from the vertex index. group 0 stays
+        // bound; group 1 swaps per planet. Sorted far-to-near in `prepare`.
+        if !self.billboard_planet_indices.is_empty() {
+            render_pass.set_pipeline(&self.planet_billboard_pipeline);
+            for &i in &self.billboard_planet_indices {
+                render_pass.set_bind_group(1, &self.planets[i].bind_group, &[]);
+                render_pass.draw(0..6, 0..1);
+            }
+        }
+
         // The Earth surface (which writes depth), the Moon, then the atmosphere
         // over the disc and limb - drawn only when orbiting the Earth/Moon (the
         // render origin is at the Earth). Orbiting a planet they would be a far
@@ -1413,14 +1516,16 @@ impl GlobeRenderer {
             render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
         }
 
-        // The planets: each its own mesh + group-1 bind group (model uniform +
-        // texture), the same solid-body depth setup as the Moon. The orbited
-        // planet is drawn in local coordinates (its center is the render
-        // origin); the others sit far off as specks. Only the solar-system
-        // scenario fills `planets` (planet_count > 0). group 0 stays bound.
-        if self.planet_count > 0 {
+        // The near/large planets as full meshes: each its own mesh + group-1
+        // bind group (model uniform + texture), the same solid-body depth setup
+        // as the Moon. The orbited planet is drawn in local coordinates (its
+        // center is the render origin); any other planet above the apparent-size
+        // threshold also lands here. The far ones were already drawn as
+        // billboards above. group 0 stays bound.
+        if !self.mesh_planet_indices.is_empty() {
             render_pass.set_pipeline(&self.planet_pipeline);
-            for gpu in self.planets.iter().take(self.planet_count as usize) {
+            for &i in &self.mesh_planet_indices {
+                let gpu = &self.planets[i];
                 render_pass.set_bind_group(1, &gpu.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, gpu.vertices.slice(..));
                 render_pass.set_index_buffer(gpu.indices.slice(..), wgpu::IndexFormat::Uint32);

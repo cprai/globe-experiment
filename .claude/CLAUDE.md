@@ -26,7 +26,14 @@ rotation (correct near side + libration), lit by the Sun, with **mutual
 Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood
 moon"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
-sun-lit with simple Lambert. Because they sit millions-to-billions of km out
+sun-lit with simple Lambert. Each is drawn **as a mesh only when it is large
+enough on screen** (apparent angular diameter `>=` a threshold, classified per
+frame in `prepare`); a planet smaller than that — every planet from Earth, and
+the non-orbited planets generally — is drawn as a **billboard impostor**: a
+camera-facing quad whose fragment shader ray-traces the same oblate ellipsoid
+(orthographic / parallel-ray, f32-safe at distance), still textured + Lambert-lit,
+so the silhouette/terminator/texture stay faithful while the mesh draws are
+skipped. Because they sit millions-to-billions of km out
 (past f32 precision), **all rendering is done in a camera-target-local "render
 frame"**: every position is uploaded relative to the camera target's center, so
 the orbited body sits at a bit-exact zero and far planets do not jitter. There

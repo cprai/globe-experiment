@@ -757,9 +757,11 @@ struct PlanetUniform {
     // Exactly zero for the orbited planet (its center IS the render origin), so
     // its mesh is drawn in pure local coordinates - no far-planet f32 jitter.
     pos: vec3<f32>,
-    // Mean radius (km); currently unused by the shading, kept for parity with
-    // the Moon's params and future use (e.g. ring/eclipse geometry).
-    radius_km: f32,
+    // Equatorial semi-axis (+X/+Z) in km. The mesh path ignores it; the
+    // billboard impostor needs the true oblate ellipsoid to trace.
+    equatorial_radius_km: f32,
+    // Polar semi-axis (+Y, the rotation pole) in km.
+    polar_radius_km: f32,
 };
 
 @group(1) @binding(0) var<uniform> planet: PlanetUniform;
@@ -794,6 +796,136 @@ fn fs_planet(in: PlanetOutput) -> @location(0) vec4<f32> {
     // The Sun direction at this surface point; both positions are in the render
     // frame, so the difference is the true planet-surface->Sun vector.
     let sun = normalize(uniforms.sun_pos - in.world_pos);
+    let sunlit = max(dot(n, sun), 0.0);
+
+    let color = albedo * (PLANET_AMBIENT + sunlit);
+    return vec4<f32>(color, 1.0);
+}
+
+// A distant planet drawn as a camera-facing billboard impostor instead of a
+// full mesh. When a planet's apparent angular size falls below a threshold (the
+// renderer classifies this on the CPU and routes it here), a mesh is wasteful -
+// the planet is at most a few pixels. The impostor is a single camera-facing
+// quad whose fragment shader ray-traces the true oblate ellipsoid, samples the
+// same group-1 albedo texture, and Lambert-lights it from the Sun, so the
+// silhouette, rotation/libration, terminator, and texture all stay faithful.
+//
+// The rays are treated as PARALLEL (orthographic), which is exact here: the
+// billboard is only ever used when distance >> radius (that is the selection
+// criterion), and parallel rays avoid the catastrophic f32 cancellation a true
+// perspective ray-sphere trace would suffer from a camera millions-to-billions
+// of km away (`dot(O,O) - 1 ~ 1e10` swamps the O(1) discriminant).
+
+// Drawn within the far plane, on the same shell radius as the backdrop. Depth
+// is irrelevant (the pass neither tests nor writes it - billboards are always
+// the far bodies and are painted over by the later opaque Earth/Moon/meshes).
+const PLANET_BILLBOARD_SHELL_KM: f32 = STARS_RADIUS_KM;
+// The quad spans the equatorial angular radius times this margin, so the full
+// ellipse (corners included) lands inside the quad; edge rays miss and discard.
+const PLANET_BILLBOARD_MARGIN: f32 = 1.15;
+
+struct PlanetBillboardOutput {
+    @builtin(position) position: vec4<f32>,
+    // View-plane offset of this fragment from the planet center, in units of
+    // the equatorial radius (the orthographic impostor coordinate); spans
+    // [-MARGIN, MARGIN]^2 across the quad.
+    @location(0) offset: vec2<f32>,
+    // The camera->planet direction (render frame) and the quad's screen basis.
+    // Identical at every vertex, so interpolation returns the constant.
+    @location(1) dir: vec3<f32>,
+    @location(2) right: vec3<f32>,
+    @location(3) up: vec3<f32>,
+};
+
+@vertex
+fn vs_planet_billboard(@builtin(vertex_index) vertex_index: u32) -> PlanetBillboardOutput {
+    // Two triangles covering [-1, 1]^2 (same quad idiom as vs_marker).
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+    );
+    let corner = corners[vertex_index];
+
+    let to_planet = planet.pos - uniforms.camera_pos;
+    let dist = length(to_planet);
+    let dir = to_planet / dist;
+
+    // A stable basis perpendicular to the view direction. Use world up unless
+    // dir is nearly parallel to it (planets sit near the ecliptic, so this
+    // rarely triggers), then fall back to the X axis.
+    var up_ref = vec3<f32>(0.0, 1.0, 0.0);
+    if abs(dir.y) > 0.999 {
+        up_ref = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let right = normalize(cross(up_ref, dir));
+    let up = cross(dir, right);
+
+    // Quad on the backdrop shell, sized to the equatorial angular radius (with
+    // margin). req/dist is tan(angular radius), exact at these small angles.
+    let half_size = PLANET_BILLBOARD_SHELL_KM
+        * (planet.equatorial_radius_km / dist)
+        * PLANET_BILLBOARD_MARGIN;
+    let center = uniforms.camera_pos + dir * PLANET_BILLBOARD_SHELL_KM;
+    let world = center + right * (corner.x * half_size) + up * (corner.y * half_size);
+
+    var out: PlanetBillboardOutput;
+    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
+    out.offset = corner * PLANET_BILLBOARD_MARGIN;
+    out.dir = dir;
+    out.right = right;
+    out.up = up;
+    return out;
+}
+
+@fragment
+fn fs_planet_billboard(in: PlanetBillboardOutput) -> @location(0) vec4<f32> {
+    let req = planet.equatorial_radius_km;
+    let rpol = planet.polar_radius_km;
+    let radii = vec3<f32>(req, rpol, req);
+    let rot_t = transpose(planet.rot);
+
+    // Parallel view direction (eye -> planet) and the view-plane basis, all in
+    // the body frame.
+    let vd = normalize(rot_t * normalize(in.dir));
+    let rb = rot_t * normalize(in.right);
+    let ub = rot_t * normalize(in.up);
+
+    // Ray origin on the plane through the planet center, offset by this
+    // fragment's perpendicular distance (km = offset * req).
+    let o_body = (in.offset.x * req) * rb + (in.offset.y * req) * ub;
+
+    // Intersect the oblate ellipsoid by scaling into unit-sphere space; every
+    // term stays O(1) (the parallel-ray precision win).
+    let o1 = o_body / radii;
+    let d1 = vd / radii;
+    let a = dot(d1, d1);
+    let b = dot(o1, d1);
+    let c = dot(o1, o1) - 1.0;
+    let disc = b * b - a * c;
+    if disc < 0.0 {
+        discard;
+    }
+    // The near (eye-facing) root: vd points into the planet, so the smaller
+    // root is the front surface.
+    let t = (-b - sqrt(disc)) / a;
+    let p1 = o1 + t * d1; // point on the unit sphere
+
+    // Body-frame geodetic normal (ellipsoid gradient) + equirectangular UV, the
+    // same conventions as the mesh path.
+    let n_body = normalize(p1 / radii);
+    let uv = vec2<f32>(
+        atan2(p1.x, p1.z) / (2.0 * PI) + 0.5,
+        acos(clamp(p1.y, -1.0, 1.0)) / PI,
+    );
+
+    let albedo = textureSampleLevel(planet_texture, planet_sampler, uv, 0.0).rgb;
+    let n = normalize(planet.rot * n_body);
+    let surf = planet.pos + planet.rot * (p1 * radii);
+    let sun = normalize(uniforms.sun_pos - surf);
     let sunlit = max(dot(n, sun), 0.0);
 
     let color = albedo * (PLANET_AMBIENT + sunlit);

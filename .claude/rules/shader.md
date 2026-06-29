@@ -36,12 +36,20 @@ paths:
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
   top) so it is compatible with the depth attachment.
-- **Draw order: stars -> Earth surface -> Moon -> planets -> atmosphere ->
-  markers**, one render pass. The Moon + planets (solid bodies, depth write +
-  `Greater`) draw between the surface and atmosphere so the depth buffer resolves
-  occlusion before the additive atmosphere. The planets use a separate pipeline +
-  group-1 bind group (`vs_planet`/`fs_planet`); only the solar-system scenario
-  fills them.
+- **Draw order: stars -> distant-planet billboards -> Earth surface -> Moon ->
+  near-planet meshes -> atmosphere -> markers**, one render pass. The Moon +
+  planet meshes (solid bodies, depth write + `Greater`) draw between the surface
+  and atmosphere so the depth buffer resolves occlusion before the additive
+  atmosphere. Each planet is classified per frame by apparent angular size
+  (CPU, in `prepare`, `2*atan(req/distance)` vs `PLANET_BILLBOARD_MAX_ARCSEC`):
+  large/near ones draw as **meshes** (`vs_planet`/`fs_planet`); far ones below
+  the threshold draw as **billboard impostors** (`vs_planet_billboard`/
+  `fs_planet_billboard`) - a camera-facing quad (no vertex buffer) that
+  ray-traces the oblate ellipsoid (orthographic / parallel-ray, f32-safe at
+  distance), still textured + Lambert-lit. Billboards are depth-off and drawn
+  right after the backdrop (they are always the far bodies, so the later opaque
+  draws paint over them); they are sorted far-to-near in `prepare`. Both share
+  the group-1 bind group; only the solar-system scenario fills the planets.
 - **Earth system is gated to Earth/Moon targets.** The Earth surface, atmosphere,
   Moon, and satellite markers draw only when `render_origin == 0` (orbiting the
   Earth or the Moon); the renderer sets a `draw_earth_system` flag. Orbiting a
@@ -169,4 +177,8 @@ NEAR_PLANE_RADII 0.01 (~63.7)   FAR_PLANE 500000 (fixed km)   MAX_TILT 80
 DEFAULT_DISTANCE_RADII 2 (Earth ~12742)   defaults: lon 0, lat 0, tilt 0   lat clamp +/-89
 ```
 
-**`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128`, `MARKER_RADIUS_PX 6`.
+**`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128`, `MARKER_RADIUS_PX 6`,
+`PLANET_BILLBOARD_MAX_ARCSEC 1800` (angular-diameter cutoff: below it a planet
+draws as a billboard impostor, above it as a mesh). Billboard shader consts in
+`globe.wgsl`: `PLANET_BILLBOARD_SHELL_KM = STARS_RADIUS_KM`,
+`PLANET_BILLBOARD_MARGIN 1.15`.

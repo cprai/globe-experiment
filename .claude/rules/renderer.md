@@ -47,9 +47,10 @@ surface lost/timeout recovery.
 load in parallel via `into_par_iter` (the 7 planet textures decode in a separate
 `par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 5
 group-0 render pipelines concurrently (globe surface, atmosphere, stars, markers,
-Moon); the **planet pipeline** (a 6th) is built after the join (it borrows
-`planet_layout`). This is the **sanctioned** parallel decode — do not confuse it
-with the phase-1 reverted `thread::scope` approach.
+Moon); the **planet mesh pipeline** (a 6th) and the **planet billboard pipeline**
+(a 7th) are built after the join (they borrow `planet_layout`). This is the
+**sanctioned** parallel decode — do not confuse it with the phase-1 reverted
+`thread::scope` approach.
 
 ## `Gfx::init` device setup
 
@@ -103,19 +104,25 @@ buffer (`mesh::moon_ellipsoid`), drawn with its own model transform via
 pass that follows it.
 
 **Planets (group 1).** Each planet has its own mesh (`mesh::planet_ellipsoid`),
-a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render
-frame) + `radius_km`), and a group-1 bind group (uniform + texture + the shared
-sampler). The planet pipeline (`vs_planet`/`fs_planet`, layout `[group0,
-group1]`, same solid-body reversed-Z depth as the Moon) draws each planet in
-`RenderState.planets` order (empty except the solar-system scenario, so
-`planet_count` gates it). The 7 planet textures live ONLY in group 1, so group 0
+a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render frame)
++ `equatorial_radius_km` + `polar_radius_km` + pad), and a group-1 bind group
+(uniform + texture + the shared sampler). `prepare` classifies each planet in
+`RenderState.planets` order by apparent angular size and routes it to one of two
+shared pipelines (both layout `[group0, group1]`): the **mesh** pipeline
+(`vs_planet`/`fs_planet`, same solid-body reversed-Z depth as the Moon) for
+large/near planets, or the **billboard** pipeline (`vs_planet_billboard`/
+`fs_planet_billboard`, no vertex buffer, depth-off) for far ones. The mesh and
+billboard draw indices are rebuilt each `prepare` (`mesh_planet_indices` /
+`billboard_planet_indices`, the latter far-to-near sorted); both empty except the
+solar-system scenario. The 7 planet textures live ONLY in group 1, so group 0
 stays at 9 sampled textures — clear of the portable 16-per-stage limit.
 
 **Earth-system gate.** `prepare` sets `draw_earth_system = (render_origin == 0)`;
 `render` draws the Earth surface, atmosphere, Moon, and markers only when true
 (orbiting Earth/Moon). Orbiting a planet they are skipped. **Draw order: stars
--> Earth surface -> Moon -> planets -> atmosphere -> markers** (the Earth-system
-ones gated).
+-> distant-planet billboards -> Earth surface -> Moon -> near-planet meshes ->
+atmosphere -> markers** (the Earth-system ones gated; billboards draw right after
+the backdrop so the later opaque bodies paint over them).
 
 ## Bind group 0 layout
 
@@ -142,12 +149,12 @@ tangent vectors.
 
 ## Bind group 1 layout (planets)
 
-Used only by the planet pipeline; one bind group per planet, the right one set
-per draw.
+Used by both planet pipelines (mesh + billboard); one bind group per planet, the
+right one set per draw.
 
 | binding | resource | notes |
 |---|---|---|
-| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos` (render frame) + `radius_km` |
+| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos` (render frame) + `equatorial_radius_km` + `polar_radius_km` |
 | 1 | planet texture | `Rgba8UnormSrgb` (8K for inner/gas, 2K for ice giants) |
 | 2 | sampler | the shared `earth_sampler` (repeat U / clamp V) |
 

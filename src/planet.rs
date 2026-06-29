@@ -206,6 +206,18 @@ impl Planet {
         ((2.0 * d.equatorial_radius_km + d.polar_radius_km) / 3.0) as f32
     }
 
+    /// Equatorial semi-axis (+X/+Z) in km. The renderer uses it for the
+    /// apparent-size test and to size + trace the billboard impostor ellipsoid.
+    pub fn equatorial_radius_km(self) -> f32 {
+        self.data().equatorial_radius_km as f32
+    }
+
+    /// Polar semi-axis (+Y, the rotation pole) in km; the impostor's
+    /// oblateness.
+    pub fn polar_radius_km(self) -> f32 {
+        self.data().polar_radius_km as f32
+    }
+
     /// The IAU rotational elements (evaluated against time in
     /// `celestial_sphere`).
     pub fn rotation(self) -> Rotation {
