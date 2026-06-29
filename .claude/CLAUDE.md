@@ -16,7 +16,7 @@ currently uncommitted changes — as an example only. Do NOT make any commits.**
 ## What this is
 
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
-Terra in world-space km, Hillaire-2020 atmosphere, star/sol/**luna** from JPL
+Terra in world-space km, Hillaire-2020 atmosphere, star/Sol/**Luna** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector

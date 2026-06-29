@@ -51,7 +51,7 @@ Bruneton (r, mu) parameterization — resolution concentrates near the horizon:
 Split row mapping (implemented identically in bake and fs_atmosphere):
 - Lower half (ground-hitting rays, b < Rp): `v = 0.5 * clamp(b/Rp)`
 - Upper half (limb rays): `v = 0.5 + 0.5 * clamp((b-Rp)/(Ra-Rp))`
-- x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = sol cosine at reference
+- x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = Sol cosine at reference
   point (ground hit for ground rays, closest approach for limb rays).
 - Phase functions factor out: `L = Phi_R * Sigma_R + Phi_M * Sigma_M`;
   LUT stores Sigma without phase.

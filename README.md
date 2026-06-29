@@ -64,7 +64,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 ## What it does
 
 - A fully lit Terra: day and night sides with city lights, terrain
-  relief, and a sol glint on the oceans.
+  relief, and a Sol glint on the oceans.
 - A physically based atmosphere with realistic colors - watch the
   terminator band glow orange at sunset, and the blue halo hug the
   planet's edge.

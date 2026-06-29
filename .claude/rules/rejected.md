@@ -8,7 +8,7 @@
   ephemeris-driven (2026-06-18). Do not reintroduce the old non-physical
   model.
 - **Noise frequency ramp toward the terminator** for the city-light dissolve
-  — boils/fizzes under sol motion. `DITHER_SCALE` is fixed.
+  — boils/fizzes under Sol motion. `DITHER_SCALE` is fixed.
 - **Terminator-varying emissive threshold** — rejected (blob popping). Use
   the uniform threshold + dither.
 - **Per-brightness glow scaling** — rejected; uniform glow strength.
@@ -22,8 +22,8 @@
 - **`assets/` directory** — deleted in phase 12. Everything in `OUT_DIR`.
 - **`set_datadir` / runtime `data/` dir for satkit** — removed in phase 9.
   The ephemeris and EOP are embedded; no runtime data directory is needed.
-- **`Sol` sliders driving the sol position** — replaced by ephemeris-driven
-  subsolar point (read-only in the panel). Do not add interactive sol
+- **`Sol` sliders driving the Sol position** — replaced by ephemeris-driven
+  subsolar point (read-only in the panel). Do not add interactive Sol
   positioning.
 - **Fixed-half-life always-glide zoom** — failed (laggy during active scroll).
 - **Fixed burst-gap split zoom** — failed (momentum tail crosses threshold).

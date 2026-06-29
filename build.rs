@@ -276,13 +276,13 @@ mod atmosphere {
     //! Two kinds of LUT are baked on the CPU:
     //!
     //! - Transmittance: fraction of sunlight surviving from a point to the top
-    //!   of the atmosphere, parameterized by (altitude, sol zenith cosine).
+    //!   of the atmosphere, parameterized by (altitude, Sol zenith cosine).
     //! - Inscatter: the Rayleigh and Mie single-scattering integrals along a
     //!   full view ray. Because the scene is a perfect sphere seen from
     //!   outside, a ray is fully described by its impact parameter (closest
-    //!   approach to the planet center) plus the sol angle at a reference
+    //!   approach to the planet center) plus the Sol angle at a reference
     //!   point, so the per-pixel raymarch collapses into a 2D table. The only
-    //!   approximation is the sol's tilt *along* the ray, which is assumed
+    //!   approximation is Sol's tilt *along* the ray, which is assumed
     //!   perpendicular.
     //!
     //! The constants here must stay in sync with their WGSL twins in
@@ -297,7 +297,7 @@ mod atmosphere {
     pub const TRANSMITTANCE_WIDTH: u32 = 256;
     pub const TRANSMITTANCE_HEIGHT: u32 = 64;
 
-    /// Inscatter LUT axes: x is the sol cosine at the reference point,
+    /// Inscatter LUT axes: x is the Sol cosine at the reference point,
     /// y is the impact parameter (split mapping: lower half ground-hitting
     /// rays, upper half limb rays).
     pub const INSCATTER_WIDTH: u32 = 256;
@@ -406,7 +406,7 @@ mod atmosphere {
         table
     }
 
-    /// Samples the baked transmittance table toward the sol, mirroring the
+    /// Samples the baked transmittance table toward Sol, mirroring the
     /// WGSL `sol_transmittance` (horizon shadow plus the Bruneton mapping).
     fn sample_transmittance(table: &[[f32; 3]], r: f32, mu: f32) -> [f32; 3] {
         let rp = PLANET_RADIUS_KM;
@@ -446,8 +446,8 @@ mod atmosphere {
     /// which are constant per ray and applied at draw time).
     ///
     /// Canonical geometry: the ray runs along +x with closest approach `b`
-    /// at (0, b, 0). The sol is placed at the requested cosine against the
-    /// reference point's zenith, tilted out of the ray plane, so the sol
+    /// at (0, b, 0). Sol is placed at the requested cosine against the
+    /// reference point's zenith, tilted out of the ray plane, so Sol
     /// cosine elsewhere on the ray follows the sphere's geometry:
     /// `mu(t) = mu_ref * dot(p_hat, r_hat_ref)`.
     fn bake_inscatter(transmittance: &[[f32; 3]]) -> (Vec<f16>, Vec<f16>) {

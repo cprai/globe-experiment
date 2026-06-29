@@ -30,7 +30,7 @@ struct Uniforms {
     // softness; w = unused.
     luna_params: vec4<f32>,
     // Sol position in the render frame (km). Lights every body
-    // (`normalize(sol_pos - surface)`) and aims the backdrop sol disc.
+    // (`normalize(sol_pos - surface)`) and aims the backdrop Sol disc.
     sol_pos: vec3<f32>,
 };
 
@@ -85,7 +85,7 @@ const DAY_AMBIENT: f32 = 0.04;
 // (deliberately past photorealism).
 const NORMAL_STRENGTH: f32 = 4.5;
 // Roughness for rough land and smooth ocean; the specular map blends
-// between them. The ocean value sets how wide the GGX sol glint spreads:
+// between them. The ocean value sets how wide the GGX Sol glint spreads:
 // 0.25 reads glassy-sharp, 0.45 approximates a wave-roughened sea.
 const LAND_ROUGHNESS: f32 = 0.9;
 const OCEAN_ROUGHNESS: f32 = 0.45;
@@ -109,7 +109,7 @@ const EMISSIVE_SOFTNESS: f32 = 0.1;
 // Bright yellow glow; STRENGTH > 1 drives the core toward clip (LDR).
 const EMISSIVE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.85, 0.3);
 const EMISSIVE_STRENGTH: f32 = 1.5;
-// Dither-dissolve: begins at this sol cosine (deeper night = more
+// Dither-dissolve: begins at this Sol cosine (deeper night = more
 // negative) and completes at EMISSIVE_FADE_END.
 const EMISSIVE_FADE_START: f32 = -0.15;
 // Sol cosine at which the dissolve completes. Positive values let the
@@ -117,7 +117,7 @@ const EMISSIVE_FADE_START: f32 = -0.15;
 // some daylit areas stay lit; 0 fully extinguishes them at the terminator.
 const EMISSIVE_FADE_END: f32 = 0.15;
 // Noise grain (cells across the unit normal sphere). Fixed - no terminator
-// ramp, for a temporally coherent dissolve under sol motion.
+// ramp, for a temporally coherent dissolve under Sol motion.
 const DITHER_SCALE: f32 = 400.0;
 // Day-map multiplier for the unlit hemisphere: < 1 darkens (0 = black
 // night), > 1 brightens. Intentionally 1.2 - the night side reads a
@@ -200,7 +200,7 @@ const MIE_G: f32 = 0.8;
 
 const SOL_INTENSITY: f32 = 12.0;
 
-// Transmittance from a point at radius `r` km toward the sol at zenith
+// Transmittance from a point at radius `r` km toward Sol at zenith
 // cosine `mu`, via the precomputed LUT (Bruneton parameterization).
 fn sol_transmittance(r: f32, mu: f32) -> vec3<f32> {
     // The planet shadows everything below the local horizon.
@@ -270,7 +270,7 @@ fn disk_overlap_fraction(sep: f32, r1: f32, r2: f32) -> f32 {
 
 // Fraction of sunlight reaching a surface point `p` (world km) that is NOT
 // blocked by a spherical occluder of radius `occ_radius` centered at `occ`
-// (world km), with Sol toward unit `sol`. This is the analytic eclipse
+// (world km), with Sol toward unit `Sol`. This is the analytic eclipse
 // shadow shared by both directions: Luna shadowing Terra (solar
 // eclipse) and Terra shadowing Luna (lunar eclipse). 1 = fully lit, 0 =
 // total (umbral) shadow; the penumbra is soft because Sol has a finite
@@ -353,7 +353,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let cos_sol = dot(n_geo, sol);
     // Luna can eclipse Sol for this point (solar eclipse): darken the
     // incoming sunlight by the analytic shadow. Multiplying the transmittance
-    // dims both the diffuse and specular sol terms consistently; the small
+    // dims both the diffuse and specular Sol terms consistently; the small
     // DAY_AMBIENT term is left untouched, so the umbra is dark but not black
     // (as a real eclipse shadow, lit by scattered skylight, is not).
     let eclipse = sol_visibility(
@@ -369,7 +369,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             + (1.0 - DAY_AMBIENT) * n_dot_l * sol_light)
         + specular * sol_light;
 
-    // Night side: the day map darkened by sol geometry - no night
+    // Night side: the day map darkened by Sol geometry - no night
     // texture as color. The geometric normal feeds the terminator so
     // bump detail doesn't speckle the day/night edge.
     let daylight = smoothstep(-0.12, 0.18, cos_sol);
@@ -391,7 +391,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sol);
 
     // Fixed-grain noise anchored to the 3D surface position: no crawl on
-    // zoom/rotate, and a stable per-pixel dissolve order under sol
+    // zoom/rotate, and a stable per-pixel dissolve order under Sol
     // motion. step() is a hard per-pixel dither - each pixel switches off
     // when fade crosses its own noise value, so cities erode as a
     // coherent wipe and survivors stay at full (uniform) brightness.
@@ -409,7 +409,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 //
 // Because the scene is a sphere viewed from outside, the inscatter
 // integral along any view ray is precomputed: a ray is identified by its
-// impact parameter and the sol cosine at its reference point (ground hit,
+// impact parameter and the Sol cosine at its reference point (ground hit,
 // or closest approach for limb rays). Per fragment this costs two LUT
 // samples; the phase functions are constant per ray and applied here.
 // Long grazing paths near the terminator lose their blue to scattering
@@ -518,8 +518,8 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
 const STARS_RADIUS_KM: f32 = 222985.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
-// The sol disc, drawn into the backdrop along the sol direction. The
-// real sol subtends ~0.0046 rad (0.53 deg); this one is drawn a little
+// The Sol disc, drawn into the backdrop along the Sol direction. The
+// real Sol subtends ~0.0046 rad (0.53 deg); this one is drawn a little
 // larger because it reads better. The glow is the standard LDR cheat
 // for brightness: a clipped-white core inside a wide soft falloff.
 const SOL_ANGULAR_RADIUS: f32 = 0.012;
@@ -532,9 +532,9 @@ struct StarsOutput {
     // Camera-relative view direction, rotated into the star map's base
     // frame. The backdrop is at infinity, so everything on it is a
     // function of view direction from the eye - anchoring it to the celestial
-    // sphere's surface instead would parallax against the sol.
+    // sphere's surface instead would parallax against Sol.
     @location(0) dir: vec3<f32>,
-    // The same view direction in the world frame, for the sol.
+    // The same view direction in the world frame, for Sol.
     @location(1) view: vec3<f32>,
 };
 
@@ -546,7 +546,7 @@ fn vs_stars(in: VertexInput) -> StarsOutput {
     // Luna, ~384,000 km from the origin and far outside an origin-centered
     // shell (which is why half the sky and Sol vanished from a Luna view).
     // Centering on the camera also makes the camera-relative direction exactly
-    // the vertex normal direction (no camera_pos term), so the star/sol lookup
+    // the vertex normal direction (no camera_pos term), so the star/Sol lookup
     // is a pure function of view direction - a true backdrop at infinity - and
     // the Terra-orbit framing is unchanged (the eye was always inside the old
     // shell, where the two formulations give the same per-pixel direction).
@@ -575,7 +575,7 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
 
     let stars = textureSampleLevel(stars_texture, terra_sampler, uv, 0.0).rgb;
 
-    // The sol, along the same camera-relative view direction as the
+    // Sol, along the same camera-relative view direction as the
     // stars, so the two stay locked under rotation and zoom. The body
     // draws after the backdrop and occludes it; the atmosphere pass
     // then glows over it near the limb.

@@ -79,16 +79,16 @@ paths:
   day/night edge speckles it.
 - **Star map and Sol are ephemeris-driven.** Sol *position* from JPL DE440
   (uploaded as `sol_pos`, render-frame); `star_rot_inv = P * R_itrf2gcrf * P^T`.
-  Do not replace with a sol-attached rotation. The star matrix additionally folds
+  Do not replace with a Sol-attached rotation. The star matrix additionally folds
   in a static galactic->equatorial offset (`star_tex_rot_inv`), because the star
   texture is drawn in galactic coordinates; see `simulation.md`.
 - **Backdrop anchoring**: star lookup is a function of the camera-relative view
   direction, not position on the celestial sphere. Changing the *star* anchoring
-  reintroduces parallax between sol and stars (a fixed bug). The star shell is
+  reintroduces parallax between Sol and stars (a fixed bug). The star shell is
   **centered on the camera** (`vs_stars`: `camera_pos + normal *
   STARS_RADIUS_KM`), so it always encloses the eye - required for non-Terra
   targets (orbiting Luna is ~384,000 km outside an origin-centered shell;
-  Sol and half the sky vanished). The **sol disc** (`fs_stars`) is drawn in
+  Sol and half the sky vanished). The **Sol disc** (`fs_stars`) is drawn in
   the orbited body's direction to Sol (`normalize(sol_pos)`, render-frame) so
   it agrees with each planet's terminator (`fs_planet` lights from the same Sol
   position). See `camera.md`.

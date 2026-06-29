@@ -55,7 +55,7 @@ IERS-2010** GCRF<->ITRF transforms (`qgcrf2itrf`/`qitrf2gcrf`), not the
 
 ## Ephemeris-driven Sol & star map
 
-Star map and Sol are **ephemeris-driven** — do not replace with a sol-attached
+Star map and Sol are **ephemeris-driven** — do not replace with a Sol-attached
 rotation:
 - `sol_dir`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF
   (full `qgcrf2itrf`) -> world via P -> normalize.

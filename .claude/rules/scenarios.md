@@ -73,7 +73,7 @@ via `celestial.center_world(body)`. `frame_state` fills
 `get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
-  `crate::simulation` for visibility, and reads sol/star values from
+  `crate::simulation` for visibility, and reads Sol/star values from
   `self.simulation.celestial_sphere`. The near-identical propagation loop
   across scenarios is **intentional** — each may diverge (marker style,
   visibility logic, non-satellite objects); premature factoring adds
