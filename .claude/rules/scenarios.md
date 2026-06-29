@@ -29,7 +29,7 @@ range-check it against the EOP window below).
 ### Initial camera framing (optional)
 
 A scenario's `run()` can frame its event on launch instead of the default
-full-globe view: build the simulation, read its `celestial_sphere`, compute a
+whole-Earth view: build the simulation, read its `celestial_sphere`, compute a
 `Camera` with `Camera::looking_toward(target, star_rot_inv, world_look,
 distance)` (orbits `target` with the look axis along a world-frame direction —
 e.g. Earth target aimed at `-sun_dir` for the day side, or a Moon target aimed
@@ -59,7 +59,7 @@ The `solar_system` scenario (empty, no satellites; clock from 2025-06-01) offers
 `TargetSelector`. `SELECTABLE_BODIES` lists them ordered by distance from the
 Sun with the Moon right after Earth (Mercury, Venus, Earth, Moon, Mars, Jupiter,
 Saturn, Uranus, Neptune); `selected` defaults to `EARTH_INDEX` so the scenario
-starts on the Earth (matching the default full-globe camera). The panel shows
+starts on the Earth (matching the default whole-Earth camera). The panel shows
 **one always-visible latching key per body** (a single column, the chosen one
 lit), so each key callback needs a **disjoint** `request_*` field — hence nine
 named flags (not an array, whose elements can't be captured disjointly), in

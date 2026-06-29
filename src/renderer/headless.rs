@@ -1,25 +1,25 @@
-//! Headless single-frame renderer: draws the globe scene to an offscreen
+//! Headless single-frame renderer: draws the scene to an offscreen
 //! texture and reads it back to CPU pixels, with no window, surface, or
 //! present. Used by the `render` CLI mode (see `crate::snapshot`).
 //!
-//! It shares the scene core ([`GlobeRenderer`]) and the device-creation path
+//! It shares the scene core ([`SceneRenderer`]) and the device-creation path
 //! ([`request_adapter_device`]) with the windowed [`Gfx`](super::Gfx); the only
 //! differences are the presentation target (an owned color texture + a readback
 //! buffer instead of a swapchain surface) and that the UI is optional. The
-//! globe draw sequence is identical: clear to black (and the reversed-Z depth
+//! scene draw sequence is identical: clear to black (and the reversed-Z depth
 //! to 0.0), then stars -> surface -> moon -> atmosphere (markers are skipped
 //! because render mode tracks none). When the
 //! caller supplies a [`UiFrame`] (from the `render --scene` `ui` mock layouts),
 //! an egui overlay is composited on top, exactly as in the windowed path.
 
 use super::{
-    DEPTH_FORMAT, GlobeRenderer, MAX_FRAME_DIMENSION, UiFrame, create_depth_view, depth_attachment,
+    DEPTH_FORMAT, MAX_FRAME_DIMENSION, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
 use crate::simulation::RenderState;
 
 /// Offscreen color format. **Non-sRGB on purpose.** Every look-tuning constant
-/// in `globe.wgsl` is calibrated to the windowed surface, which is also
+/// in `scene.wgsl` is calibrated to the windowed surface, which is also
 /// non-sRGB (`Gfx::init` picks `!is_srgb()`). On a non-sRGB target the shader's
 /// 8-bit output is stored raw, and those bytes already equal the sRGB-encoded
 /// pixels a display shows - so writing them verbatim into a PNG (which viewers
@@ -29,12 +29,12 @@ use crate::simulation::RenderState;
 /// read-back bytes are already in RGBA order, with no channel swap.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Renders a single globe frame offscreen and returns it as CPU pixels. Built
+/// Renders a single scene frame offscreen and returns it as CPU pixels. Built
 /// once per `render` invocation, used for one frame, then dropped.
 pub struct HeadlessRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    globe: GlobeRenderer,
+    scene: SceneRenderer,
     /// egui paint backend, used only when a [`UiFrame`] is supplied (mock UI
     /// overlay). Created unconditionally - it allocates nothing until a frame
     /// with primitives is rendered.
@@ -55,7 +55,7 @@ pub struct HeadlessRenderer {
 impl HeadlessRenderer {
     /// Builds a headless renderer targeting a `width` x `height` image. Creates
     /// its own surfaceless device (no optional features, same as the windowed
-    /// path), the globe scene resources, the egui paint backend (used only for
+    /// path), the scene resources, the egui paint backend (used only for
     /// an optional mock-UI overlay), the offscreen color texture, and the
     /// readback buffer. Panics if the dimensions are outside
     /// `1..=MAX_FRAME_DIMENSION` (the caller validates first and reports a
@@ -77,7 +77,7 @@ impl HeadlessRenderer {
         // (both come from the default wgpu limits today).
         debug_assert!(device.limits().max_texture_dimension_2d >= MAX_FRAME_DIMENSION);
 
-        let globe = GlobeRenderer::new(&device, &queue, FORMAT);
+        let scene = SceneRenderer::new(&device, &queue, FORMAT);
 
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
@@ -119,7 +119,7 @@ impl HeadlessRenderer {
         Self {
             device,
             queue,
-            globe,
+            scene,
             egui_renderer,
             color,
             depth_view,
@@ -138,7 +138,7 @@ impl HeadlessRenderer {
     /// then un-pads the rows into a tight RGBA8 buffer.
     pub fn render(&mut self, render: &RenderState, ui: Option<UiFrame>) -> image::RgbaImage {
         let viewport = (self.width as f32, self.height as f32);
-        self.globe
+        self.scene
             .prepare(&self.device, &self.queue, render, viewport);
 
         // Apply egui's texture-set deltas (font atlas + per-glyph) before they
@@ -201,7 +201,7 @@ impl HeadlessRenderer {
             // egui-wgpu needs a `RenderPass<'static>`; the pass still ends at
             // this scope's close, before the encoder is finished.
             let mut pass = pass.forget_lifetime();
-            self.globe.render(&mut pass);
+            self.scene.render(&mut pass);
             if let (Some(ui), Some(screen)) = (ui.as_ref(), screen.as_ref()) {
                 self.egui_renderer.render(&mut pass, &ui.primitives, screen);
             }

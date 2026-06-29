@@ -59,7 +59,7 @@ pub struct RenderParams {
 struct SceneSpec {
     simulation: SimulationSpec,
     camera: CameraSpec,
-    /// Mock UI panels to overlay; omit (or empty) for a globe-only frame.
+    /// Mock UI panels to overlay; omit (or empty) for a body-only frame.
     #[serde(default)]
     ui: Vec<UiPanel>,
 }
@@ -235,11 +235,11 @@ pub fn run(params: RenderParams) {
         // All planets are available so any of them can be the render target;
         // when Earth/Moon is targeted they sit far off-screen.
         planets: celestial.planets.to_vec(),
-        // Pure globe: render mode tracks no satellites, so no markers.
+        // Bodies only: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };
 
-    // Build the optional mock-UI overlay (empty `ui` = globe-only frame). The
+    // Build the optional mock-UI overlay (empty `ui` = body-only frame). The
     // panels were already validated by the scene parse above.
     let ui_frame =
         (!scene.ui.is_empty()).then(|| build_ui_frame(scene.ui, params.width, params.height));

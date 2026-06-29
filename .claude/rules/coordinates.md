@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/**/*.rs"
-  - "shaders/globe.wgsl"
+  - "shaders/scene.wgsl"
 ---
 
 # Coordinate system & mapping
@@ -35,7 +35,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
   not ellipsoid position. Do not try to make the LUT model ellipsoidal.
 - Atmosphere spherical constants: `PLANET_RADIUS_KM 6360`, `ATMOSPHERE_TOP_KM
   6460`. These must match between `build.rs mod atmosphere` and
-  `shaders/globe.wgsl`.
+  `shaders/scene.wgsl`.
 
 ## Moon body frame
 

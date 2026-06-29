@@ -95,7 +95,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
     }
 
     /// Builds the application with a specific initial camera instead of the
-    /// default full-globe view. Used by scenarios that want to frame a specific
+    /// default whole-body view. Used by scenarios that want to frame a specific
     /// event on launch (e.g. the eclipse scenarios aim at the Sun/Moon); the
     /// camera is fully interactive afterward.
     pub fn with_camera(simulation: S, camera: Camera) -> Self {
@@ -114,13 +114,13 @@ impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
 
         // The window stays hidden through device setup, texture upload,
         // and pipeline creation; it's shown after the first frame is
-        // presented, so it appears with the globe already rendered
+        // presented, so it appears with the scene already rendered
         // instead of sitting blank while loading.
         let window = Arc::new(
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Globe")
+                        .with_title("Solar System")
                         .with_visible(false),
                 )
                 .expect("create window"),
@@ -174,7 +174,7 @@ impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
 
 impl<S: Simulation + UIDrawable> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
-    /// hover); whatever it doesn't consume drives the globe camera.
+    /// hover); whatever it doesn't consume drives the orbital camera.
     fn handle_input(&mut self, event: WindowEvent) {
         let Some(window) = self.window.clone() else {
             return;
@@ -265,7 +265,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             .run_ui(raw_input, |ui| ui::control_panel(ui.ctx(), simulation));
         egui_state.handle_platform_output(&window, full_output.platform_output);
 
-        // egui resets the cursor icon every frame; restore the globe's
+        // egui resets the cursor icon every frame; restore the scene's
         // grab cursor whenever the pointer isn't on the panel.
         if !self.egui_ctx.is_pointer_over_egui() {
             window.set_cursor(self.controller.cursor_icon());

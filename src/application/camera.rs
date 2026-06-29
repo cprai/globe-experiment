@@ -43,7 +43,7 @@ impl Default for Camera {
         Self {
             longitude: 0.0,
             latitude: 0.0,
-            // ~2 Earth radii above the surface: a full-globe view.
+            // ~2 Earth radii above the surface: the whole body in view.
             distance: Self::DEFAULT_DISTANCE_RADII * earth::MEAN_RADIUS_KM,
             tilt: 0.0,
             target: CameraTarget::Earth,

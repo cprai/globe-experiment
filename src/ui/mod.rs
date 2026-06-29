@@ -91,7 +91,7 @@ fn anchor_to_egui(anchor: &PanelAnchor, offset: [f32; 2]) -> (egui::Align2, egui
     }
 }
 
-/// The control/readout panel(s) over the globe: one panel holds the simulation
+/// The control/readout panel(s) over the scene: one panel holds the simulation
 /// clock (play/pause and speed) plus the ephemeris-driven subsolar point;
 /// another holds each tracked station's datetime and position.
 ///

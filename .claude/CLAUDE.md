@@ -1,19 +1,19 @@
 # CLAUDE.md
 
-Project rules and conventions for **Globe**, an astronomically-accurate
-satellite simulation tool (past scenarios only). Rules are in
+Project rules and conventions for **Solar System**, an astronomically-accurate
+solar-system renderer with satellite tracking (past scenarios only). Rules are in
 `.claude/rules/` — topic files load at launch or when you open matching
 files. Read all loaded rules before making changes.
 
 **When `.claude/rules/*.md` and the source disagree, the source wins.**
-Look-tuning constants in `globe.wgsl` in particular drift between sessions.
+Look-tuning constants in `scene.wgsl` in particular drift between sessions.
 
 ---
 
 ## What this is
 
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
-globe in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
+Earth in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
 (star-fixed) camera that orbits a selectable **target** (Earth, the Moon, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector
@@ -83,5 +83,5 @@ planet textures add ~686 MB; see `constraints.md`).
 after every shader edit:
 
 ```sh
-naga --compact --capabilities none shaders/globe.wgsl
+naga --compact --capabilities none shaders/scene.wgsl
 ```

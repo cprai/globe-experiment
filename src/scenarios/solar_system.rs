@@ -88,7 +88,7 @@ impl UIDrawable for SolarSystemSimulation {
 }
 
 /// Builds the solar-system scene and hands off to the winit event loop. Starts
-/// on the default full-globe Earth view; PREV/NEXT then tour the system.
+/// on the default whole-Earth view; PREV/NEXT then tour the system.
 pub fn run() {
     simulation::init();
     application::run(ApplicationState::new(SolarSystemSimulation::new()));

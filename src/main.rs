@@ -17,7 +17,8 @@ use clap::{Parser, ValueEnum};
 // to a struct with a `#[command(subcommand)]` field only if global flags shared
 // across all subcommands are ever wanted.) The `///` doc comment below is the
 // user-facing `about` text, so keep it free of implementation notes like this.
-/// Globe: an astronomically-accurate satellite simulation tool. The CLI either
+/// Solar System: an astronomically-accurate solar-system renderer with
+/// satellite tracking (past scenarios only). The CLI either
 /// runs a past scenario in an interactive window (`scenario`) or renders a
 /// single frame to an image file (`render`); the actual setup lives in the
 /// `scenarios` / `snapshot` modules. `main` does nothing but parse args and
@@ -54,7 +55,7 @@ enum Cli {
         /// {"longitude", "latitude", "distance" (km), "tilt", "target":
         /// "earth"|"moon"|"mercury"|...|"neptune"}, "ui": [panels]}`.
         /// `camera.target` and `ui` are optional (target defaults to "earth";
-        /// omit `ui` for a globe-only frame). See `snapshot::SceneSpec` /
+        /// omit `ui` for a body-only frame). See `snapshot::SceneSpec` /
         /// `ui::UiPanel`. Unknown keys are rejected.
         #[arg(long)]
         scene: String,

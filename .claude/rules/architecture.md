@@ -88,7 +88,7 @@ src/planet.rs            the 7 planets: Planet enum + ALL + data-driven table
                          (oblate radii, IAU rotation constants, texture file) +
                          surface_position / geodetic_normal. satkit-free, like
                          earth/moon
-src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + GlobeRenderer
+src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
                          (7 pipelines incl. Moon + planet mesh + planet
                          billboard; reversed-Z
                          Depth32Float buffer). Planets use a separate group-1
@@ -112,7 +112,7 @@ src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
                          planet rotation (PlanetState[]); iau_body_to_gcrf helper
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/globe.wgsl       ALL shader code (7 passes in one module: + planet mesh
+shaders/scene.wgsl       ALL shader code (7 passes in one module: + planet mesh
                          + distant-planet billboard impostor; analytic
                          eclipse shadows). Planet uniform/texture are group 1
 OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Earth x4,

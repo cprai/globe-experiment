@@ -25,7 +25,7 @@ pub const SEMI_MINOR_AXIS_KM: f64 = SEMI_MAJOR_AXIS_KM * (1.0 - FLATTENING);
 pub const ECCENTRICITY_SQ: f64 = FLATTENING * (2.0 - FLATTENING);
 
 /// IUGG mean radius R1 = (2a + b) / 3 ~ 6371.0088 km. Used to convert the
-/// camera/projection constants that were tuned in "globe radii" into km, so
+/// camera/projection constants that were tuned in "Earth radii" into km, so
 /// the interaction feel is preserved exactly.
 pub const MEAN_RADIUS_KM: f32 = ((2.0 * SEMI_MAJOR_AXIS_KM + SEMI_MINOR_AXIS_KM) / 3.0) as f32;
 

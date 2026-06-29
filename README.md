@@ -1,7 +1,7 @@
-# Globe
+# Solar System
 
-An astronomically-accurate satellite simulation tool, built on an
-interactive 3D Earth renderer in the spirit of Google Earth, written
+An astronomically-accurate, interactive 3D solar-system renderer with
+satellite tracking, in the spirit of Google Earth, written
 in Rust with [wgpu](https://wgpu.rs) for rendering, [winit](https://github.com/rust-windowing/winit)
 for windowing and input, and [egui](https://github.com/emilk/egui) for
 the control overlay. It simulates **past** scenarios (events before the
@@ -14,8 +14,8 @@ Earth-orientation data for full accuracy.
 cargo run --release
 ```
 
-That's it - the required textures (NASA-derived earth maps and a star
-field from [Solar System Scope](https://www.solarsystemscope.com/textures/)),
+That's it - the required textures (NASA-derived Earth maps plus Moon and
+planet maps and a star field from [Solar System Scope](https://www.solarsystemscope.com/textures/)),
 the JPL DE440 planetary ephemeris, and CelesTrak's Earth-orientation
 parameters (`EOP-All.csv`) are downloaded automatically (into the build's
 `OUT_DIR`) on the
@@ -56,7 +56,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 
 | Input | Action |
 |-------|--------|
-| Left mouse drag | Pan around the globe (flick to spin with inertia) |
+| Left mouse drag | Pan around the scene (flick to spin with inertia) |
 | Scroll wheel | Zoom in and out |
 | Right mouse drag | Tilt toward the horizon |
 | Play/Pause + speed slider | Freeze time, or set how fast it passes (real time to 100x, exponential) |
@@ -102,16 +102,16 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP
   record (1962 onward); the tool simulates past scenarios only.
 - Smooth, Google-Earth-style navigation: panning follows the cursor at
-  any zoom level, from full-globe spins down to country level. The camera orbits
+  any zoom level, from whole-Earth spins down to country level. The camera orbits
   a chosen body - always the Earth for satellite scenarios, either the Earth
   or the Moon in the eclipse scenarios (an EARTH / MOON selector in the panel),
   and any of nine bodies in the solar-system scenario (a key per body in the
   panel), with pan/tilt/zoom scaled to whichever body is targeted.
-- Real-world geometry: the globe is the WGS84 reference ellipsoid and the
+- Real-world geometry: Earth is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.
 - Satellite tracking: each tracked object's TLE (the ISS and Hubble) is
-  propagated with SGP4 and shown as a marker on the globe. A simulation clock
+  propagated with SGP4 and shown as a marker on Earth. A simulation clock
   advances time (play/pause and an exponential real-time to 100x speed slider),
   so the Sun, stars, and every satellite all move live; the panel shows the
   current datetime, the subsolar point, and each object's ground position.

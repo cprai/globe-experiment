@@ -42,9 +42,9 @@ Six top-level modules + `earth`:
 
 ## Where things live
 
-- **Shader look knobs**: `shaders/globe.wgsl` top `const` block.
+- **Shader look knobs**: `shaders/scene.wgsl` top `const` block.
 - **Atmosphere medium constants**: `build.rs mod atmosphere` (bake) AND
-  `shaders/globe.wgsl` (shader twins) — both must stay in sync.
+  `shaders/scene.wgsl` (shader twins) — both must stay in sync.
 - **Input feel constants**: `src/application/input.rs` top.
 - **Earth physical constants + helpers**: `src/earth.rs`.
 - **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
@@ -60,4 +60,4 @@ Six top-level modules + `earth`:
 Keep all docs current in the same change: code comments, `.claude/CLAUDE.md`,
 rules files, and `README.md`. Stale docs are bugs. Exception: the live
 constant snapshot in `shader.md` may lag owner tuning — for live values the
-source (`globe.wgsl`) is always authoritative.
+source (`scene.wgsl`) is always authoritative.

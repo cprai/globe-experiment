@@ -1,11 +1,11 @@
 ---
 name: build-and-run
-description: Build and run the Globe app with cargo run --release to see a change live - look, interaction feel, and pipeline-binding correctness. Use when asked to run, launch, start, or visually confirm the app, including running a specific scenario.
+description: Build and run the Solar System app with cargo run --release to see a change live - look, interaction feel, and pipeline-binding correctness. Use when asked to run, launch, start, or visually confirm the app, including running a specific scenario.
 ---
 
 # Build & run the app
 
-Build and launch Globe to see a change live (look, interaction feel,
+Build and launch the Solar System app to see a change live (look, interaction feel,
 pipeline-binding correctness).
 
 ## Tools
@@ -29,7 +29,7 @@ cargo run --release -- scenario          # lists available scenarios
   downloads five textures (BC7-encoded in memory), the ~98 MB JPL DE440
   ephemeris, and CelesTrak's `EOP-All.csv` into `OUT_DIR`. Subsequent
   builds reuse the cache.
-- A clean `cargo build` proves **nothing** about `shaders/globe.wgsl` — WGSL
+- A clean `cargo build` proves **nothing** about `shaders/scene.wgsl` — WGSL
   is compiled by naga at runtime, not during `cargo build`. Validate the
   shader separately (see the `validate-wgsl-naga` skill).
 - Look and interaction feel can only be judged on a **native Windows

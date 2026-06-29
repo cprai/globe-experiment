@@ -1,7 +1,7 @@
 ---
 paths:
   - "build.rs"
-  - "shaders/globe.wgsl"
+  - "shaders/scene.wgsl"
 ---
 
 # Atmosphere model — constants & sync rules
@@ -10,14 +10,14 @@ paths:
 
 **Atmosphere medium + geometry constants exist in TWO places:**
 1. `build.rs mod atmosphere` (LUT bake, CPU side)
-2. `shaders/globe.wgsl` (geometric twins + `MIE_G`)
+2. `shaders/scene.wgsl` (geometric twins + `MIE_G`)
 
 Change one, change the other. A mismatch silently corrupts the atmosphere —
 there is no compile-time or runtime check.
 
 **Inscatter LUT parameterization** (split row mapping, reference-point choice,
 Bruneton transmittance mapping) is independently implemented in both `build.rs`
-and `globe.wgsl`. A mismatch silently corrupts the atmosphere.
+and `scene.wgsl`. A mismatch silently corrupts the atmosphere.
 
 **The LUT bake runs unconditionally** (sub-second), so the CPU-side tables
 can never go stale after a constants tweak. The WGSL twins still need manual
@@ -60,7 +60,7 @@ Split row mapping (implemented identically in bake and fs_atmosphere):
 
 - Any change to medium constants, split mapping, reference-point choice, or
   Bruneton mapping must be made in **both** `build.rs mod atmosphere` and
-  `globe.wgsl`.
+  `scene.wgsl`.
 - f16 max is 65504, min normal ~6e-5. Keep large scale factors (e.g.
   `SUN_INTENSITY`) **in the shader, not the bake**.
 - After any atmosphere change, re-run and verify **both** bake and shader

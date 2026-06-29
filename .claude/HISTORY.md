@@ -5,7 +5,7 @@ decisions were made. See git log for commit-level detail.
 
 ---
 
-**Phase 1** (to 2026-06-11) — Globe in **iced 0.14** via
+**Phase 1** (to 2026-06-11) — The app in **iced 0.14** via
 `iced::widget::shader`. All rendering/atmosphere math designed here. iced
 created the device with `Features::empty()`, blocking compressed textures.
 Textures decoded lazily at runtime (first frame); atmosphere LUTs baked on
@@ -16,10 +16,10 @@ winit + raw wgpu + egui. Added: build-time BC7/KTX2 texture transcode,
 build-time atmosphere LUT bake, hidden-until-ready window. Heavily iterated
 the **smoothed-zoom** controller (the current rate-adaptive glide with velocity
 bridging). Later: inlined LUT bake into `build.rs`, deleted `atmosphere.rs`,
-parallelized `GlobeRenderer::new` with rayon.
+parallelized `SceneRenderer::new` with rayon.
 
 **Phase 3** (06-13 to 06-15, +06-17 update) — **Shader-only** rewrite of
-`fs_main`. Dropped photographic night map as color; whole globe is day-mapped
+`fs_main`. Dropped photographic night map as color; whole Earth is day-mapped
 + darkened by sun geometry, with **procedural city lights** (luminance mask +
 fixed-grain 3D-noise dither-dissolve + additive glow). 06-17: added
 `EMISSIVE_FADE_END` (lights bleed slightly onto daylit side), converted all
@@ -51,7 +51,7 @@ in phase 9). Sun lat/lon sliders removed; subsolar point shown read-only.
 **Phase 8** (2026-06-18) — **Inertial camera.** Camera rig built in the
 celestial frame, rotated into world by
 `celestial_to_world = star_rot_inv.transpose()`. Camera holds still relative
-to stars while the globe spins beneath it. `Camera.lon/lat` are now an
+to stars while Earth spins beneath it. `Camera.lon/lat` are now an
 inertial look direction, not geography.
 
 **Phase 9** (2026-06-19) — **Embedded ephemeris + offline EOP.** DE440
@@ -109,9 +109,9 @@ values and receives a resolved `Vec3`/`Mat4` for the camera. This makes
 (e.g. touch) entirely local to `application`. Enforced by import discipline.
 
 **Event routing: egui first.** `handle_input` feeds every event to
-`egui_state.on_window_event` first. If `response.consumed`, the globe
+`egui_state.on_window_event` first. If `response.consumed`, the scene
 controller never sees it. This replaces iced's `stack![]` overlay capture and
-is what makes panel interaction not pan the globe.
+is what makes panel interaction not pan the scene.
 
 **`simulation.advance()` runs before the UI frame.** This means each frame
 applies the *previous* frame's play/pause/speed edits — a one-frame (~16 ms)

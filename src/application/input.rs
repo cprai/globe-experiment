@@ -95,7 +95,7 @@ impl Controller {
                 let Some(position) = self.cursor else {
                     return false;
                 };
-                // Grabbing the globe stops any coasting.
+                // Grabbing the body stops any coasting.
                 self.inertia = None;
                 self.drag = Some(Drag {
                     button: *button,
@@ -170,7 +170,7 @@ impl Controller {
                 drag.velocity = (vx + (dx / dt - vx) * alpha, vy + (dy / dt - vy) * alpha);
 
                 match drag.button {
-                    // Drag moves the globe with the cursor: dragging right
+                    // Drag moves the body with the cursor: dragging right
                     // pulls the view west, dragging down pulls it north.
                     MouseButton::Left => {
                         let scale = camera.pan_degrees_per_pixel(viewport_height);

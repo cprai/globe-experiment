@@ -11,7 +11,7 @@
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
 //! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
 //! world-space point via the project's WGS84 helpers (`earth`), so the marker
-//! lands on exactly the same ellipsoid the globe mesh is built from.
+//! lands on exactly the same ellipsoid the Earth mesh is built from.
 //!
 //! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
 //! EOP table (real polar motion + UT1-UTC), which
@@ -80,7 +80,7 @@ impl Satellite {
 /// Recomputed on demand rather than stored on [`Satellite`].
 pub struct SatelliteState {
     /// Position in the renderer's world frame: kilometers, planet center at
-    /// the origin, same axes as the globe mesh.
+    /// the origin, same axes as the Earth mesh.
     pub position_km: Vec3,
     /// Sub-satellite geodetic latitude, degrees.
     pub latitude_deg: f32,

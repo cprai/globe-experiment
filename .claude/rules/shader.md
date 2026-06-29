@@ -1,6 +1,6 @@
 ---
 paths:
-  - "shaders/globe.wgsl"
+  - "shaders/scene.wgsl"
 ---
 
 # Shader rules & invariants
@@ -9,7 +9,7 @@ paths:
 
 - **Surface format: non-sRGB.** `Gfx::init` picks `find(|f| !f.is_srgb())`.
   `get_default_config` defaults to sRGB format — this override is deliberate.
-  Every look-tuning constant in `globe.wgsl` is calibrated to the non-sRGB
+  Every look-tuning constant in `scene.wgsl` is calibrated to the non-sRGB
   surface. Do not switch to sRGB.
 - **Headless render target must also be non-sRGB** (`Rgba8Unorm`). Do not
   "fix" `HeadlessRenderer` to `Rgba8UnormSrgb`. The stored 8-bit bytes
@@ -24,7 +24,7 @@ paths:
 - **Reversed-Z depth buffer (`Depth32Float`).** Cleared to `0.0` (the far
   plane), `depth_compare: Greater` (nearer = larger depth). It exists so the
   Earth occludes the much more distant Moon (incl. a partial limb). Per-pass
-  policy (in `GlobeRenderer::new`): the **solid bodies** (Earth surface, Moon)
+  policy (in `SceneRenderer::new`): the **solid bodies** (Earth surface, Moon)
   write depth + test `Greater`; the **backdrop, atmosphere, markers** neither
   write nor test (`Always`, no write) so they keep their exact draw-order
   layering. Because the atmosphere does not depth-test, `fs_atmosphere` does an
@@ -67,7 +67,7 @@ paths:
   surfaces, `normalize(sun_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
   per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
-- **Mutual eclipse shadows are analytic** (`sun_visibility` in `globe.wgsl`):
+- **Mutual eclipse shadows are analytic** (`sun_visibility` in `scene.wgsl`):
   the soft two-disk overlap of the Sun and an occluding sphere. The Moon
   shadows the Earth in `fs_main` (solar-eclipse spot); the Earth shadows the
   Moon in `fs_moon` (lunar-eclipse coppery glow). No shadow maps.
@@ -95,7 +95,7 @@ paths:
 
 ## Look-tuning discipline
 
-- **Look-tuning constants drift between sessions.** Always read `globe.wgsl`
+- **Look-tuning constants drift between sessions.** Always read `scene.wgsl`
   for live values; the snapshot below is dated.
 - **Tune and feel-test on a native Windows release build.** The WSLg dev
   environment cannot validate exact colors or interaction feel.
@@ -105,7 +105,7 @@ paths:
 Two live constants depart from the original phase-3 plan:
 - **`NIGHT_DARKNESS = 1.2`** (plan was ~0.02): because
   `night_factor = mix(NIGHT_DARKNESS, 1.0, daylight)`, a value > 1 makes the
-  unlit hemisphere ~20% **brighter** than full daylight, so the globe reads
+  unlit hemisphere ~20% **brighter** than full daylight, so Earth reads
   bright all the way around with city glow on top. Owner-confirmed.
 - **`EMISSIVE_THRESHOLD = 0.05`** (plan was 0.25): a deliberately permissive
   city mask. Owner-confirmed.
@@ -122,7 +122,7 @@ emit `(0,0,2,1)` which clips outside NDC, rasterizing nothing.
 
 ## Live constant snapshot (2026-06-18 — verify against source)
 
-**`shaders/globe.wgsl`**:
+**`shaders/scene.wgsl`**:
 ```
 DAY_AMBIENT 0.04           NORMAL_STRENGTH 4.5
 LAND_ROUGHNESS 0.9         OCEAN_ROUGHNESS 0.45
@@ -180,5 +180,5 @@ DEFAULT_DISTANCE_RADII 2 (Earth ~12742)   defaults: lon 0, lat 0, tilt 0   lat c
 **`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128`, `MARKER_RADIUS_PX 6`,
 `PLANET_BILLBOARD_MAX_ARCSEC 1800` (angular-diameter cutoff: below it a planet
 draws as a billboard impostor, above it as a mesh). Billboard shader consts in
-`globe.wgsl`: `PLANET_BILLBOARD_SHELL_KM = STARS_RADIUS_KM`,
+`scene.wgsl`: `PLANET_BILLBOARD_SHELL_KM = STARS_RADIUS_KM`,
 `PLANET_BILLBOARD_MARGIN 1.15`.

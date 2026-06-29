@@ -460,7 +460,7 @@ pub struct BodySelector {
 
 impl Default for BodySelector {
     fn default() -> Self {
-        // Start on the Earth (the familiar full globe).
+        // Start on the Earth (the familiar default view).
         Self {
             selected: EARTH_INDEX,
             request_mercury: false,

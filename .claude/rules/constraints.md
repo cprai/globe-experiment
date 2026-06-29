@@ -16,7 +16,7 @@
 - **~1.5 GB VRAM**: ~800 MB for the 9 group-0 textures (6 uncompressed 8K +
   3 LUTs) plus **~686 MB** for the seven native-res planet textures (five 8K
   ~134 MB each + two 2K ~8 MB each), plus a `Depth32Float` buffer at the window
-  size. The planet textures upload at `GlobeRenderer::new`, so **every** scenario
+  size. The planet textures upload at `SceneRenderer::new`, so **every** scenario
   pays this, even ISS. Accepted cost of native-res + no-feature portability; the
   lever if it bites is downsizing the planet textures to 4K/2K in `build.rs`.
 - **No `.cargo/config.toml`** — deleted when `intel_tex_2` was removed; its

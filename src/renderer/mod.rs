@@ -77,12 +77,12 @@ fn depth_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassDepthStencilAtt
 
 /// Maximum width or height (pixels) for a single-frame [`HeadlessRenderer`]
 /// target. Matches wgpu's default 2D texture dimension limit
-/// (`wgpu::Limits::default().max_texture_dimension_2d`, which the globe device
+/// (`wgpu::Limits::default().max_texture_dimension_2d`, which the scene device
 /// requests); the offscreen color texture cannot exceed it. `HeadlessRenderer`
 /// `debug_assert`s this against the real device limit so the two cannot drift.
 pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
-/// The renderer: owns the GPU surface/device/queue, the globe scene resources
+/// The renderer: owns the GPU surface/device/queue, the scene resources
 /// (pipelines, buffers, bind group), and the egui paint backend. Created once
 /// via [`Gfx::init`]; each frame [`Gfx::update`] writes the uniforms from a
 /// [`RenderState`] and draws the scene plus the egui overlay in a single pass.
@@ -95,7 +95,7 @@ pub struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    globe: GlobeRenderer,
+    scene: SceneRenderer,
     egui_renderer: egui_wgpu::Renderer,
     /// Reversed-Z depth buffer, recreated on resize to match the surface size.
     depth_view: wgpu::TextureView,
@@ -122,7 +122,7 @@ pub struct UiFrame {
 }
 
 impl Gfx {
-    /// Builds the GPU surface/device, the globe scene resources, and the egui
+    /// Builds the GPU surface/device, the scene resources, and the egui
     /// paint backend. The window stays hidden during this (the caller reveals
     /// it after the first presented frame).
     pub fn init(window: Arc<Window>, display: OwnedDisplayHandle) -> Self {
@@ -167,8 +167,8 @@ impl Gfx {
         // creation happen here, before the first frame; the atmosphere LUT bake
         // already ran at build time (build.rs), but the Earth/star textures are
         // decoded from their embedded JPEG/TIFF now. This work is parallelized
-        // internally with rayon (see GlobeRenderer::new).
-        let globe = GlobeRenderer::new(&device, &queue, config.format);
+        // internally with rayon (see SceneRenderer::new).
+        let scene = SceneRenderer::new(&device, &queue, config.format);
 
         // The egui overlay shares the frame pass, which now has a depth
         // attachment, so its pipeline must declare the matching depth format
@@ -190,7 +190,7 @@ impl Gfx {
             device,
             queue,
             config,
-            globe,
+            scene,
             egui_renderer,
             depth_view,
         }
@@ -265,7 +265,7 @@ impl Gfx {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let viewport = self.viewport();
-        self.globe
+        self.scene
             .prepare(&self.device, &self.queue, render, viewport);
 
         let screen = egui_wgpu::ScreenDescriptor {
@@ -307,7 +307,7 @@ impl Gfx {
             // at this scope's close, before the encoder is finished.
             let mut render_pass = render_pass.forget_lifetime();
 
-            self.globe.render(&mut render_pass);
+            self.scene.render(&mut render_pass);
             self.egui_renderer
                 .render(&mut render_pass, &ui.primitives, &screen);
         }
@@ -363,7 +363,7 @@ fn request_adapter_device(
     .expect("no GPU adapter found; set WGPU_BACKEND=gl to force the OpenGL backend");
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("globe device"),
+        label: Some("scene device"),
         // No optional features: textures are uploaded uncompressed, so no
         // BC/ASTC support is needed (maximum platform compatibility).
         required_features: wgpu::Features::empty(),
@@ -377,7 +377,7 @@ fn request_adapter_device(
     (adapter, device, queue)
 }
 
-/// Per-frame shader uniforms. Layout must match `Uniforms` in globe.wgsl:
+/// Per-frame shader uniforms. Layout must match `Uniforms` in scene.wgsl:
 /// vec3 fields are padded to 16-byte alignment.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -409,7 +409,7 @@ struct Uniforms {
 }
 
 /// Per-planet model uniform (group 1). Layout must match `PlanetUniform` in
-/// globe.wgsl: the mat3x3 columns are padded to vec4 stride and the vec3 center
+/// scene.wgsl: the mat3x3 columns are padded to vec4 stride and the vec3 center
 /// is followed by the equatorial radius (filling its pad slot), then the polar
 /// radius with its own padding.
 #[repr(C)]
@@ -447,13 +447,13 @@ struct PlanetGpu {
 
 /// One on-screen satellite marker, as instance data for the marker pipeline.
 /// Layout must match the marker instance attributes in `vs_marker`
-/// (globe.wgsl). One instance is drawn per tracked satellite.
+/// (scene.wgsl). One instance is drawn per tracked satellite.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct MarkerInstance {
     /// World-frame position (km).
     position: [f32; 3],
-    /// Visible flag: 1.0 = drawn, 0.0 = hidden (occluded by the globe; the
+    /// Visible flag: 1.0 = drawn, 0.0 = hidden (occluded by the body; the
     /// vertex shader pushes it off-screen).
     visible: f32,
 }
@@ -473,10 +473,10 @@ fn make_marker_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     })
 }
 
-/// Owns every long-lived wgpu object for the globe: textures, LUTs,
+/// Owns every long-lived wgpu object for the scene: textures, LUTs,
 /// mesh buffers, and the three render pipelines. A private scene helper owned
 /// by [`Gfx`].
-struct GlobeRenderer {
+struct SceneRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
@@ -486,8 +486,8 @@ struct GlobeRenderer {
     indices: wgpu::Buffer,
     index_count: u32,
     /// Lunar mesh (triaxial ellipsoid, body-fixed frame). Separate buffers from
-    /// the globe because the Moon has its own geometry and is drawn with its
-    /// own model transform (`moon_rot` + `moon_pos_world`).
+    /// the Earth mesh because the Moon has its own geometry and is drawn with
+    /// its own model transform (`moon_rot` + `moon_pos_world`).
     moon_vertices: wgpu::Buffer,
     moon_indices: wgpu::Buffer,
     moon_index_count: u32,
@@ -531,18 +531,18 @@ struct GlobeRenderer {
     marker_count: u32,
 }
 
-impl GlobeRenderer {
+impl SceneRenderer {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let mesh = mesh::wgs84_ellipsoid(STACKS, SLICES);
 
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("globe vertices"),
+            label: Some("scene vertices"),
             contents: bytemuck::cast_slice(&mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("globe indices"),
+            label: Some("scene indices"),
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
@@ -560,7 +560,7 @@ impl GlobeRenderer {
         });
 
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("globe uniforms"),
+            label: Some("scene uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -636,9 +636,9 @@ impl GlobeRenderer {
         let (module, views) = rayon::join(
             || {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("globe shader"),
+                    label: Some("scene shader"),
                     source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../../shaders/globe.wgsl").into(),
+                        include_str!("../../shaders/scene.wgsl").into(),
                     ),
                 })
             },
@@ -691,7 +691,7 @@ impl GlobeRenderer {
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globe bind group layout"),
+            label: Some("scene bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -809,7 +809,7 @@ impl GlobeRenderer {
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globe bind group"),
+            label: Some("scene bind group"),
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -944,7 +944,7 @@ impl GlobeRenderer {
                     mapped_at_creation: false,
                 });
                 // The planet's group-1 bind group reuses the shared `sampler`
-                // (repeat U / clamp V), the same wrap the globe + moon use.
+                // (repeat U / clamp V), the same wrap the Earth + Moon use.
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("planet bind group"),
                     layout: &planet_bind_group_layout,
@@ -974,7 +974,7 @@ impl GlobeRenderer {
             .collect();
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("globe pipeline layout"),
+            label: Some("scene pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
@@ -1008,7 +1008,7 @@ impl GlobeRenderer {
         // so the shared borrows below are sound across rayon tasks.)
         let make_render_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("globe pipeline"),
+                label: Some("earth surface pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
@@ -1191,7 +1191,7 @@ impl GlobeRenderer {
             })
         };
 
-        // The Moon: same vertex format as the globe, lit by the Sun with its
+        // The Moon: same vertex format as the Earth mesh, lit by the Sun with its
         // own eclipse shadow. A solid body, so it writes depth and tests
         // `Greater` like the Earth surface (the depth buffer is what makes the
         // Earth occlude it).
@@ -1534,7 +1534,7 @@ impl GlobeRenderer {
         }
 
         if self.draw_earth_system {
-            // The atmosphere reuses the globe shell mesh - rebind it.
+            // The atmosphere reuses the Earth shell mesh - rebind it.
             render_pass.set_vertex_buffer(0, self.vertices.slice(..));
             render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.set_pipeline(&self.atmosphere_pipeline);
@@ -1551,7 +1551,7 @@ impl GlobeRenderer {
     }
 }
 
-/// Which upload path a [`GlobeRenderer`] texture input takes.
+/// Which upload path a [`SceneRenderer`] texture input takes.
 #[derive(Clone, Copy)]
 enum TexKind {
     /// A color map decoded from JPEG/TIFF and uploaded `Rgba8UnormSrgb`

@@ -11,7 +11,7 @@ egui-winit = "0.34.3"
 glam = "0.33.1"
 # RFC3339 datetime parsing for the `render` single-frame CLI mode.
 humantime = "2"
-# Decodes the embedded Earth/star textures at startup (jpeg/tiff) and encodes
+# Decodes the embedded body and star textures at startup (jpeg/tiff) and encodes
 # the `render` single-frame output (png). The textures are embedded verbatim by
 # build.rs (no build-time transcode) and decoded here into uncompressed RGBA8,
 # so only these three codecs are needed; other default formats are dropped.

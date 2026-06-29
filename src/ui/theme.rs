@@ -2,7 +2,7 @@
 //! chrome (frame, bevel, rivets).
 //!
 //! The look: a rugged, dark gunmetal instrument panel floating over the bright
-//! globe, with cream "lit readout" text and keys that light green when engaged.
+//! scene, with cream "lit readout" text and keys that light green when engaged.
 //! References: real Apollo CSM/LM panels (gunmetal + engraved labels + lamp
 //! accents) and the game UI in `ui_examples/`. Every color is theme-internal:
 //! producers (scenarios / `SimulationState`) pick *which instrument* to draw,
@@ -27,7 +27,7 @@ pub(crate) const HEADER_AMBER: Color32 = Color32::from_rgb(230, 178, 86);
 /// Red fault-lamp tone.
 pub(crate) const ACCENT_RED: Color32 = Color32::from_rgb(214, 92, 76);
 
-/// Panel body: near-black blue-gray gunmetal, slightly translucent so the globe
+/// Panel body: near-black blue-gray gunmetal, slightly translucent so the scene
 /// shows faintly through the instrument cluster.
 pub(crate) const PANEL_FILL: Color32 = Color32::from_rgba_unmultiplied_const(24, 28, 32, 236);
 /// Recessed/inset field (egui's extreme/faint backgrounds, e.g. the slider
@@ -127,7 +127,7 @@ pub fn install_theme(ctx: &egui::Context) {
 
 /// The gunmetal panel frame: dark fill, a dark outline (the raised lip's
 /// highlight is painted separately by [`paint_bevel`]), small radius, a drop
-/// shadow to lift it off the globe, and a generous inner margin so the contents
+/// shadow to lift it off the scene, and a generous inner margin so the contents
 /// sit inboard of the rivet line.
 pub(crate) fn panel_frame() -> egui::Frame {
     egui::Frame::new()

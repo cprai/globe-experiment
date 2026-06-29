@@ -12,7 +12,7 @@ paths:
   `request_redraw()`. Windows does not deliver `RedrawRequested` to a hidden
   window. The reveal code (inside `redraw`) would never run otherwise.
 - **Window is created `with_visible(false)`** and revealed via `set_visible(true)`
-  right after the first `frame.present()`, so it appears with the globe
+  right after the first `frame.present()`, so it appears with the scene
   already drawn.
 - **`Occluded` first-frame guard**: some backends (macOS) report a still-hidden
   window as `Occluded` from `get_current_texture`. If that happens before
@@ -41,12 +41,12 @@ change, active flick inertia or zoom glide, simulation clock running (each
 frame requests the next while playing), egui zero repaint delay, resize,
 surface lost/timeout recovery.
 
-## `GlobeRenderer::new` parallelization
+## `SceneRenderer::new` parallelization
 
 `create_shader_module` runs on one rayon task while 9 group-0 texture inputs
 load in parallel via `into_par_iter` (the 7 planet textures decode in a separate
 `par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 5
-group-0 render pipelines concurrently (globe surface, atmosphere, stars, markers,
+group-0 render pipelines concurrently (Earth surface, atmosphere, stars, markers,
 Moon); the **planet mesh pipeline** (a 6th) and the **planet billboard pipeline**
 (a 7th) are built after the join (they borrow `planet_layout`). This is the
 **sanctioned** parallel decode — do not confuse it with the phase-1 reverted
@@ -163,7 +163,7 @@ right one set per draw.
 `Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
 `depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
 target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
-`0.0`) build both. All six globe pipelines declare `depth_stencil`; egui's
+`0.0`) build both. All six scene pipelines declare `depth_stencil`; egui's
 overlay pipeline is built with `depth_stencil_format: Some(DEPTH_FORMAT)`.
 
 ## Renderer constants
@@ -177,7 +177,7 @@ planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
 - Offscreen format is **`Rgba8Unorm` (non-sRGB), on purpose** — twin of the
   surface format rule. The stored bytes already equal the sRGB-encoded
   on-screen pixels; written verbatim to PNG.
-- Shares `GlobeRenderer` and `request_adapter_device` with the windowed path.
+- Shares `SceneRenderer` and `request_adapter_device` with the windowed path.
   `HeadlessRenderer` passes `compatible_surface: None` to the adapter.
 - **No EOP range check** in render mode. Out-of-range datetimes render and
   silently degrade. This is deliberate — documented in `snapshot.rs` and
@@ -192,11 +192,11 @@ planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
   (`--output`/`--width`/`--height`) stays as CLI flags, NOT in the JSON. A
   misspelled key at any level errors with exit 2 (the agent-debugging payoff of
   strict parsing).
-- **Globe-only by default; optional egui overlay when the scene has a `ui`.**
+- **Bodies-only by default; optional egui overlay when the scene has a `ui`.**
   `HeadlessRenderer` owns an `egui_wgpu::Renderer` and `render()` takes an
-  `Option<UiFrame>`; when `Some`, panels composite over the globe exactly as in
+  `Option<UiFrame>`; when `Some`, panels composite over the scene exactly as in
   `Gfx::update` (apply `textures_delta.set`, `update_buffers`, `forget_lifetime`
-  the pass, draw globe then egui, submit egui commands first, free deltas after).
+  the pass, draw scene then egui, submit egui commands first, free deltas after).
   `snapshot::build_ui_frame` takes the already-parsed `Vec<ui::UiPanel>`,
   wraps it in `ui::PanelSet` — a `UiElement` tag enum over the bare instrument
   structs (which derive `Deserialize`), each cloned into an inert boxed

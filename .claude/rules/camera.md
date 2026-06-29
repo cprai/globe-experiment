@@ -20,7 +20,7 @@ This is `SimulationState::celestial_to_world()`, applied in
 
 Because `star_rot_inv * celestial_to_world = I`, a rig held constant in the
 celestial frame yields a constant star lookup direction — **stars are locked
-to the camera while the ECEF globe spins underneath**.
+to the camera while the ECEF Earth spins underneath**.
 
 The rig is built from the **equatorial** `star_rot_inv` (the GCRF frame). The
 shader samples the star texture with a *different* matrix, `star_tex_rot_inv`
@@ -38,7 +38,7 @@ direction (it maps the direction back through `star_rot_inv` into the inertial
 rig). Scenarios use it with `ApplicationState::with_camera(sim, camera)` to frame
 an event on launch (solar eclipse: Earth target aimed at `-sun_dir`; lunar
 eclipse: Moon target aimed at `moon_pos_world`, so it launches orbiting the
-Moon); the default constructor `::new` still gives the full-globe Earth view.
+Moon); the default constructor `::new` still gives the whole-Earth view.
 
 ## Render frame (floating origin) — all rendering is camera-target-local
 

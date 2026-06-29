@@ -1,6 +1,6 @@
 ---
 name: smoke-test
-description: Run Globe headless for ~20 seconds to confirm wgpu pipelines and bindings are valid - validation errors panic in the first frames, so a clean run means they are valid. Use after renderer, pipeline, or binding changes.
+description: Run the Solar System app headless for ~20 seconds to confirm wgpu pipelines and bindings are valid - validation errors panic in the first frames, so a clean run means they are valid. Use after renderer, pipeline, or binding changes.
 ---
 
 # Smoke test (validate pipelines & bindings)

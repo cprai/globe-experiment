@@ -1,11 +1,12 @@
-//! Ephemeris-driven celestial sphere: the Sun's direction and the star-map
-//! orientation for a given simulation time, from satkit's JPL Development
-//! Ephemerides (DE440) and Earth-orientation transforms.
+//! Ephemeris-driven celestial sphere: the Sun, Moon, and seven planets'
+//! positions and orientations, plus the star-map orientation, for a given
+//! simulation time, from satkit's JPL Development Ephemerides (DE440) and
+//! Earth-orientation transforms.
 //!
-//! Geocentric model: the Earth stays the rendered globe at the origin in its
-//! Earth-fixed (ECEF) frame. The Sun's position comes from the ephemeris
-//! (GCRF, inertial); Earth's orientation (the GCRF<->ITRF rotation) maps it
-//! into the Earth-fixed frame and rotates the star backdrop. We use the full
+//! Geocentric frame: every body's position is computed in the Earth-fixed
+//! (ECEF) frame. Positions come from the ephemeris (GCRF, inertial); Earth's
+//! orientation (the GCRF<->ITRF rotation) maps them into the Earth-fixed
+//! frame and rotates the star backdrop. We use the full
 //! IERS-2010 transforms (sub-arcsec, matching the satellite path), which read
 //! the embedded EOP table plus the embedded IERS nutation/CIO tables (seeded
 //! in `init_satkit`) - no runtime data file is needed.

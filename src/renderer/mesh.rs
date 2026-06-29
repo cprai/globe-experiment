@@ -76,7 +76,7 @@ fn ellipsoid(
     Mesh { vertices, indices }
 }
 
-/// Generates a WGS84 reference-ellipsoid globe, in kilometers. Positions lie on
+/// Generates a WGS84 reference ellipsoid, in kilometers. Positions lie on
 /// the oblate WGS84 ellipsoid; the stored normal is the geodetic (surface)
 /// normal, which has the same lat/lon direction as a sphere would.
 pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
@@ -91,7 +91,7 @@ pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
 /// Generates the triaxial lunar ellipsoid, in kilometers, in the Moon's
 /// body-fixed (selenographic) frame. The renderer orients it into world space
 /// with the ephemeris-driven lunar rotation; here it is built in the same
-/// +Y-north / +Z-sub-Earth convention as the globe.
+/// +Y-north / +Z-sub-Earth convention as the Earth mesh.
 pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
     ellipsoid(
         stacks,
@@ -103,9 +103,10 @@ pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
 
 /// Generates an oblate planet ellipsoid, in kilometers, in the planet's
 /// body-fixed frame (the same +Y-north / +Z-prime-meridian convention as the
-/// globe). The renderer orients it into world space with the ephemeris-driven
-/// IAU rotation; the per-planet radii live in the `position`/`normal` closures
-/// (`crate::planet`), so the geometry stays in one place.
+/// Earth mesh). The renderer orients it into world space with the
+/// ephemeris-driven IAU rotation; the per-planet radii live in the
+/// `position`/`normal` closures (`crate::planet`), so the geometry stays in one
+/// place.
 pub fn planet_ellipsoid(stacks: u32, slices: u32, planet: Planet) -> Mesh {
     ellipsoid(
         stacks,

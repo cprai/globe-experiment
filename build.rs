@@ -85,7 +85,7 @@ const EMBEDS: &[Embed] = &[
     // Planet albedo maps (equirectangular, body-fixed prime-meridian frame),
     // decoded + uploaded exactly like the Moon map (sRGB color). The inner and
     // gas-giant maps are 8K; the two ice-giant maps are only published at 2K.
-    // Saturn's rings are not yet rendered, so only its globe map is fetched.
+    // Saturn's rings are not yet rendered, so only its surface map is fetched.
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_mercury.jpg",
         limit: 256 * 1024 * 1024,
@@ -286,7 +286,7 @@ mod atmosphere {
     //!   perpendicular.
     //!
     //! The constants here must stay in sync with their WGSL twins in
-    //! `shaders/globe.wgsl`. All lengths are kilometers; all coefficients
+    //! `shaders/scene.wgsl`. All lengths are kilometers; all coefficients
     //! are per kilometer.
 
     use half::f16;

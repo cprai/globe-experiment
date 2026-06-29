@@ -1,6 +1,6 @@
 ---
 name: edit-atmosphere-constants
-description: Change atmosphere medium/geometry constants or the inscatter LUT parameterization while keeping the duplicated build.rs bake side and shaders/globe.wgsl shader side in sync. Use when touching atmosphere math; a change on one side silently corrupts the atmosphere.
+description: Change atmosphere medium/geometry constants or the inscatter LUT parameterization while keeping the duplicated build.rs bake side and shaders/scene.wgsl shader side in sync. Use when touching atmosphere math; a change on one side silently corrupts the atmosphere.
 ---
 
 # Edit atmosphere constants (keep both sides in sync)
@@ -17,7 +17,7 @@ changing them safely.
 
 ## What is duplicated (change one, change the other)
 1. **Atmosphere medium + geometry constants:** in `build.rs`'s inline
-   `mod atmosphere` (the LUT bake) **and** in `shaders/globe.wgsl` (the
+   `mod atmosphere` (the LUT bake) **and** in `shaders/scene.wgsl` (the
    geometric twins + `MIE_G`).
 2. **Inscatter LUT parameterization** — implemented independently twice and
    must match exactly:
@@ -26,12 +26,12 @@ changing them safely.
    - the **reference-point choice** (ground hit vs. closest approach),
    - the **Bruneton transmittance mapping**.
    These appear in both `build.rs::bake_inscatter` / `bake_transmittance` /
-   `sample_transmittance` and in `globe.wgsl::fs_atmosphere` /
+   `sample_transmittance` and in `scene.wgsl::fs_atmosphere` /
    `sun_transmittance`. A change on one side silently corrupts the atmosphere.
 
 ## Steps
 1. Edit the constant/mapping on **both** the bake side (`build.rs`) and the
-   shader side (`shaders/globe.wgsl`).
+   shader side (`shaders/scene.wgsl`).
 2. **Force a LUT rebake** if you changed the bake: delete the stale LUT
    outputs so `build.rs` regenerates them (see the `refresh-embedded-assets`
    skill), then rebuild.
@@ -40,7 +40,7 @@ changing them safely.
 
 ## Neutral-change verification
 If a change is meant to be visually neutral, verify **both** the bake
-(`build.rs`) and shader (`globe.wgsl`) sides and re-run — **bit-identical
+(`build.rs`) and shader (`scene.wgsl`) sides and re-run — **bit-identical
 output is the goal** when the change is meant to be neutral.
 
 ## Don't

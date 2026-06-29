@@ -4,7 +4,7 @@
   interaction on native Windows. Do not add a CI gate without owner sign-off.
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
 - **After every shader edit**: `naga --compact --capabilities none
-  shaders/globe.wgsl`. This is the same naga the app links through wgpu —
+  shaders/scene.wgsl`. This is the same naga the app links through wgpu —
   authoritative. No output file = validate only. `Validation successful` +
   exit 0 = good. Keep the naga CLI version aligned with `Cargo.lock`.
   **A clean `cargo build` proves nothing about the shader** (naga compiles it

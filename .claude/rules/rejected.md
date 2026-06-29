@@ -13,7 +13,7 @@
   the uniform threshold + dither.
 - **Per-brightness glow scaling** — rejected; uniform glow strength.
 - **`thread::scope` parallel texture decode** — reverted in phase 1. The
-  sanctioned runtime decode is rayon inside `GlobeRenderer::new`; the
+  sanctioned runtime decode is rayon inside `SceneRenderer::new`; the
   rejected thing is specifically the `thread::scope` design.
 - **`iced`** — removed in phase 2. Do not reintroduce it.
 - **`intel_tex_2` / BC7 transcode at build time** — removed in phase 14 for

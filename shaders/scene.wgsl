@@ -405,7 +405,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 // Atmospheric scattering, after Hillaire 2020: the same sphere mesh,
 // inflated to the top-of-atmosphere radius and rendered far-side-only
-// with additive blending after the globe.
+// with additive blending after the body.
 //
 // Because the scene is a sphere viewed from outside, the inscatter
 // integral along any view ray is precomputed: a ray is identified by its
@@ -576,7 +576,7 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
     let stars = textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
 
     // The sun, along the same camera-relative view direction as the
-    // stars, so the two stay locked under rotation and zoom. The globe
+    // stars, so the two stay locked under rotation and zoom. The body
     // draws after the backdrop and occludes it; the atmosphere pass
     // then glows over it near the limb.
     //
@@ -606,7 +606,7 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
 // overlays) with alpha blending. Drawn as one instanced call - the quad is
 // generated from the vertex index, and the per-marker world position +
 // visibility arrive as instance attributes (one per satellite). Visibility
-// (occlusion behind the globe) is decided on the CPU; when hidden the quad is
+// (occlusion behind the body) is decided on the CPU; when hidden the quad is
 // pushed off-screen so it produces no fragments.
 
 const MARKER_FILL: vec3<f32> = vec3<f32>(1.0, 0.25, 0.2);
@@ -615,7 +615,7 @@ const MARKER_RING: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
 struct MarkerInstance {
     // World-frame marker position (km).
     @location(0) position: vec3<f32>,
-    // Visible flag: >= 0.5 = drawn, < 0.5 = hidden (occluded by the globe).
+    // Visible flag: >= 0.5 = drawn, < 0.5 = hidden (occluded by the body).
     @location(1) visible: f32,
 };
 
@@ -641,7 +641,7 @@ fn vs_marker(@builtin(vertex_index) vertex_index: u32, inst: MarkerInstance) -> 
     var out: MarkerOutput;
     out.uv = corner;
 
-    // Hidden (occluded by the globe): emit an off-screen, clipped vertex.
+    // Hidden (occluded by the body): emit an off-screen, clipped vertex.
     // Markers only draw when orbiting the Earth/Moon (render origin at the
     // Earth), so the satellite's Earth-frame position is already render-frame.
     let clip = uniforms.view_proj * vec4<f32>(inst.position, 1.0);
