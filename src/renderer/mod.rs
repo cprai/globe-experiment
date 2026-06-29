@@ -9,10 +9,10 @@ use winit::dpi::PhysicalSize;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
-use crate::earth;
-use crate::moon;
+use crate::luna;
 use crate::planet;
-use crate::simulation::{CelestialBody, EarthSystemEntity, RenderState};
+use crate::simulation::{CelestialBody, RenderState, TerraSystemEntity};
+use crate::terra;
 use mesh::Vertex;
 
 pub use headless::HeadlessRenderer;
@@ -25,19 +25,19 @@ const MARKER_RADIUS_PX: f32 = 6.0;
 
 /// Depth buffer format. A 32-bit float depth, paired with the camera's
 /// reversed-Z projection (near -> 1, far -> 0), cleared to 0.0 and tested
-/// `Greater`. This is what lets the Earth correctly occlude the much more
-/// distant Moon across the scene's enormous near/far span (see
+/// `Greater`. This is what lets Terra correctly occlude the much more
+/// distant Luna across the scene's enormous near/far span (see
 /// `Camera::view_proj`).
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// The Sun's angular radius seen from Earth/Moon (~0.266 deg), in radians. Sets
+/// Sol's angular radius seen from Terra/Luna (~0.266 deg), in radians. Sets
 /// the soft penumbra width of the analytic eclipse shadows in the shader.
-const SUN_ANGULAR_RADIUS_RAD: f32 = 0.004652;
+const SOL_ANGULAR_RADIUS_RAD: f32 = 0.004652;
 
 /// Apparent-size cutoff (angular DIAMETER, arcsec) below which a planet is
 /// drawn as a billboard impostor (`vs_planet_billboard`) rather than a full
 /// mesh. A look/efficiency-tuning constant: comfortably above every planet's
-/// apparent size from Earth (Venus peaks ~66", Jupiter ~50"), so the Earth view
+/// apparent size from Terra (Venus peaks ~66", Jupiter ~50"), so the Terra view
 /// billboards all seven; and comfortably below the orbited body's size (even at
 /// max zoom-out a planet subtends tens of thousands of arcsec), so whichever
 /// planet is being orbited always stays a mesh. ~0.5 deg.
@@ -166,7 +166,7 @@ impl Gfx {
 
         // Shader-module compilation, texture decode+upload, and pipeline
         // creation happen here, before the first frame; the atmosphere LUT bake
-        // already ran at build time (build.rs), but the Earth/star textures are
+        // already ran at build time (build.rs), but the Terra/star textures are
         // decoded from their embedded JPEG/TIFF now. This work is parallelized
         // internally with rayon (see SceneRenderer::new).
         let scene = SceneRenderer::new(&device, &queue, config.format);
@@ -213,7 +213,7 @@ impl Gfx {
     }
 
     /// Renders one frame: applies egui's texture-set deltas, writes the
-    /// uniforms from `render`, then draws the scene (stars -> surface -> moon
+    /// uniforms from `render`, then draws the scene (stars -> surface -> luna
     /// -> atmosphere -> marker, depth-buffered) and the egui overlay in a
     /// single pass, and presents. `window` is borrowed only for the
     /// pre-present hint. Returns a [`FrameOutcome`] so the caller can
@@ -334,7 +334,7 @@ impl Gfx {
 /// because each caller owns it (the windowed path needs it to build the surface
 /// first).
 ///
-/// No GPU texture-compression feature is requested: the Earth/star textures are
+/// No GPU texture-compression feature is requested: the Terra/star textures are
 /// uploaded uncompressed (`Rgba8Unorm`/`Rgba8UnormSrgb`, decoded at runtime by
 /// `upload_image`), so the renderer runs on every backend and GPU - including
 /// those without BC/ASTC (Apple Silicon, ARM SoCs) - with no per-platform
@@ -394,18 +394,18 @@ struct Uniforms {
     /// z = radius px, w = unused. (Per-marker position/visibility is
     /// per-instance, in the marker instance buffer, not here.)
     marker: [f32; 4],
-    /// Moon body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
-    moon_rot: [[f32; 4]; 3],
-    /// Moon center in the render frame (km) = relative to the camera target.
-    moon_pos: [f32; 3],
+    /// Luna body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
+    luna_rot: [[f32; 4]; 3],
+    /// Luna center in the render frame (km) = relative to the camera target.
+    luna_pos: [f32; 3],
     _pad2: f32,
-    /// Eclipse params: x = Moon mean radius km, y = Earth mean radius km,
-    /// z = Sun angular radius rad, w = unused.
-    moon_params: [f32; 4],
-    /// Sun position in the render frame (km) = relative to the camera target.
-    /// Every lit pass derives its Sun direction from this; there is no
-    /// Earth-fixed `sun_dir`.
-    sun_pos: [f32; 3],
+    /// Eclipse params: x = Luna mean radius km, y = Terra mean radius km,
+    /// z = Sol angular radius rad, w = unused.
+    luna_params: [f32; 4],
+    /// Sol position in the render frame (km) = relative to the camera target.
+    /// Every lit pass derives its Sol direction from this; there is no
+    /// Earth-fixed `sol_dir`.
+    sol_pos: [f32; 3],
     _pad4: f32,
 }
 
@@ -481,17 +481,17 @@ struct SceneRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
-    moon_pipeline: wgpu::RenderPipeline,
+    luna_pipeline: wgpu::RenderPipeline,
     marker_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
     /// Lunar mesh (triaxial ellipsoid, body-fixed frame). Separate buffers from
-    /// the Earth mesh because the Moon has its own geometry and is drawn with
-    /// its own model transform (`moon_rot` + `moon_pos_world`).
-    moon_vertices: wgpu::Buffer,
-    moon_indices: wgpu::Buffer,
-    moon_index_count: u32,
+    /// the Terra mesh because Luna has its own geometry and is drawn with
+    /// its own model transform (`luna_rot` + `luna_pos_world`).
+    luna_vertices: wgpu::Buffer,
+    luna_indices: wgpu::Buffer,
+    luna_index_count: u32,
     /// Planet pipeline (`vs_planet`/`fs_planet`), shared by all seven planets;
     /// each draw swaps its group-1 bind group + mesh.
     planet_pipeline: wgpu::RenderPipeline,
@@ -512,14 +512,14 @@ struct SceneRenderer {
     /// sorted far-to-near so the nearest disc paints last (correct overlap with
     /// the depth-off impostor pass). Rebuilt each `prepare`.
     billboard_planet_indices: Vec<usize>,
-    /// Whether to draw the Earth system this frame: the Earth surface, the
-    /// atmosphere, the Moon, and any satellite markers. True only when the
-    /// camera target is Earth or the Moon (render origin at the Earth, so their
+    /// Whether to draw the Terra system this frame: the Terra surface, the
+    /// atmosphere, Luna, and any satellite markers. True only when the
+    /// camera target is Terra or Luna (render origin at Terra, so their
     /// absolute meshes are also the local meshes). When orbiting a planet these
-    /// are skipped - the Earth's atmosphere physics is Earth-centered and
+    /// are skipped - Terra's atmosphere physics is Terra-centered and
     /// meaningless billions of km away, and drawing it there would otherwise
     /// need the absolute (imprecise) world.
-    draw_earth_system: bool,
+    draw_terra_system: bool,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Per-satellite marker instance data (position + visibility), drawn
@@ -548,15 +548,15 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let moon_mesh = mesh::moon_ellipsoid(STACKS, SLICES);
-        let moon_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("moon vertices"),
-            contents: bytemuck::cast_slice(&moon_mesh.vertices),
+        let luna_mesh = mesh::luna_ellipsoid(STACKS, SLICES);
+        let luna_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("luna vertices"),
+            contents: bytemuck::cast_slice(&luna_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let moon_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("moon indices"),
-            contents: bytemuck::cast_slice(&moon_mesh.indices),
+        let luna_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("luna indices"),
+            contents: bytemuck::cast_slice(&luna_mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -569,7 +569,7 @@ impl SceneRenderer {
 
         let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
 
-        // The five Earth/star textures are downloaded verbatim by the build
+        // The five Terra/star textures are downloaded verbatim by the build
         // script (original JPEG/TIFF) and embedded; they are decoded with the
         // `image` crate and uploaded as uncompressed RGBA8 here - no GPU
         // compression feature required (see request_adapter_device). The three
@@ -586,22 +586,22 @@ impl SceneRenderer {
         // memcpy-only BC7 uploads.)
         let texture_inputs: [(&str, &[u8], TexKind); 9] = [
             (
-                "earth day texture",
+                "terra day texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.jpg")),
                 TexKind::ColorSrgb,
             ),
             (
-                "earth night texture",
+                "terra night texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_nightmap.jpg")),
                 TexKind::ColorSrgb,
             ),
             (
-                "earth normal texture",
+                "terra normal texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_normal_map.tif")),
                 TexKind::DataLinear,
             ),
             (
-                "earth specular texture",
+                "terra specular texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_specular_map.tif")),
                 TexKind::DataLinear,
             ),
@@ -628,7 +628,7 @@ impl SceneRenderer {
                 TexKind::ColorSrgb,
             ),
             (
-                "moon texture",
+                "luna texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
                 TexKind::ColorSrgb,
             ),
@@ -666,7 +666,7 @@ impl SceneRenderer {
             inscatter_rayleigh_view,
             inscatter_mie_view,
             stars_view,
-            moon_view,
+            luna_view,
         ]: [wgpu::TextureView; 9] = views
             .try_into()
             .expect("upload_ktx2 returns one view per input");
@@ -681,7 +681,7 @@ impl SceneRenderer {
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("earth sampler"),
+            label: Some("terra sampler"),
             // Repeat across the dateline seam, clamp at the poles.
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -859,7 +859,7 @@ impl SceneRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&moon_view),
+                    resource: wgpu::BindingResource::TextureView(&luna_view),
                 },
             ],
         });
@@ -945,7 +945,7 @@ impl SceneRenderer {
                     mapped_at_creation: false,
                 });
                 // The planet's group-1 bind group reuses the shared `sampler`
-                // (repeat U / clamp V), the same wrap the Earth + Moon use.
+                // (repeat U / clamp V), the same wrap Terra + Luna use.
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("planet bind group"),
                     layout: &planet_bind_group_layout,
@@ -989,8 +989,8 @@ impl SceneRenderer {
         });
 
         // Reversed-Z depth state, parameterized per pass. The solid bodies
-        // (Earth surface, Moon) write depth and test `Greater` (nearer = larger
-        // depth) so the Earth occludes the far-off Moon. The backdrop, the
+        // (Terra surface, Luna) write depth and test `Greater` (nearer = larger
+        // depth) so Terra occludes the far-off Luna. The backdrop, the
         // additive atmosphere, and the screen-space markers neither write nor
         // test depth (`Always`, no write) - they keep their exact draw-order
         // behavior, layered by the order in `render`.
@@ -1009,7 +1009,7 @@ impl SceneRenderer {
         // so the shared borrows below are sound across rayon tasks.)
         let make_render_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("earth surface pipeline"),
+                label: Some("terra surface pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
@@ -1137,7 +1137,7 @@ impl SceneRenderer {
                     cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
-                // The backdrop must never occlude the (more distant) Moon, so
+                // The backdrop must never occlude the (more distant) Luna, so
                 // it neither writes nor tests depth.
                 depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
                 multisample: wgpu::MultisampleState::default(),
@@ -1192,17 +1192,17 @@ impl SceneRenderer {
             })
         };
 
-        // The Moon: same vertex format as the Earth mesh, lit by the Sun with its
+        // Luna: same vertex format as the Terra mesh, lit by Sol with its
         // own eclipse shadow. A solid body, so it writes depth and tests
-        // `Greater` like the Earth surface (the depth buffer is what makes the
-        // Earth occlude it).
-        let make_moon_pipeline = || {
+        // `Greater` like the Terra surface (the depth buffer is what makes the
+        // Terra occlude it).
+        let make_luna_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("moon pipeline"),
+                label: Some("luna pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
-                    entry_point: Some("vs_moon"),
+                    entry_point: Some("vs_luna"),
                     compilation_options: Default::default(),
                     buffers: &[wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -1216,7 +1216,7 @@ impl SceneRenderer {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fs_moon"),
+                    entry_point: Some("fs_luna"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -1237,7 +1237,7 @@ impl SceneRenderer {
         };
 
         // The planet pipeline: same vertex format and reversed-Z solid-body
-        // depth setup as the Moon (planets are opaque bodies that the depth
+        // depth setup as Luna (planets are opaque bodies that the depth
         // buffer resolves against each other), differing only in entry points
         // and the two-group layout. Built after the join (it borrows
         // `planet_layout`); one extra pipeline compile is cheap.
@@ -1283,11 +1283,11 @@ impl SceneRenderer {
 
         let (
             render_pipeline,
-            (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, moon_pipeline))),
+            (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, luna_pipeline))),
         ) = rayon::join(make_render_pipeline, || {
             rayon::join(make_atmosphere_pipeline, || {
                 rayon::join(make_stars_pipeline, || {
-                    rayon::join(make_marker_pipeline, make_moon_pipeline)
+                    rayon::join(make_marker_pipeline, make_luna_pipeline)
                 })
             })
         });
@@ -1333,20 +1333,20 @@ impl SceneRenderer {
             render_pipeline,
             atmosphere_pipeline,
             stars_pipeline,
-            moon_pipeline,
+            luna_pipeline,
             marker_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
-            moon_vertices,
-            moon_indices,
-            moon_index_count: moon_mesh.indices.len() as u32,
+            luna_vertices,
+            luna_indices,
+            luna_index_count: luna_mesh.indices.len() as u32,
             planet_pipeline,
             planet_billboard_pipeline,
             planets,
             mesh_planet_indices: Vec::new(),
             billboard_planet_indices: Vec::new(),
-            draw_earth_system: true,
+            draw_terra_system: true,
             uniforms,
             bind_group,
             markers,
@@ -1385,18 +1385,18 @@ impl SceneRenderer {
         // columns are padded to vec4 stride.
         let star_cols = render.star_rot_inv.to_cols_array_2d();
 
-        // The Moon's placement drives the lunar mesh + the analytic eclipse
-        // shadows; its radius is implied by the identity (`moon::MEAN_RADIUS_KM`).
-        // Pull it from the body list. If the scene carries no Moon (not the case
+        // Luna's placement drives the lunar mesh + the analytic eclipse
+        // shadows; its radius is implied by the identity (`luna::MEAN_RADIUS_KM`).
+        // Pull it from the body list. If the scene carries no Luna (not the case
         // in any current scenario) it simply isn't drawn, so a zero placement is
         // harmless here.
-        let moon = render
+        let luna = render
             .celestial_bodies
             .iter()
-            .find(|state| state.body == CelestialBody::EarthSystem(EarthSystemEntity::Moon))
+            .find(|state| state.body == CelestialBody::TerraSystem(TerraSystemEntity::Luna))
             .map(|state| state.placement);
-        let moon_pos_world = moon.map_or(glam::Vec3::ZERO, |placement| placement.pos_world);
-        let moon_cols = moon
+        let luna_pos_world = luna.map_or(glam::Vec3::ZERO, |placement| placement.pos_world);
+        let luna_cols = luna
             .map_or(glam::Mat3::IDENTITY, |placement| placement.rot)
             .to_cols_array_2d();
 
@@ -1408,35 +1408,35 @@ impl SceneRenderer {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
             marker: [width, height, MARKER_RADIUS_PX, 0.0],
-            moon_rot: std::array::from_fn(|c| {
-                [moon_cols[c][0], moon_cols[c][1], moon_cols[c][2], 0.0]
+            luna_rot: std::array::from_fn(|c| {
+                [luna_cols[c][0], luna_cols[c][1], luna_cols[c][2], 0.0]
             }),
-            moon_pos: (moon_pos_world - origin).to_array(),
+            luna_pos: (luna_pos_world - origin).to_array(),
             _pad2: 0.0,
-            moon_params: [
-                moon::MEAN_RADIUS_KM,
-                earth::MEAN_RADIUS_KM,
-                SUN_ANGULAR_RADIUS_RAD,
+            luna_params: [
+                luna::MEAN_RADIUS_KM,
+                terra::MEAN_RADIUS_KM,
+                SOL_ANGULAR_RADIUS_RAD,
                 0.0,
             ],
-            sun_pos: (render.sun_pos_world - origin).to_array(),
+            sol_pos: (render.sol_pos_world - origin).to_array(),
             _pad4: 0.0,
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
-        // The Earth system (Earth surface + atmosphere + Moon + markers) renders
-        // only when orbiting the Earth or the Moon, i.e. the render origin is at
-        // the Earth. Orbiting a planet, the Earth/Moon are a far speck and the
-        // atmosphere is Earth-centered physics, so they are skipped.
-        self.draw_earth_system = origin == glam::Vec3::ZERO;
+        // The Terra system (Terra surface + atmosphere + Luna + markers) renders
+        // only when orbiting Terra or Luna, i.e. the render origin is at
+        // Terra. Orbiting a planet, the Terra/Luna are a far speck and the
+        // atmosphere is Terra-centered physics, so they are skipped.
+        self.draw_terra_system = origin == glam::Vec3::ZERO;
 
         // One model uniform per planet to draw this frame, each at its center
         // RELATIVE to the render origin. `render.celestial_bodies` is a flat
-        // list (Earth, Moon, planets); the `Planet` entries drive this loop. The
+        // list (Terra, Luna, planets); the `Planet` entries drive this loop. The
         // GPU resources `self.planets` are in `planet::ALL` order, so each
         // planet identity maps to its slot by its position in that array. While
         // here, classify each planet by its apparent size into the mesh vs
-        // billboard draw lists. No planet entry (Earth/Moon scenarios) ->
+        // billboard draw lists. No planet entry (Terra/Luna scenarios) ->
         // both lists stay empty and the planet pipeline never runs.
         self.mesh_planet_indices.clear();
         self.billboard_planet_indices.clear();
@@ -1446,7 +1446,7 @@ impl SceneRenderer {
         let mut planet_pos_render = [glam::Vec3::ZERO; planet::ALL.len()];
         for state in &render.celestial_bodies {
             // Keep only the planets: their identity's position in `planet::ALL`
-            // is also their GPU slot. Earth/Moon are not in that array, so this
+            // is also their GPU slot. Terra/Luna are not in that array, so this
             // filters them out.
             let body = state.body;
             let Some(i) = planet::ALL.iter().position(|candidate| *candidate == body) else {
@@ -1512,12 +1512,12 @@ impl SceneRenderer {
         render_pass.set_vertex_buffer(0, self.vertices.slice(..));
         render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
 
-        // Backdrop first; it always draws (the stars/Sun frame every body).
+        // Backdrop first; it always draws (the stars/Sol frame every body).
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
         // Distant planets as billboard impostors, right after the backdrop so
-        // the opaque Earth/Moon/mesh-planets that follow paint over (occlude)
+        // the opaque Terra/Luna/mesh-planets that follow paint over (occlude)
         // them - billboards are always the far bodies. No vertex/index buffer:
         // the camera-facing quad is built from the vertex index. group 0 stays
         // bound; group 1 swaps per planet. Sorted far-to-near in `prepare`.
@@ -1529,24 +1529,24 @@ impl SceneRenderer {
             }
         }
 
-        // The Earth surface (which writes depth), the Moon, then the atmosphere
-        // over the disc and limb - drawn only when orbiting the Earth/Moon (the
-        // render origin is at the Earth). Orbiting a planet they would be a far
-        // speck (and the Earth-centered atmosphere physics is meaningless), so
+        // The Terra surface (which writes depth), Luna, then the atmosphere
+        // over the disc and limb - drawn only when orbiting the Terra/Luna (the
+        // render origin is at Terra). Orbiting a planet they would be a far
+        // speck (and the Terra-centered atmosphere physics is meaningless), so
         // they are skipped, leaving just the planets + backdrop.
-        if self.draw_earth_system {
+        if self.draw_terra_system {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-            render_pass.set_pipeline(&self.moon_pipeline);
-            render_pass.set_vertex_buffer(0, self.moon_vertices.slice(..));
-            render_pass.set_index_buffer(self.moon_indices.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..self.moon_index_count, 0, 0..1);
+            render_pass.set_pipeline(&self.luna_pipeline);
+            render_pass.set_vertex_buffer(0, self.luna_vertices.slice(..));
+            render_pass.set_index_buffer(self.luna_indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.luna_index_count, 0, 0..1);
         }
 
         // The near/large planets as full meshes: each its own mesh + group-1
         // bind group (model uniform + texture), the same solid-body depth setup
-        // as the Moon. The orbited planet is drawn in local coordinates (its
+        // as Luna. The orbited planet is drawn in local coordinates (its
         // center is the render origin); any other planet above the apparent-size
         // threshold also lands here. The far ones were already drawn as
         // billboards above. group 0 stays bound.
@@ -1561,8 +1561,8 @@ impl SceneRenderer {
             }
         }
 
-        if self.draw_earth_system {
-            // The atmosphere reuses the Earth shell mesh - rebind it.
+        if self.draw_terra_system {
+            // The atmosphere reuses the Terra shell mesh - rebind it.
             render_pass.set_vertex_buffer(0, self.vertices.slice(..));
             render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.set_pipeline(&self.atmosphere_pipeline);
@@ -1641,7 +1641,7 @@ fn upload_image(
 
 /// Uploads a build-script-baked atmosphere LUT from its KTX2 container: the f16
 /// texel rows are copied to the GPU as-is. Only the `Rgba16Float` LUT format is
-/// expected now - the Earth/star textures use [`upload_image`] instead.
+/// expected now - the Terra/star textures use [`upload_image`] instead.
 fn upload_ktx2(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

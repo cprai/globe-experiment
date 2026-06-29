@@ -1,10 +1,10 @@
-//! Ephemeris-driven celestial sphere: the Sun, Moon, and seven planets'
+//! Ephemeris-driven celestial sphere: Sol, Luna, and seven planets'
 //! positions and orientations, plus the star-map orientation, for a given
 //! simulation time, from satkit's JPL Development Ephemerides (DE440) and
 //! Earth-orientation transforms.
 //!
 //! Geocentric frame: every body's position is computed in the Earth-fixed
-//! (ECEF) frame. Positions come from the ephemeris (GCRF, inertial); Earth's
+//! (ECEF) frame. Positions come from the ephemeris (GCRF, inertial); Terra's
 //! orientation (the GCRF<->ITRF rotation) maps them into the Earth-fixed
 //! frame and rotates the star backdrop. We use the full
 //! IERS-2010 transforms (sub-arcsec, matching the satellite path), which read
@@ -14,7 +14,7 @@
 //! Frame note: satkit uses standard ECEF/GCRF (Z = pole); this project's
 //! world frame is permuted (Y = north, Z = prime meridian, X = 90 deg E). The
 //! permutation `p` maps (x,y,z) -> (y,z,x) - the same permutation the
-//! satellite path expresses via `earth::surface_position`/`geodetic_normal`.
+//! satellite path expresses via `terra::surface_position`/`geodetic_normal`.
 //!
 //! Star-map frame note: the embedded star texture
 //! (`8k_stars_milky_way.jpg`) is drawn in *galactic* coordinates - the Milky
@@ -138,17 +138,17 @@ pub fn init_satkit() {
     init_iers_table_from_bytes(IersTableId::Tab5D, TAB5D).expect("init IERS Tab5D from bytes");
 }
 
-/// Sun direction and star-map orientation for one instant, in the renderer's
+/// Sol direction and star-map orientation for one instant, in the renderer's
 /// world frame.
 pub struct CelestialSphere {
-    /// Unit vector toward the Sun in the Earth-fixed (ECEF) world frame.
-    pub sun_dir: Vec3,
-    /// Sun position in the Earth-fixed (ECEF) world frame, km (true
+    /// Unit vector toward Sol in the Earth-fixed (ECEF) world frame.
+    pub sol_dir: Vec3,
+    /// Sol position in the Earth-fixed (ECEF) world frame, km (true
     /// geocentric). Used to light the planets, which sit far enough from
-    /// Earth that the Sun direction *at the planet*
-    /// (`normalize(sun_pos_world - planet_center)`) differs from Earth's
-    /// `sun_dir`; the Earth/Moon keep using `sun_dir`.
-    pub sun_pos_world: Vec3,
+    /// Terra that the Sol direction *at the planet*
+    /// (`normalize(sol_pos_world - planet_center)`) differs from Terra's
+    /// `sol_dir`; the Terra/Luna keep using `sol_dir`.
+    pub sol_pos_world: Vec3,
     /// Rotation taking world (ECEF) view directions into the *equatorial*
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
     /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
@@ -161,15 +161,15 @@ pub struct CelestialSphere {
     /// re-orientation does not move existing scenarios' camera framing.
     pub star_tex_rot_inv: Mat3,
     /// Every renderable body's world-frame placement this frame, as a flat list
-    /// (identity + center + orientation): the **Earth** (at the origin,
+    /// (identity + center + orientation): the **Terra** (at the origin,
     /// identity orientation - the world frame *is* Earth-fixed), the
-    /// **Moon** (true scale/distance ~384,400 km out, IAU lunar
+    /// **Luna** (true scale/distance ~384,400 km out, IAU lunar
     /// orientation), then the **seven planets** in `planet::ALL` order
-    /// (true geocentric DE440 positions + IAU orientation). The Moon's
+    /// (true geocentric DE440 positions + IAU orientation). Luna's
     /// placement also drives the analytic eclipse shadows; its radius comes
-    /// from the identity (`moon::MEAN_RADIUS_KM`), not stored here. A
-    /// scenario takes the subset it draws - the Earth system
-    /// (Earth + Moon), or all of them.
+    /// from the identity (`luna::MEAN_RADIUS_KM`), not stored here. A
+    /// scenario takes the subset it draws - the Terra system
+    /// (Terra + Luna), or all of them.
     pub bodies: Vec<BodyState>,
 }
 
@@ -179,14 +179,14 @@ impl CelestialSphere {
         self.bodies.iter().find(|state| state.body == body)
     }
 
-    /// The Moon's placement this frame (always present). Convenience for the
+    /// Luna's placement this frame (always present). Convenience for the
     /// eclipse scenarios and the rotation test.
-    pub fn moon(&self) -> &BodyState {
-        self.body(CelestialBody::MOON)
-            .expect("Moon present in the celestial sphere")
+    pub fn luna(&self) -> &BodyState {
+        self.body(CelestialBody::LUNA)
+            .expect("Luna present in the celestial sphere")
     }
 
-    /// The world-frame center (km) of one body this frame; `ZERO` for the Earth
+    /// The world-frame center (km) of one body this frame; `ZERO` for Terra
     /// (the origin). Used by the body selectors to fill a [`CameraTarget`].
     pub fn center_world(&self, body: CelestialBody) -> Vec3 {
         self.body(body)
@@ -194,13 +194,13 @@ impl CelestialSphere {
             .unwrap_or(Vec3::ZERO)
     }
 
-    /// Just the Earth-system bodies (the Earth + the Moon) - what the
-    /// Earth/Moon scenarios draw, so the planet pipeline stays off (no `Planet`
+    /// Just the Terra-system bodies (Terra + Luna) - what the
+    /// Terra/Luna scenarios draw, so the planet pipeline stays off (no `Planet`
     /// entry reaches the renderer).
-    pub fn earth_system_bodies(&self) -> Vec<BodyState> {
+    pub fn terra_system_bodies(&self) -> Vec<BodyState> {
         self.bodies
             .iter()
-            .filter(|state| matches!(state.body, CelestialBody::EarthSystem(_)))
+            .filter(|state| matches!(state.body, CelestialBody::TerraSystem(_)))
             .copied()
             .collect()
     }
@@ -217,21 +217,21 @@ impl CelestialSphere {
             Vec3::new(0.0, 1.0, 0.0),
         );
 
-        // Sun position relative to Earth in GCRF (inertial), meters; rotate to
+        // Sol position relative to Terra in GCRF (inertial), meters; rotate to
         // ITRF (Earth-fixed) and permute into the world frame.
-        let sun_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sun ephemeris lookup");
-        let sun_itrf = qgcrf2itrf(time) * sun_gcrf;
-        // Keep `sun_dir` as the exact pre-planet expression (so Earth/Moon
-        // renders stay bit-identical); `sun_pos_world` is the same vector scaled
+        let sol_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sol ephemeris lookup");
+        let sol_itrf = qgcrf2itrf(time) * sol_gcrf;
+        // Keep `sol_dir` as the exact pre-planet expression (so Terra/Luna
+        // renders stay bit-identical); `sol_pos_world` is the same vector scaled
         // to km, computed separately for the planets' lighting. Normalizing the
         // unscaled vs /1000 vector would differ by ~1 ULP - hence not folded.
-        let sun_dir = (p * nvec(sun_itrf)).normalize();
-        let sun_pos_world = p * (nvec(sun_itrf) / 1000.0);
+        let sol_dir = (p * nvec(sol_itrf)).normalize();
+        let sol_pos_world = p * (nvec(sol_itrf) / 1000.0);
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
         // back to Y-up, so the equirectangular lookup's pole tracks the
         // celestial pole. As time advances this rotates the star map at the
-        // sidereal rate, consistent with the Sun's motion above.
+        // sidereal rate, consistent with Sol's motion above.
         let q = qitrf2gcrf(time);
         let r_itrf2gcrf = Mat3::from_cols(
             nvec(q * unit(1.0, 0.0, 0.0)),
@@ -248,16 +248,16 @@ impl CelestialSphere {
         let galactic_offset = p * R_EQU2GAL * p.transpose();
         let star_tex_rot_inv = galactic_offset * star_rot_inv;
 
-        // Moon: position from the same DE440 ephemeris as the Sun (GCRF,
+        // Luna: position from the same DE440 ephemeris as Sol (GCRF,
         // inertial, meters), rotated into the Earth-fixed world frame. Rendered
         // at true scale, so it sits ~384,400 km out and shows its real angular
         // size.
         let q_gcrf2itrf = qgcrf2itrf(time);
-        let moon_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("moon ephemeris lookup");
-        let moon_pos_world = p * (nvec(q_gcrf2itrf * moon_gcrf) / 1000.0);
+        let luna_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("luna ephemeris lookup");
+        let luna_pos_world = p * (nvec(q_gcrf2itrf * luna_gcrf) / 1000.0);
 
         // The lunar mesh is built in the project body convention (+Y north,
-        // +Z sub-Earth); compose its body->world rotation as
+        // +Z sub-Terra); compose its body->world rotation as
         // P * R_gcrf2itrf * M_body2gcrf * P^T, where M_body2gcrf (standard
         // Z=pole convention) is the IAU lunar rotation and the P^T un-permutes
         // the mesh's project-convention axes into the standard ones M expects.
@@ -266,31 +266,31 @@ impl CelestialSphere {
             nvec(q_gcrf2itrf * unit(0.0, 1.0, 0.0)),
             nvec(q_gcrf2itrf * unit(0.0, 0.0, 1.0)),
         );
-        let moon_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
+        let luna_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
 
-        // The render list, in a fixed order: the Earth (at the origin, identity
-        // orientation - the world frame is Earth-fixed), then the Moon, then the
-        // seven planets. The Moon and planet placements reuse the exact
+        // The render list, in a fixed order: Terra (at the origin, identity
+        // orientation - the world frame is Earth-fixed), then Luna, then the
+        // seven planets. Luna and planet placements reuse the exact
         // expressions above/below; only the container differs from the
         // pre-refactor fields, so the rendered output is unchanged.
         let mut bodies = Vec::with_capacity(2 + planet::ALL.len());
         bodies.push(BodyState {
-            body: CelestialBody::EARTH,
+            body: CelestialBody::TERRA,
             placement: Placement {
                 pos_world: Vec3::ZERO,
                 rot: Mat3::IDENTITY,
             },
         });
         bodies.push(BodyState {
-            body: CelestialBody::MOON,
+            body: CelestialBody::LUNA,
             placement: Placement {
-                pos_world: moon_pos_world,
-                rot: moon_rot,
+                pos_world: luna_pos_world,
+                rot: luna_rot,
             },
         });
 
         // The planets: true geocentric position from the same DE440 ephemeris,
-        // and a body->world rotation built like the Moon's but from the IAU
+        // and a body->world rotation built like Luna's but from the IAU
         // planet rotation (axial tilt + spin, no libration series). Same `P^T`
         // un-permute of the mesh's project-convention axes into the standard
         // (Z=pole) frame the IAU elements are defined in.
@@ -306,8 +306,8 @@ impl CelestialSphere {
         }
 
         Self {
-            sun_dir,
-            sun_pos_world,
+            sol_dir,
+            sol_pos_world,
             star_rot_inv,
             star_tex_rot_inv,
             bodies,
@@ -317,8 +317,8 @@ impl CelestialSphere {
 
 /// The satkit ephemeris body for one of our planets. Kept here (not in
 /// `planet`) so that module stays free of any satkit dependency, exactly like
-/// `earth`/`moon`. Called only on the planet variants (from the `planet::ALL`
-/// loop); the Earth/Moon are positioned separately.
+/// `terra`/`luna`. Called only on the planet variants (from the `planet::ALL`
+/// loop); the Terra/Luna are positioned separately.
 fn planet_body(planet: CelestialBody) -> SolarSystem {
     match planet {
         CelestialBody::Mercury => SolarSystem::Mercury,
@@ -328,13 +328,13 @@ fn planet_body(planet: CelestialBody) -> SolarSystem {
         CelestialBody::Saturn => SolarSystem::Saturn,
         CelestialBody::Uranus => SolarSystem::Uranus,
         CelestialBody::Neptune => SolarSystem::Neptune,
-        CelestialBody::EarthSystem(_) => {
+        CelestialBody::TerraSystem(_) => {
             unreachable!("planet_body called on a non-planet body")
         }
     }
 }
 
-/// Rotation from the Moon's body-fixed (mean-Earth/polar-axis, standard Z=pole)
+/// Rotation from Luna's body-fixed (mean-Terra/polar-axis, standard Z=pole)
 /// frame to GCRF, from the IAU lunar rotation model.
 ///
 /// Implements the lunar rotational elements of the IAU/IAG Working Group on
@@ -427,7 +427,7 @@ fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> Mat3 {
 /// angles (radians): the pole z at (alpha0, delta0); the ascending node Q of
 /// the body equator on the ICRF equator at RA = alpha0 + 90 deg; the prime
 /// meridian x = Q rotated east by W about z; y completes the right-handed triad
-/// (90 deg east). Shared by the Moon (libration folded into the angles) and the
+/// (90 deg east). Shared by Luna (libration folded into the angles) and the
 /// planets. Columns are the GCRF images of the body x/y/z axes.
 fn body_basis(alpha0: f64, delta0: f64, w: f64) -> Mat3 {
     let (sa, ca) = (alpha0.sin() as f32, alpha0.cos() as f32);
@@ -508,15 +508,15 @@ mod tests {
         assert!((ngp_tex - Vec3::Y).length() < 1e-5, "NGP {ngp_tex}");
     }
 
-    /// The IAU lunar rotation must keep the Moon's near side facing Earth: the
-    /// mean sub-Earth point (selenographic lat 0 / lon 0, which is +Z in the
-    /// project body convention) should point from the Moon back toward Earth,
-    /// i.e. opposite the Earth->Moon direction. The residual is the optical
+    /// The IAU lunar rotation must keep Luna's near side facing Terra: the
+    /// mean sub-Terra point (selenographic lat 0 / lon 0, which is +Z in the
+    /// project body convention) should point from Luna back toward Terra,
+    /// i.e. opposite the Terra->Luna direction. The residual is the optical
     /// libration (up to ~8 deg), so a 10 deg tolerance both confirms the near
-    /// side faces Earth and that libration is present (not a rigid lock).
+    /// side faces Terra and that libration is present (not a rigid lock).
     /// Validates the rotation model independent of any render.
     #[test]
-    fn moon_near_side_faces_earth() {
+    fn luna_near_side_faces_terra() {
         // The celestial sphere reads satkit globals (ephemeris + EOP + IERS),
         // so seed them once for this test.
         super::init_satkit();
@@ -524,20 +524,20 @@ mod tests {
         let time = Instant::from_datetime(2024, 6, 15, 0, 0, 0.0).expect("valid datetime");
         let sphere = CelestialSphere::at(&time);
 
-        // Outward normal at the sub-Earth point in world space.
-        let moon = sphere.moon().placement;
-        let sub_earth = moon.rot * Vec3::Z;
-        // Direction from the Moon back toward Earth (Earth is at the origin).
-        let toward_earth = (-moon.pos_world).normalize();
+        // Outward normal at the sub-Terra point in world space.
+        let luna = sphere.luna().placement;
+        let sub_terra = luna.rot * Vec3::Z;
+        // Direction from Luna back toward Terra (Terra is at the origin).
+        let toward_terra = (-luna.pos_world).normalize();
 
-        let angle = sub_earth
-            .dot(toward_earth)
+        let angle = sub_terra
+            .dot(toward_terra)
             .clamp(-1.0, 1.0)
             .acos()
             .to_degrees();
         assert!(
             angle < 10.0,
-            "sub-Earth point off the Earth direction by {angle:.2} deg (libration should be < ~8)"
+            "sub-Terra point off the Terra direction by {angle:.2} deg (libration should be < ~8)"
         );
     }
 }

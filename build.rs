@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// its own file name. Two kinds live here:
 ///
 /// satkit astronomical data:
-/// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sun/planet
+/// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sol/planet
 ///   positions, loaded via `jplephem::init_from_bytes`.
 /// - CelesTrak's `EOP-All.csv` Earth-orientation parameters (~2-3 MiB): polar
 ///   motion + UT1-UTC for accurate ITRF<->GCRF, loaded via
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 ///   `frametransform::init_iers_table_from_bytes`. Required by the full
 ///   (non-approx) GCRF<->ITRF transforms the celestial sphere uses.
 ///
-/// Earth/star textures (original JPEG/TIFF, embedded as-is):
+/// Terra/star textures (original JPEG/TIFF, embedded as-is):
 /// - The runtime decodes these with the `image` crate and uploads them as
 ///   uncompressed RGBA8 (no GPU texture compression, for maximum platform
 ///   compatibility), so there is no build-time transcode step. Whether each is
@@ -76,14 +76,14 @@ const EMBEDS: &[Embed] = &[
         url: "https://www.solarsystemscope.com/textures/download/8k_stars_milky_way.jpg",
         limit: 256 * 1024 * 1024,
     },
-    // Lunar albedo map (equirectangular, selenographic mean-Earth frame),
-    // decoded + uploaded exactly like the Earth day map (sRGB color).
+    // Lunar albedo map (equirectangular, selenographic mean-Terra frame),
+    // decoded + uploaded exactly like the Terra day map (sRGB color).
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_moon.jpg",
         limit: 256 * 1024 * 1024,
     },
     // Planet albedo maps (equirectangular, body-fixed prime-meridian frame),
-    // decoded + uploaded exactly like the Moon map (sRGB color). The inner and
+    // decoded + uploaded exactly like the Luna map (sRGB color). The inner and
     // gas-giant maps are 8K; the two ice-giant maps are only published at 2K.
     // Saturn's rings are not yet rendered, so only its surface map is fetched.
     Embed {
@@ -266,7 +266,7 @@ fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> V
 mod atmosphere {
     //! Precomputed atmosphere lookup tables, after Hillaire 2020 ("A
     //! Scalable and Production Ready Sky and Atmosphere Rendering
-    //! Technique") with Earth's standard medium: Rayleigh and Mie
+    //! Technique") with Terra's standard medium: Rayleigh and Mie
     //! scattering plus an ozone absorption layer.
     //!
     //! This code is build-time only - the app uploads the baked KTX2
@@ -276,13 +276,13 @@ mod atmosphere {
     //! Two kinds of LUT are baked on the CPU:
     //!
     //! - Transmittance: fraction of sunlight surviving from a point to the top
-    //!   of the atmosphere, parameterized by (altitude, sun zenith cosine).
+    //!   of the atmosphere, parameterized by (altitude, sol zenith cosine).
     //! - Inscatter: the Rayleigh and Mie single-scattering integrals along a
     //!   full view ray. Because the scene is a perfect sphere seen from
     //!   outside, a ray is fully described by its impact parameter (closest
-    //!   approach to the planet center) plus the sun angle at a reference
+    //!   approach to the planet center) plus the sol angle at a reference
     //!   point, so the per-pixel raymarch collapses into a 2D table. The only
-    //!   approximation is the sun's tilt *along* the ray, which is assumed
+    //!   approximation is the sol's tilt *along* the ray, which is assumed
     //!   perpendicular.
     //!
     //! The constants here must stay in sync with their WGSL twins in
@@ -297,7 +297,7 @@ mod atmosphere {
     pub const TRANSMITTANCE_WIDTH: u32 = 256;
     pub const TRANSMITTANCE_HEIGHT: u32 = 64;
 
-    /// Inscatter LUT axes: x is the sun cosine at the reference point,
+    /// Inscatter LUT axes: x is the sol cosine at the reference point,
     /// y is the impact parameter (split mapping: lower half ground-hitting
     /// rays, upper half limb rays).
     pub const INSCATTER_WIDTH: u32 = 256;
@@ -406,8 +406,8 @@ mod atmosphere {
         table
     }
 
-    /// Samples the baked transmittance table toward the sun, mirroring the
-    /// WGSL `sun_transmittance` (horizon shadow plus the Bruneton mapping).
+    /// Samples the baked transmittance table toward the sol, mirroring the
+    /// WGSL `sol_transmittance` (horizon shadow plus the Bruneton mapping).
     fn sample_transmittance(table: &[[f32; 3]], r: f32, mu: f32) -> [f32; 3] {
         let rp = PLANET_RADIUS_KM;
         let ra = ATMOSPHERE_TOP_KM;
@@ -446,8 +446,8 @@ mod atmosphere {
     /// which are constant per ray and applied at draw time).
     ///
     /// Canonical geometry: the ray runs along +x with closest approach `b`
-    /// at (0, b, 0). The sun is placed at the requested cosine against the
-    /// reference point's zenith, tilted out of the ray plane, so the sun
+    /// at (0, b, 0). The sol is placed at the requested cosine against the
+    /// reference point's zenith, tilted out of the ray plane, so the sol
     /// cosine elsewhere on the ray follows the sphere's geometry:
     /// `mu(t) = mu_ref * dot(p_hat, r_hat_ref)`.
     fn bake_inscatter(transmittance: &[[f32; 3]]) -> (Vec<f16>, Vec<f16>) {
@@ -496,8 +496,8 @@ mod atmosphere {
                     let r = (t * t + b * b).sqrt();
                     let h = (r - rp).max(0.0);
 
-                    let mu_sun = mu_ref * (t * ref_hat[0] + b * ref_hat[1]) / r;
-                    let t_sun = sample_transmittance(transmittance, r, mu_sun);
+                    let mu_sol = mu_ref * (t * ref_hat[0] + b * ref_hat[1]) / r;
+                    let t_sol = sample_transmittance(transmittance, r, mu_sol);
 
                     let (scatter_r, scatter_m) = scattering(h);
                     let sigma_t = extinction(h);
@@ -507,7 +507,7 @@ mod atmosphere {
                         // step (Hillaire 2020, eq. 11).
                         let step_trans = (-sigma_t[c] * dt).exp();
                         let integ =
-                            view_trans[c] * t_sun[c] * (1.0 - step_trans) / sigma_t[c].max(1e-6);
+                            view_trans[c] * t_sol[c] * (1.0 - step_trans) / sigma_t[c].max(1e-6);
 
                         sum_rayleigh[c] += scatter_r[c] * integ;
                         sum_mie[c] += scatter_m * integ;

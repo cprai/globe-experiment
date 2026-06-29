@@ -1,9 +1,9 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-use crate::earth;
-use crate::moon;
+use crate::luna;
 use crate::simulation::CelestialBody;
+use crate::terra;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -28,7 +28,7 @@ pub struct Mesh {
 /// surface-point and outward-normal functions of geodetic latitude/longitude
 /// (radians). This is the shared core of every body mesh; the per-body
 /// constants live in the position/normal closures (so a body's geometry stays
-/// in one place - `earth`/`moon`).
+/// in one place - `terra`/`luna`).
 ///
 /// `u` maps longitude (-180 deg at u=0 to +180 deg at u=1) and `v` maps
 /// latitude from the north pole (v=0) to the south pole (v=1), matching an
@@ -83,27 +83,27 @@ pub fn wgs84_ellipsoid(stacks: u32, slices: u32) -> Mesh {
     ellipsoid(
         stacks,
         slices,
-        earth::surface_position,
-        earth::geodetic_normal,
+        terra::surface_position,
+        terra::geodetic_normal,
     )
 }
 
-/// Generates the triaxial lunar ellipsoid, in kilometers, in the Moon's
+/// Generates the triaxial lunar ellipsoid, in kilometers, in Luna's
 /// body-fixed (selenographic) frame. The renderer orients it into world space
 /// with the ephemeris-driven lunar rotation; here it is built in the same
-/// +Y-north / +Z-sub-Earth convention as the Earth mesh.
-pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
+/// +Y-north / +Z-sub-Terra convention as the Terra mesh.
+pub fn luna_ellipsoid(stacks: u32, slices: u32) -> Mesh {
     ellipsoid(
         stacks,
         slices,
-        moon::surface_position,
-        moon::geodetic_normal,
+        luna::surface_position,
+        luna::geodetic_normal,
     )
 }
 
 /// Generates an oblate planet ellipsoid, in kilometers, in the planet's
 /// body-fixed frame (the same +Y-north / +Z-prime-meridian convention as the
-/// Earth mesh). The renderer orients it into world space with the
+/// Terra mesh). The renderer orients it into world space with the
 /// ephemeris-driven IAU rotation; the per-planet radii live in the
 /// `position`/`normal` closures (`crate::planet`), so the geometry stays in one
 /// place.

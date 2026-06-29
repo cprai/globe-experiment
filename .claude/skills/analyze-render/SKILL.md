@@ -26,11 +26,11 @@ cargo run --release -- render --output /tmp/render.png --width 1280 --height 720
 ```
 The whole scene is one `--scene` JSON: a `simulation` section (`datetime`) and a
 `camera` section, both **required** (there is no default camera; unknown keys are
-rejected). `camera.distance` is in kilometers (Earth mean radius is ~6371 km;
-~12742 km gives a whole-Earth view). An optional `camera.target` (`"earth"`,
-default, or `"moon"`) picks the orbit body; with `"moon"` the lon/lat/distance/
-tilt are relative to the Moon's surface (mean radius ~1737 km, so frame it with a
-much smaller `distance`, e.g. ~2500-3500 km), and the printed `moon-aim` lon/lat
+rejected). `camera.distance` is in kilometers (Terra mean radius is ~6371 km;
+~12742 km gives a whole-Terra view). An optional `camera.target` (`"terra"`,
+default, or `"luna"`) picks the orbit body; with `"luna"` the lon/lat/distance/
+tilt are relative to Luna's surface (mean radius ~1737 km, so frame it with a
+much smaller `distance`, e.g. ~2500-3500 km), and the printed `luna-aim` lon/lat
 points the camera at the lit near side. The output target (`--output`/`--width`/
 `--height`) stays as CLI flags. An optional `ui` section overlays mock UI panels
 (see the `build-and-run`/`src/ui/` docs) - not usually needed for look
@@ -53,7 +53,7 @@ terminator should fall in the frame.
 Render mode does **not** validate the datetime against the bundled
 Earth-orientation (EOP) data (unlike scenarios). Out-of-range times silently
 degrade and will mislead a visual analysis:
-- before ~1962-01-01: satkit falls back to zero EOP (the Sun/stars drift);
+- before ~1962-01-01: satkit falls back to zero EOP (the Sol/stars drift);
 - after the last bundled EOP entry (~build date): satkit constant-extrapolates.
 
 Choose an in-range **past** datetime (1962-01-01 .. build date) for an accurate

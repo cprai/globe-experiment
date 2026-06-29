@@ -44,14 +44,14 @@ Bruneton (r, mu) parameterization — resolution concentrates near the horizon:
   `d = -r*mu + sqrt(r^2*(mu^2-1) + Ra^2)`, `d_min = Ra - r`,
   `d_max = rho + H_top`
 - Returns 0 when mu is below the geometric horizon cosine (planet shadow).
-- `fs_main` uses `T(Rp + 0.1, cos_sun)` as the color of sunlight at ground.
+- `fs_main` uses `T(Rp + 0.1, cos_sol)` as the color of sunlight at ground.
 
 ### Inscatter LUTs (2 x 256x128)
 
 Split row mapping (implemented identically in bake and fs_atmosphere):
 - Lower half (ground-hitting rays, b < Rp): `v = 0.5 * clamp(b/Rp)`
 - Upper half (limb rays): `v = 0.5 + 0.5 * clamp((b-Rp)/(Ra-Rp))`
-- x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = sun cosine at reference
+- x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = sol cosine at reference
   point (ground hit for ground rays, closest approach for limb rays).
 - Phase functions factor out: `L = Phi_R * Sigma_R + Phi_M * Sigma_M`;
   LUT stores Sigma without phase.
@@ -62,6 +62,6 @@ Split row mapping (implemented identically in bake and fs_atmosphere):
   Bruneton mapping must be made in **both** `build.rs mod atmosphere` and
   `scene.wgsl`.
 - f16 max is 65504, min normal ~6e-5. Keep large scale factors (e.g.
-  `SUN_INTENSITY`) **in the shader, not the bake**.
+  `SOL_INTENSITY`) **in the shader, not the bake**.
 - After any atmosphere change, re-run and verify **both** bake and shader
   produce bit-identical output for neutral changes.

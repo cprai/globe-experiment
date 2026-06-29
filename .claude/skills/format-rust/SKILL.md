@@ -32,7 +32,7 @@ cargo +nightly fmt -- --check
 ## Watch reflow on math (important)
 `wrap_comments` re-wraps purely on width and is blind to meaning, so it can
 insert a line break in the **middle of a mathematical formula** (e.g.
-splitting `cos_sun = dot(n_geo, sun)`). After every reflow, scan the diff
+splitting `cos_sol = dot(n_geo, sol)`). After every reflow, scan the diff
 for any line break that lands inside a formula/equation and fix it —
 reword the surrounding comment so the formula stays on one line. Treat a
 formula split across a wrap as a bug to fix, not accept.

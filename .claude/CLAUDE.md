@@ -16,22 +16,22 @@ currently uncommitted changes — as an example only. Do NOT make any commits.**
 ## What this is
 
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
-Earth in world-space km, Hillaire-2020 atmosphere, star/sun/**moon** from JPL
+Terra in world-space km, Hillaire-2020 atmosphere, star/sol/**luna** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
-(star-fixed) camera that orbits a selectable **target** (Earth, the Moon, or
+(star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector
-panel (one key per body); the Moon in the eclipse scenarios via an EARTH/MOON
+panel (one key per body); Luna in the eclipse scenarios via a TERRA/LUNA
 panel; headless
-`render` picks the body with `camera.target` "earth"/"moon"/"mars"/... ),
-simulation clock (1x-100x, plays from launch). The Moon is
+`render` picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
+simulation clock (1x-100x, plays from launch). Luna is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
-rotation (correct near side + libration), lit by the Sun, with **mutual
-Earth/Moon eclipse shadows** (solar-eclipse spot on Earth, lunar-eclipse "blood
-moon"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
+rotation (correct near side + libration), lit by Sol, with **mutual
+Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
+Luna"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
 sun-lit with simple Lambert. Each is drawn **as a mesh only when it is large
 enough on screen** (apparent angular diameter `>=` a threshold, classified per
-frame in `prepare`); a planet smaller than that — every planet from Earth, and
+frame in `prepare`); a planet smaller than that — every planet from Terra, and
 the non-orbited planets generally — is drawn as a **billboard impostor**: a
 camera-facing quad whose fragment shader ray-traces the same oblate ellipsoid
 (orthographic / parallel-ray, f32-safe at distance), still textured + Lambert-lit,
@@ -40,11 +40,11 @@ skipped. Because they sit millions-to-billions of km out
 (past f32 precision), **all rendering is done in a camera-target-local "render
 frame"**: every position is uploaded relative to the camera target's center, so
 the orbited body sits at a bit-exact zero and far planets do not jitter. There
-is no Earth-fixed origin or `sun_dir` in the render path — every body is lit from
-the Sun *position*. The Earth surface/atmosphere/Moon/markers draw only when
-orbiting Earth/Moon; orbiting a planet, only the planets + backdrop draw. For
-Earth/Moon (render origin at the Earth) geometry stays bit-identical. A
-**reversed-Z depth buffer** (Depth32Float) makes Earth occlude the Moon. **Past scenarios only** (before build date) — what makes full EOP accuracy
+is no Earth-fixed origin or `sol_dir` in the render path — every body is lit from
+Sol *position*. The Terra surface/atmosphere/Luna/markers draw only when
+orbiting Terra/Luna; orbiting a planet, only the planets + backdrop draw. For
+Terra/Luna (render origin at Terra) geometry stays bit-identical. A
+**reversed-Z depth buffer** (Depth32Float) makes Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
@@ -76,7 +76,7 @@ cargo run --release -- render --output mock.png --scene \
 ```
 
 First build: slow (~1.5 min extra), needs network. `build.rs` downloads 13
-textures (JPEG verbatim: Earth x4, stars, Moon, + 7 planets — five 8K, two 2K),
+textures (JPEG verbatim: Terra x4, stars, Luna, + 7 planets — five 8K, two 2K),
 the JPL ephemeris (~98 MB), and `EOP-All.csv` into `OUT_DIR`; bakes 3 atmosphere
 LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
 `OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the seven native-res

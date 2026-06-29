@@ -1,18 +1,18 @@
 //! Physical constants and geometry for the seven classical planets, in
-//! real-world units - the multi-body sibling of [`crate::earth`] and
-//! [`crate::moon`].
+//! real-world units - the multi-body sibling of [`crate::terra`] and
+//! [`crate::luna`].
 //!
 //! The planets are no longer a separate enum: they are variants of
 //! [`CelestialBody`] (`Mercury`..`Neptune`). This module hangs their
 //! planet-specific data and geometry off those variants - the oblate radii, the
 //! IAU rotation constants, the texture file, and the body-fixed surface
-//! points/normals - in the same parameterization convention as the Earth/Moon
+//! points/normals - in the same parameterization convention as the Terra/Luna
 //! (**+Y is north** / the rotation pole, prime meridian -> **+Z**, +X is 90 deg
 //! east). The orientation of each body frame in the world is supplied
 //! separately by the ephemeris-driven IAU rotation (see `celestial_sphere`);
 //! here we only define the geometry + the IAU constants it consumes. It
 //! deliberately depends on neither satkit nor wgpu, exactly like
-//! `earth`/`moon`.
+//! `terra`/`luna`.
 //!
 //! Each planet is modeled as an **oblate ellipsoid of revolution** (equatorial
 //! radius along +X/+Z, polar radius along +Y). For the gas giants the
@@ -23,7 +23,7 @@ use glam::Vec3;
 
 use crate::simulation::body::CelestialBody;
 
-/// Every planet, in increasing distance from the Sun - the load/render order.
+/// Every planet, in increasing distance from Sol - the load/render order.
 /// Indexed by the renderer's per-planet GPU resource arrays and used to filter
 /// the planet entries out of the celestial-body render list. The array order is
 /// also the order the renderer loads the planet textures and builds the
@@ -73,7 +73,7 @@ struct Data {
 impl CelestialBody {
     /// The planet's constants. `const fn` so the table is evaluated at compile
     /// time and the accessors below stay zero-cost. Panics on a non-planet body
-    /// (the Earth/Moon have their own geometry modules); the accessors are only
+    /// (the Terra/Luna have their own geometry modules); the accessors are only
     /// ever reached for planet variants.
     const fn planet_data(self) -> Data {
         match self {
@@ -175,9 +175,9 @@ impl CelestialBody {
                     w_rate_per_day: 541.1397757,
                 },
             },
-            // The Earth/Moon are not planets - they have their own geometry
+            // The Terra/Luna are not planets - they have their own geometry
             // modules and never reach the planet accessors.
-            CelestialBody::EarthSystem(_) => {
+            CelestialBody::TerraSystem(_) => {
                 panic!("planet data requested for a non-planet body")
             }
         }
@@ -212,7 +212,7 @@ impl CelestialBody {
 /// Point on the oblate planet ellipsoid at the given planetographic
 /// latitude/longitude (radians), in the body frame (km). Parametric form (the
 /// sphere direction with each axis scaled by its semi-axis), matching the
-/// equirectangular texture exactly as `earth`/`moon` do. `body` must be a
+/// equirectangular texture exactly as `terra`/`luna` do. `body` must be a
 /// planet variant.
 pub fn surface_position(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
     let d = body.planet_data();

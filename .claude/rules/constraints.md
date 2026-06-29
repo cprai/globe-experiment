@@ -8,7 +8,7 @@
   past 8192 without raising the limit (narrows the platform matrix) or first
   downsizing the existing textures.
 - **`max_sampled_textures_per_shader_stage = 16`** (default limit). Group 0
-  holds **9** sampled textures (Earth x4, 3 LUTs, stars, Moon). The seven planet
+  holds **9** sampled textures (Terra x4, 3 LUTs, stars, Luna). The seven planet
   textures deliberately live in a **separate group-1 bind group** (one bound per
   planet draw), used only by the planet pipeline, so group 0 never grows toward
   16 and there is headroom (e.g. for Saturn's rings). Do not move planet

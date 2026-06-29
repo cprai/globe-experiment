@@ -1,15 +1,15 @@
 //! Solar-system scenario: a free tour of the whole solar system with no tracked
 //! objects - the celestial sphere wound to a fixed past date, and a body
-//! selector (PREV / NEXT) that flies the camera to and orbits any of Earth, the
-//! Moon, or the seven planets (CLI: `globe-experiment scenario solar_system`).
+//! selector (PREV / NEXT) that flies the camera to and orbits any of Terra, the
+//! Luna, or the seven planets (CLI: `globe-experiment scenario solar_system`).
 //! Like the eclipse scenarios it carries no `Satellite` list and draws no
 //! markers; unlike them it draws all seven planets, each at its true
 //! geocentric position and scale.
 //!
-//! Because the outer planets sit billions of km from Earth - far past f32
+//! Because the outer planets sit billions of km from Terra - far past f32
 //! precision in world-km - a planet target renders with a floating origin (the
 //! scene is drawn relative to the orbited planet's center; see
-//! `RenderState::render_origin`). Earth/Moon targets keep the origin at Earth.
+//! `RenderState::render_origin`). Terra/Luna targets keep the origin at Terra.
 
 use glam::{Mat3, Mat4, Vec3};
 use satkit::Instant;
@@ -65,9 +65,9 @@ impl Simulation for SolarSystemSimulation {
             view_proj,
             camera_pos: eye,
             render_origin: target.render_origin(),
-            sun_pos_world: celestial.sun_pos_world,
+            sol_pos_world: celestial.sol_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
-            // The whole list: the Earth system (Earth + Moon) and all seven
+            // The whole list: the Terra system (Terra + Luna) and all seven
             // planets, drawn at their true positions.
             celestial_bodies: celestial.bodies.clone(),
             markers: Vec::new(),
@@ -86,7 +86,7 @@ impl UIDrawable for SolarSystemSimulation {
 }
 
 /// Builds the solar-system scene and hands off to the winit event loop. Starts
-/// on the default whole-Earth view; PREV/NEXT then tour the system.
+/// on the default whole-Terra view; PREV/NEXT then tour the system.
 pub fn run() {
     simulation::init();
     application::run(ApplicationState::new(SolarSystemSimulation::new()));

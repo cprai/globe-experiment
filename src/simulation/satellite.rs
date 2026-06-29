@@ -10,8 +10,8 @@
 //!
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
 //! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
-//! world-space point via the project's WGS84 helpers (`earth`), so the marker
-//! lands on exactly the same ellipsoid the Earth mesh is built from.
+//! world-space point via the project's WGS84 helpers (`terra`), so the marker
+//! lands on exactly the same ellipsoid the Terra mesh is built from.
 //!
 //! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
 //! EOP table (real polar motion + UT1-UTC), which
@@ -27,7 +27,7 @@ use satkit::sgp4::sgp4;
 use satkit::tle::TLE;
 use satkit::{Instant, Vector3};
 
-use crate::earth;
+use crate::terra;
 
 /// A satellite tracked from its TLE. Holds only the (immutable-meaning) inputs:
 /// the element set and the object name. The position state is derived on demand
@@ -80,7 +80,7 @@ impl Satellite {
 /// Recomputed on demand rather than stored on [`Satellite`].
 pub struct SatelliteState {
     /// Position in the renderer's world frame: kilometers, planet center at
-    /// the origin, same axes as the Earth mesh.
+    /// the origin, same axes as the Terra mesh.
     pub position_km: Vec3,
     /// Sub-satellite geodetic latitude, degrees.
     pub latitude_deg: f32,
@@ -113,8 +113,8 @@ fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
     // Reconstruct the world point from our own WGS84 helpers so the marker
     // sits on the exact ellipsoid the mesh uses: the surface point at (lat,
     // lon), raised along the geodetic normal by the altitude.
-    let position_km = earth::surface_position(latitude, longitude)
-        + earth::geodetic_normal(latitude, longitude) * altitude_km;
+    let position_km = terra::surface_position(latitude, longitude)
+        + terra::geodetic_normal(latitude, longitude) * altitude_km;
 
     SatelliteState {
         position_km,

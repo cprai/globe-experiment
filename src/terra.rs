@@ -1,7 +1,7 @@
-//! Physical constants and geometry for planet Earth, in real-world units.
+//! Physical constants and geometry for planet Terra, in real-world units.
 //!
 //! This is the single source of truth for the WGS84 reference ellipsoid and
-//! Earth's gross physical parameters. World space throughout the renderer is
+//! Terra's gross physical parameters. World space throughout the renderer is
 //! **kilometers** with the planet center at the origin; lengths here are km
 //! and the parameterization matches the rest of the project's convention:
 //! **+Y is north**, longitude 0 deg / latitude 0 deg faces **+Z**, and +X is
@@ -25,17 +25,17 @@ pub const SEMI_MINOR_AXIS_KM: f64 = SEMI_MAJOR_AXIS_KM * (1.0 - FLATTENING);
 pub const ECCENTRICITY_SQ: f64 = FLATTENING * (2.0 - FLATTENING);
 
 /// IUGG mean radius R1 = (2a + b) / 3 ~ 6371.0088 km. Used to convert the
-/// camera/projection constants that were tuned in "Earth radii" into km, so
+/// camera/projection constants that were tuned in "Terra radii" into km, so
 /// the interaction feel is preserved exactly.
 pub const MEAN_RADIUS_KM: f32 = ((2.0 * SEMI_MAJOR_AXIS_KM + SEMI_MINOR_AXIS_KM) / 3.0) as f32;
 
 // --- Dynamics constants, for orbital simulation built on this geometry. ---
 // Not yet consumed by the renderer; provided so satellites/orbits can be
 // expressed in the same real-world km/second frame as everything else.
-/// Earth's standard gravitational parameter GM (WGS84/EGM), km^3 / s^2.
+/// Terra's standard gravitational parameter GM (WGS84/EGM), km^3 / s^2.
 #[allow(dead_code)]
 pub const GRAVITATIONAL_PARAMETER_KM3_S2: f64 = 398600.4418;
-/// Earth's sidereal rotation rate, rad / s.
+/// Terra's sidereal rotation rate, rad / s.
 #[allow(dead_code)]
 pub const ANGULAR_VELOCITY_RAD_S: f64 = 7.292_115_146_7e-5;
 

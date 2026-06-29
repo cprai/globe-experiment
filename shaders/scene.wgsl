@@ -3,8 +3,8 @@
 // before upload, and `view_proj` is built in the same frame, so the GPU only
 // ever handles small, target-local coordinates - the orbited body sits at the
 // numerical origin and far planets do not lose f32 precision. There is no
-// Earth-fixed origin or `sun_dir`; every lit pass derives its Sun direction
-// from `sun_pos` (the Sun relative to the camera target).
+// Earth-fixed origin or `sol_dir`; every lit pass derives its Sol direction
+// from `sol_pos` (Sol relative to the camera target).
 struct Uniforms {
     view_proj: mat4x4<f32>,
     // Camera eye in the render frame (km).
@@ -19,24 +19,24 @@ struct Uniforms {
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
     // Per-marker world position + visibility are per-instance (see vs_marker).
     marker: vec4<f32>,
-    // Rotation from the Moon's body-fixed (selenographic) frame to world space:
+    // Rotation from Luna's body-fixed (selenographic) frame to world space:
     // the ephemeris + IAU lunar orientation. Applied to the lunar mesh's
     // positions and normals (a pure rotation, so normals need no transpose).
-    moon_rot: mat3x3<f32>,
-    // Moon center in the render frame (km).
-    moon_pos: vec3<f32>,
-    // Eclipse-geometry params: x = Moon mean radius (km); y = Earth mean radius
-    // (km); z = the Sun's angular radius (rad), which sets the penumbra
+    luna_rot: mat3x3<f32>,
+    // Luna center in the render frame (km).
+    luna_pos: vec3<f32>,
+    // Eclipse-geometry params: x = Luna mean radius (km); y = Terra mean radius
+    // (km); z = Sol's angular radius (rad), which sets the penumbra
     // softness; w = unused.
-    moon_params: vec4<f32>,
-    // Sun position in the render frame (km). Lights every body
-    // (`normalize(sun_pos - surface)`) and aims the backdrop sun disc.
-    sun_pos: vec3<f32>,
+    luna_params: vec4<f32>,
+    // Sol position in the render frame (km). Lights every body
+    // (`normalize(sol_pos - surface)`) and aims the backdrop sol disc.
+    sol_pos: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var day_texture: texture_2d<f32>;
-@group(0) @binding(2) var earth_sampler: sampler;
+@group(0) @binding(2) var terra_sampler: sampler;
 @group(0) @binding(3) var night_texture: texture_2d<f32>;
 @group(0) @binding(4) var normal_texture: texture_2d<f32>;
 @group(0) @binding(5) var specular_texture: texture_2d<f32>;
@@ -45,7 +45,7 @@ struct Uniforms {
 @group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
 @group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
 @group(0) @binding(10) var stars_texture: texture_2d<f32>;
-@group(0) @binding(11) var moon_texture: texture_2d<f32>;
+@group(0) @binding(11) var luna_texture: texture_2d<f32>;
 
 // World space is kilometers, planet center at the origin. `position` is the
 // WGS84 ellipsoid surface point; `normal` is the outward geodetic unit
@@ -67,9 +67,9 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    // The Earth mesh is built at the world origin, which IS the render origin
-    // whenever the Earth surface draws (it only draws when orbiting the
-    // Earth/Moon), so its vertices are already in the render frame.
+    // The Terra mesh is built at the world origin, which IS the render origin
+    // whenever the Terra surface draws (it only draws when orbiting the
+    // Terra/Luna), so its vertices are already in the render frame.
     out.position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
     out.uv = in.uv;
     // The ellipsoid normal is supplied per vertex (it is no longer just the
@@ -85,7 +85,7 @@ const DAY_AMBIENT: f32 = 0.04;
 // (deliberately past photorealism).
 const NORMAL_STRENGTH: f32 = 4.5;
 // Roughness for rough land and smooth ocean; the specular map blends
-// between them. The ocean value sets how wide the GGX sun glint spreads:
+// between them. The ocean value sets how wide the GGX sol glint spreads:
 // 0.25 reads glassy-sharp, 0.45 approximates a wave-roughened sea.
 const LAND_ROUGHNESS: f32 = 0.9;
 const OCEAN_ROUGHNESS: f32 = 0.45;
@@ -109,15 +109,15 @@ const EMISSIVE_SOFTNESS: f32 = 0.1;
 // Bright yellow glow; STRENGTH > 1 drives the core toward clip (LDR).
 const EMISSIVE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.85, 0.3);
 const EMISSIVE_STRENGTH: f32 = 1.5;
-// Dither-dissolve: begins at this sun cosine (deeper night = more
+// Dither-dissolve: begins at this sol cosine (deeper night = more
 // negative) and completes at EMISSIVE_FADE_END.
 const EMISSIVE_FADE_START: f32 = -0.15;
-// Sun cosine at which the dissolve completes. Positive values let the
-// lights bleed past the terminator (cos_sun = 0) onto the daylit side, so
+// Sol cosine at which the dissolve completes. Positive values let the
+// lights bleed past the terminator (cos_sol = 0) onto the daylit side, so
 // some daylit areas stay lit; 0 fully extinguishes them at the terminator.
 const EMISSIVE_FADE_END: f32 = 0.15;
 // Noise grain (cells across the unit normal sphere). Fixed - no terminator
-// ramp, for a temporally coherent dissolve under sun motion.
+// ramp, for a temporally coherent dissolve under sol motion.
 const DITHER_SCALE: f32 = 400.0;
 // Day-map multiplier for the unlit hemisphere: < 1 darkens (0 = black
 // night), > 1 brightens. Intentionally 1.2 - the night side reads a
@@ -198,11 +198,11 @@ const PLANET_RADIUS_KM: f32 = 6360.0;
 const ATMOSPHERE_TOP_KM: f32 = 6460.0;
 const MIE_G: f32 = 0.8;
 
-const SUN_INTENSITY: f32 = 12.0;
+const SOL_INTENSITY: f32 = 12.0;
 
-// Transmittance from a point at radius `r` km toward the sun at zenith
+// Transmittance from a point at radius `r` km toward the sol at zenith
 // cosine `mu`, via the precomputed LUT (Bruneton parameterization).
-fn sun_transmittance(r: f32, mu: f32) -> vec3<f32> {
+fn sol_transmittance(r: f32, mu: f32) -> vec3<f32> {
     // The planet shadows everything below the local horizon.
     let sin_horizon = PLANET_RADIUS_KM / r;
     let cos_horizon = -sqrt(max(1.0 - sin_horizon * sin_horizon, 0.0));
@@ -246,7 +246,7 @@ fn ray_sphere(origin: vec3<f32>, dir: vec3<f32>, radius: f32) -> vec2<f32> {
 
 // Fraction of disk 1 (radius r1) covered by disk 2 (radius r2) when their
 // centers are `sep` apart - the standard two-circle lens-area overlap, divided
-// by disk 1's area. Used for the eclipse soft shadow: disk 1 is the Sun, disk 2
+// by disk 1's area. Used for the eclipse soft shadow: disk 1 is Sol, disk 2
 // the occluding body, all as angular radii. Returns 0 (no overlap) to 1 (disk 1
 // fully covered).
 fn disk_overlap_fraction(sep: f32, r1: f32, r2: f32) -> f32 {
@@ -270,32 +270,32 @@ fn disk_overlap_fraction(sep: f32, r1: f32, r2: f32) -> f32 {
 
 // Fraction of sunlight reaching a surface point `p` (world km) that is NOT
 // blocked by a spherical occluder of radius `occ_radius` centered at `occ`
-// (world km), with the Sun toward unit `sun`. This is the analytic eclipse
-// shadow shared by both directions: the Moon shadowing the Earth (solar
-// eclipse) and the Earth shadowing the Moon (lunar eclipse). 1 = fully lit, 0 =
-// total (umbral) shadow; the penumbra is soft because the Sun has a finite
-// angular radius (`uniforms.moon_params.z`). Both bodies are spheres at this
+// (world km), with Sol toward unit `sol`. This is the analytic eclipse
+// shadow shared by both directions: Luna shadowing Terra (solar
+// eclipse) and Terra shadowing Luna (lunar eclipse). 1 = fully lit, 0 =
+// total (umbral) shadow; the penumbra is soft because Sol has a finite
+// angular radius (`uniforms.luna_params.z`). Both bodies are spheres at this
 // scale - exact enough, since the penumbra dwarfs the triaxial/oblate detail.
-fn sun_visibility(p: vec3<f32>, sun: vec3<f32>, occ: vec3<f32>, occ_radius: f32) -> f32 {
+fn sol_visibility(p: vec3<f32>, sol: vec3<f32>, occ: vec3<f32>, occ_radius: f32) -> f32 {
     let oc = occ - p;
-    let t = dot(oc, sun);
-    // The occluder must lie toward the Sun to cast a shadow here.
+    let t = dot(oc, sol);
+    // The occluder must lie toward Sol to cast a shadow here.
     if t <= 0.0 {
         return 1.0;
     }
-    let perp = length(oc - sun * t);
+    let perp = length(oc - sol * t);
     let ang_sep = atan(perp / t);
     let ang_occ = atan(occ_radius / t);
-    let sun_ang = uniforms.moon_params.z;
-    return 1.0 - disk_overlap_fraction(ang_sep, sun_ang, ang_occ);
+    let sol_ang = uniforms.luna_params.z;
+    return 1.0 - disk_overlap_fraction(ang_sep, sol_ang, ang_occ);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let albedo = textureSample(day_texture, earth_sampler, in.uv).rgb;
-    let night = textureSample(night_texture, earth_sampler, in.uv).rgb;
-    let normal_sample = textureSample(normal_texture, earth_sampler, in.uv).xyz * 2.0 - 1.0;
-    let specular_mask = textureSample(specular_texture, earth_sampler, in.uv).r;
+    let albedo = textureSample(day_texture, terra_sampler, in.uv).rgb;
+    let night = textureSample(night_texture, terra_sampler, in.uv).rgb;
+    let normal_sample = textureSample(normal_texture, terra_sampler, in.uv).xyz * 2.0 - 1.0;
+    let specular_mask = textureSample(specular_texture, terra_sampler, in.uv).r;
 
     // Geometric (geodetic) surface normal. Unit length and with the same
     // lat/lon direction a sphere would have, so the analytic tangent frame
@@ -313,12 +313,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             + n_geo * normal_sample.z,
     );
 
-    // The Sun direction at this surface point (render-frame positions).
-    let sun = normalize(uniforms.sun_pos - in.world_pos);
+    // The Sol direction at this surface point (render-frame positions).
+    let sol = normalize(uniforms.sol_pos - in.world_pos);
     let v = normalize(uniforms.camera_pos - in.world_pos);
-    let h = normalize(v + sun);
+    let h = normalize(v + sol);
 
-    let n_dot_l = max(dot(n, sun), 0.0);
+    let n_dot_l = max(dot(n, sol), 0.0);
     let n_dot_v = max(dot(n, v), 1e-4);
     let n_dot_h = max(dot(n, h), 0.0);
     let v_dot_h = max(dot(v, h), 0.0);
@@ -350,29 +350,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sunlight reaching the surface is filtered by the atmosphere: near
     // the terminator the blue is scattered away on the long grazing path
     // and the remaining light turns orange.
-    let cos_sun = dot(n_geo, sun);
-    // The Moon can eclipse the Sun for this point (solar eclipse): darken the
+    let cos_sol = dot(n_geo, sol);
+    // Luna can eclipse Sol for this point (solar eclipse): darken the
     // incoming sunlight by the analytic shadow. Multiplying the transmittance
-    // dims both the diffuse and specular sun terms consistently; the small
+    // dims both the diffuse and specular sol terms consistently; the small
     // DAY_AMBIENT term is left untouched, so the umbra is dark but not black
     // (as a real eclipse shadow, lit by scattered skylight, is not).
-    let eclipse = sun_visibility(
+    let eclipse = sol_visibility(
         in.world_pos,
-        sun,
-        uniforms.moon_pos,
-        uniforms.moon_params.x,
+        sol,
+        uniforms.luna_pos,
+        uniforms.luna_params.x,
     );
-    let sun_light = sun_transmittance(PLANET_RADIUS_KM + 0.1, cos_sun) * eclipse;
+    let sol_light = sol_transmittance(PLANET_RADIUS_KM + 0.1, cos_sol) * eclipse;
 
     let day_lit = albedo
         * (vec3<f32>(DAY_AMBIENT)
-            + (1.0 - DAY_AMBIENT) * n_dot_l * sun_light)
-        + specular * sun_light;
+            + (1.0 - DAY_AMBIENT) * n_dot_l * sol_light)
+        + specular * sol_light;
 
-    // Night side: the day map darkened by sun geometry - no night
+    // Night side: the day map darkened by sol geometry - no night
     // texture as color. The geometric normal feeds the terminator so
     // bump detail doesn't speckle the day/night edge.
-    let daylight = smoothstep(-0.12, 0.18, cos_sun);
+    let daylight = smoothstep(-0.12, 0.18, cos_sol);
     let night_factor = mix(NIGHT_DARKNESS, 1.0, daylight);
     var surface = day_lit * night_factor;
 
@@ -388,10 +388,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // night side (EMISSIVE_FADE_START) to 1 at EMISSIVE_FADE_END; when
     // that end is positive the dissolve finishes on the daylit side, so
     // lights linger a little past the terminator before fully clearing.
-    let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sun);
+    let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sol);
 
     // Fixed-grain noise anchored to the 3D surface position: no crawl on
-    // zoom/rotate, and a stable per-pixel dissolve order under sun
+    // zoom/rotate, and a stable per-pixel dissolve order under sol
     // motion. step() is a hard per-pixel dither - each pixel switches off
     // when fade crosses its own noise value, so cities erode as a
     // coherent wipe and survivors stay at full (uniform) brightness.
@@ -409,7 +409,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 //
 // Because the scene is a sphere viewed from outside, the inscatter
 // integral along any view ray is precomputed: a ray is identified by its
-// impact parameter and the sun cosine at its reference point (ground hit,
+// impact parameter and the sol cosine at its reference point (ground hit,
 // or closest approach for limb rays). Per fragment this costs two LUT
 // samples; the phase functions are constant per ray and applied here.
 // Long grazing paths near the terminator lose their blue to scattering
@@ -426,8 +426,8 @@ fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
     // The scattering model is spherical: build the shell from the unit
     // normal (not the ellipsoid position) so it is a true sphere at the
     // top-of-atmosphere radius, in km.
-    // The atmosphere shell is centered on the Earth at the world origin, which
-    // IS the render origin whenever it draws (only when orbiting the Earth/Moon).
+    // The atmosphere shell is centered on Terra at the world origin, which
+    // IS the render origin whenever it draws (only when orbiting the Terra/Luna).
     let world = in.normal * ATMOSPHERE_TOP_KM;
     out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
     out.world_pos = world;
@@ -436,28 +436,28 @@ fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
 
 @fragment
 fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
-    // The Earth sits at the render origin whenever this draws, so render-frame
+    // Terra sits at the render origin whenever this draws, so render-frame
     // positions are Earth-centered here. `camera_pos` is the eye in that frame.
     let origin = uniforms.camera_pos;
     let dir = normalize(in.world_pos - origin);
-    let sun = normalize(uniforms.sun_pos);
+    let sol = normalize(uniforms.sol_pos);
 
     let shell = ray_sphere(origin, dir, ATMOSPHERE_TOP_KM);
     if shell.y <= 0.0 {
         return vec4<f32>(0.0);
     }
 
-    // The Moon (a solid body) occludes the Earth's atmosphere when it sits
-    // between the camera and the Earth. This pass deliberately does not depth-
-    // test (it layers its aerial perspective over the Earth's own near disc,
+    // Luna (a solid body) occludes Terra's atmosphere when it sits
+    // between the camera and Terra. This pass deliberately does not depth-
+    // test (it layers its aerial perspective over Terra's own near disc,
     // whose depth is closer than this far-side shell), so without an explicit
-    // check the additive glow bleeds over the nearer Moon - visible as a faint
-    // spot on the lunar disc from a Moon-orbit view. Drop the fragment where the
-    // ray meets the Moon in front of where it enters the atmosphere. (The Moon is
-    // ~384,000 km out, so from an Earth orbit it is always far beyond the
+    // check the additive glow bleeds over the nearer Luna - visible as a faint
+    // spot on the lunar disc from a Luna-orbit view. Drop the fragment where the
+    // ray meets Luna in front of where it enters the atmosphere. (Luna is
+    // ~384,000 km out, so from a Terra orbit it is always far beyond the
     // atmosphere and this never triggers.)
-    let moon = ray_sphere(origin - uniforms.moon_pos, dir, uniforms.moon_params.x);
-    if moon.y > 0.0 && moon.x > 0.0 && moon.x < shell.x {
+    let luna = ray_sphere(origin - uniforms.luna_pos, dir, uniforms.luna_params.x);
+    if luna.y > 0.0 && luna.x > 0.0 && luna.x < shell.x {
         return vec4<f32>(0.0);
     }
 
@@ -485,14 +485,14 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
         );
     }
 
-    let mu_ref = dot(normalize(reference), sun);
+    let mu_ref = dot(normalize(reference), sol);
     let uv = vec2<f32>(mu_ref * 0.5 + 0.5, v);
 
     let sum_r = textureSampleLevel(inscatter_rayleigh_lut, lut_sampler, uv, 0.0).rgb;
     let sum_m = textureSampleLevel(inscatter_mie_lut, lut_sampler, uv, 0.0).rgb;
 
     // Phase functions are constant along the ray.
-    let mu = dot(dir, sun);
+    let mu = dot(dir, sol);
     let phase_r = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
     // Cornette-Shanks phase for Mie.
     let g2 = MIE_G * MIE_G;
@@ -502,39 +502,39 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     let luminance = sum_r * phase_r + sum_m * phase_m;
 
     // Soft exposure roll-off keeps the bright limb from clipping.
-    let color = 1.0 - exp(-luminance * SUN_INTENSITY);
+    let color = 1.0 - exp(-luminance * SOL_INTENSITY);
     return vec4<f32>(color, 1.0);
 }
 
 // Star backdrop: the same sphere mesh inflated into a shell centered on the
 // camera and rendered inside-out, before everything else. It reuses the mesh
-// UVs, so the equirectangular star map shares the earth texture's orientation
+// UVs, so the equirectangular star map shares the terra texture's orientation
 // (celestial poles over the geographic poles).
 
 // Shell radius, in km. The shell is centered on the camera (see vs_stars), so it
 // always encloses the eye whatever the orbit target; this radius only has to sit
-// between the near and far planes (the far plane is 500,000 km). ~35 mean Earth
+// between the near and far planes (the far plane is 500,000 km). ~35 mean Terra
 // radii.
 const STARS_RADIUS_KM: f32 = 222985.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
-// The sun disc, drawn into the backdrop along the sun direction. The
-// real sun subtends ~0.0046 rad (0.53 deg); this one is drawn a little
+// The sol disc, drawn into the backdrop along the sol direction. The
+// real sol subtends ~0.0046 rad (0.53 deg); this one is drawn a little
 // larger because it reads better. The glow is the standard LDR cheat
 // for brightness: a clipped-white core inside a wide soft falloff.
-const SUN_ANGULAR_RADIUS: f32 = 0.012;
-const SUN_GLOW_RADIUS: f32 = 0.12;
-const SUN_GLOW_STRENGTH: f32 = 0.5;
-const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.96, 0.9);
+const SOL_ANGULAR_RADIUS: f32 = 0.012;
+const SOL_GLOW_RADIUS: f32 = 0.12;
+const SOL_GLOW_STRENGTH: f32 = 0.5;
+const SOL_COLOR: vec3<f32> = vec3<f32>(1.0, 0.96, 0.9);
 
 struct StarsOutput {
     @builtin(position) position: vec4<f32>,
     // Camera-relative view direction, rotated into the star map's base
     // frame. The backdrop is at infinity, so everything on it is a
     // function of view direction from the eye - anchoring it to the celestial
-    // sphere's surface instead would parallax against the sun.
+    // sphere's surface instead would parallax against the sol.
     @location(0) dir: vec3<f32>,
-    // The same view direction in the world frame, for the sun.
+    // The same view direction in the world frame, for the sol.
     @location(1) view: vec3<f32>,
 };
 
@@ -542,13 +542,13 @@ struct StarsOutput {
 fn vs_stars(in: VertexInput) -> StarsOutput {
     var out: StarsOutput;
     // Inflate the unit normal into a km-scale shell centered on the CAMERA, not
-    // the Earth origin, so it encloses the eye at any orbit target - including
-    // the Moon, ~384,000 km from the origin and far outside an origin-centered
-    // shell (which is why half the sky and the Sun vanished from a Moon view).
+    // the Terra origin, so it encloses the eye at any orbit target - including
+    // Luna, ~384,000 km from the origin and far outside an origin-centered
+    // shell (which is why half the sky and Sol vanished from a Luna view).
     // Centering on the camera also makes the camera-relative direction exactly
-    // the vertex normal direction (no camera_pos term), so the star/sun lookup
+    // the vertex normal direction (no camera_pos term), so the star/sol lookup
     // is a pure function of view direction - a true backdrop at infinity - and
-    // the Earth-orbit framing is unchanged (the eye was always inside the old
+    // the Terra-orbit framing is unchanged (the eye was always inside the old
     // shell, where the two formulations give the same per-pixel direction).
     let relative = in.normal * STARS_RADIUS_KM;
     // camera_pos is already in the render frame, so the shell is too.
@@ -573,31 +573,31 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
         acos(clamp(d.y, -1.0, 1.0)) / PI,
     );
 
-    let stars = textureSampleLevel(stars_texture, earth_sampler, uv, 0.0).rgb;
+    let stars = textureSampleLevel(stars_texture, terra_sampler, uv, 0.0).rgb;
 
-    // The sun, along the same camera-relative view direction as the
+    // The sol, along the same camera-relative view direction as the
     // stars, so the two stay locked under rotation and zoom. The body
     // draws after the backdrop and occludes it; the atmosphere pass
     // then glows over it near the limb.
     //
-    // The direction is the one the ORBITED BODY sees the Sun in: `sun_pos` is
-    // already the Sun relative to the camera target. From a distant planet the
-    // Sun is in a wholly different direction than from Earth, and this is what
+    // The direction is the one the ORBITED BODY sees Sol in: `sol_pos` is
+    // already Sol relative to the camera target. From a distant planet the
+    // Sol is in a wholly different direction than from Terra, and this is what
     // makes the drawn disc agree with that planet's terminator (`fs_planet`
-    // lights from `sun_pos - world_pos`, the same direction). For Earth/Moon it
-    // is the Earth->Sun direction. It is parallax-free under local orbit/zoom
-    // (the render origin, hence `sun_pos`, is constant while orbiting one body).
+    // lights from `sol_pos - world_pos`, the same direction). For Terra/Luna it
+    // is the Terra->Sol direction. It is parallax-free under local orbit/zoom
+    // (the render origin, hence `sol_pos`, is constant while orbiting one body).
     let view = normalize(in.view);
-    let sun = normalize(uniforms.sun_pos);
-    let angle = acos(clamp(dot(view, sun), -1.0, 1.0));
+    let sol = normalize(uniforms.sol_pos);
+    let angle = acos(clamp(dot(view, sol), -1.0, 1.0));
 
     // Anti-aliased disc core plus a soft glow falloff.
     let disc = 1.0
-        - smoothstep(SUN_ANGULAR_RADIUS * 0.85, SUN_ANGULAR_RADIUS, angle);
-    let glow = SUN_GLOW_STRENGTH
-        * pow(max(1.0 - angle / SUN_GLOW_RADIUS, 0.0), 3.0);
+        - smoothstep(SOL_ANGULAR_RADIUS * 0.85, SOL_ANGULAR_RADIUS, angle);
+    let glow = SOL_GLOW_STRENGTH
+        * pow(max(1.0 - angle / SOL_GLOW_RADIUS, 0.0), 3.0);
 
-    let color = stars * STARS_BRIGHTNESS + SUN_COLOR * (disc + glow);
+    let color = stars * STARS_BRIGHTNESS + SOL_COLOR * (disc + glow);
     return vec4<f32>(color, 1.0);
 }
 
@@ -642,8 +642,8 @@ fn vs_marker(@builtin(vertex_index) vertex_index: u32, inst: MarkerInstance) -> 
     out.uv = corner;
 
     // Hidden (occluded by the body): emit an off-screen, clipped vertex.
-    // Markers only draw when orbiting the Earth/Moon (render origin at the
-    // Earth), so the satellite's Earth-frame position is already render-frame.
+    // Markers only draw when orbiting the Terra/Luna (render origin at the
+    // Terra), so the satellite's Terra-frame position is already render-frame.
     let clip = uniforms.view_proj * vec4<f32>(inst.position, 1.0);
     if inst.visible < 0.5 || clip.w <= 0.0 {
         out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
@@ -675,23 +675,23 @@ fn fs_marker(in: MarkerOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, alpha);
 }
 
-// The Moon: the triaxial lunar mesh, oriented into world space by the
-// ephemeris + IAU lunar rotation (`uniforms.moon_rot`) and placed at its true
-// world position. Lit by the same Sun as the Earth, but with no atmosphere
-// (a hard terminator) and its own eclipse shadow: the Earth can block the Sun
+// Luna: the triaxial lunar mesh, oriented into world space by the
+// ephemeris + IAU lunar rotation (`uniforms.luna_rot`) and placed at its true
+// world position. Lit by the same Sol as Terra, but with no atmosphere
+// (a hard terminator) and its own eclipse shadow: Terra can block Sol
 // (lunar eclipse), darkening the lit disk and leaving a faint coppery glow from
-// sunlight refracted through Earth's atmosphere. Drawn with the depth buffer so
-// the Earth correctly occludes it; the Moon is always farther than the Earth
-// from any near-Earth camera, so this is what hides it behind the planet.
+// sunlight refracted through Terra's atmosphere. Drawn with the depth buffer so
+// Terra correctly occludes it; Luna is always farther than Terra
+// from any near-Terra camera, so this is what hides it behind the planet.
 
-// Faint fill on the lunar night side (earthshine + scattered light), so the
+// Faint fill on the lunar night side (terrashine + scattered light), so the
 // unlit limb is not pure black.
-const MOON_AMBIENT: f32 = 0.02;
-// Coppery glow on the eclipsed (umbral) Moon, from sunlight refracted through
-// Earth's atmosphere - the "blood moon". Dim and red-biased.
-const MOON_ECLIPSE_GLOW: vec3<f32> = vec3<f32>(0.06, 0.012, 0.004);
+const LUNA_AMBIENT: f32 = 0.02;
+// Coppery glow on the eclipsed (umbral) Luna, from sunlight refracted through
+// Terra's atmosphere - the "blood-red Luna". Dim and red-biased.
+const LUNA_ECLIPSE_GLOW: vec3<f32> = vec3<f32>(0.06, 0.012, 0.004);
 
-struct MoonOutput {
+struct LunaOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
@@ -699,51 +699,51 @@ struct MoonOutput {
 };
 
 @vertex
-fn vs_moon(in: VertexInput) -> MoonOutput {
-    var out: MoonOutput;
+fn vs_luna(in: VertexInput) -> LunaOutput {
+    var out: LunaOutput;
     // Body-fixed mesh -> world: rotate by the lunar orientation, then translate
-    // to the Moon's world center. The rotation is orthonormal, so it carries
+    // to Luna's world center. The rotation is orthonormal, so it carries
     // the normal too.
-    // moon_pos is already in the render frame, so the lunar mesh lands there.
-    let world = uniforms.moon_rot * in.position + uniforms.moon_pos;
+    // luna_pos is already in the render frame, so the lunar mesh lands there.
+    let world = uniforms.luna_rot * in.position + uniforms.luna_pos;
     out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
     out.uv = in.uv;
-    out.normal = uniforms.moon_rot * in.normal;
+    out.normal = uniforms.luna_rot * in.normal;
     out.world_pos = world;
     return out;
 }
 
 @fragment
-fn fs_moon(in: MoonOutput) -> @location(0) vec4<f32> {
-    let albedo = textureSample(moon_texture, earth_sampler, in.uv).rgb;
+fn fs_luna(in: LunaOutput) -> @location(0) vec4<f32> {
+    let albedo = textureSample(luna_texture, terra_sampler, in.uv).rgb;
     let n = normalize(in.normal);
-    // The Sun direction at this lunar surface point (render-frame positions).
-    let sun = normalize(uniforms.sun_pos - in.world_pos);
+    // The Sol direction at this lunar surface point (render-frame positions).
+    let sol = normalize(uniforms.sol_pos - in.world_pos);
 
     // Hard (atmosphere-free) terminator: plain Lambert, with the slightest
     // softening for edge antialiasing.
-    let sunlit = max(dot(n, sun), 0.0);
+    let sunlit = max(dot(n, sol), 0.0);
 
-    // Earth shadow on the Moon (lunar eclipse): the Earth can block the Sun. The
-    // Moon only draws when orbiting the Earth/Moon, so the Earth is at the render
-    // origin (vec3(0)). Soft penumbra from the Sun's angular size.
-    let eclipse = sun_visibility(in.world_pos, sun, vec3<f32>(0.0), uniforms.moon_params.y);
+    // Terra shadow on Luna (lunar eclipse): Terra can block Sol. The
+    // Luna only draws when orbiting the Terra/Luna, so Terra is at the render
+    // origin (vec3(0)). Soft penumbra from Sol's angular size.
+    let eclipse = sol_visibility(in.world_pos, sol, vec3<f32>(0.0), uniforms.luna_params.y);
 
-    var color = albedo * (MOON_AMBIENT + sunlit * eclipse);
-    // Coppery umbral glow, only where the Moon would otherwise be sunlit.
-    color += MOON_ECLIPSE_GLOW * (1.0 - eclipse) * sunlit * albedo;
+    var color = albedo * (LUNA_AMBIENT + sunlit * eclipse);
+    // Coppery umbral glow, only where Luna would otherwise be sunlit.
+    color += LUNA_ECLIPSE_GLOW * (1.0 - eclipse) * sunlit * albedo;
 
     return vec4<f32>(color, 1.0);
 }
 
 // A planet: the oblate planet mesh, oriented into world space by the ephemeris
 // + IAU planet rotation and placed at its center in the render frame, lit by
-// the Sun with a simple Lambert term (albedo x diffuse + small ambient) - no
+// Sol with a simple Lambert term (albedo x diffuse + small ambient) - no
 // atmosphere, no eclipse shadow. Each planet is drawn in its own pass with its
 // own group-1 bind group (per-planet uniform + texture), which keeps the seven
 // planet textures out of the shared group-0 layout (so its 9 sampled textures
 // never grow toward the portable 16-per-stage limit). The shared group-0
-// uniforms supply view_proj and the Sun position.
+// uniforms supply view_proj and the Sol position.
 
 // Faint fill on the planet night side, so the unlit limb is not pure black.
 const PLANET_AMBIENT: f32 = 0.02;
@@ -793,10 +793,10 @@ fn vs_planet(in: VertexInput) -> PlanetOutput {
 fn fs_planet(in: PlanetOutput) -> @location(0) vec4<f32> {
     let albedo = textureSample(planet_texture, planet_sampler, in.uv).rgb;
     let n = normalize(in.normal);
-    // The Sun direction at this surface point; both positions are in the render
-    // frame, so the difference is the true planet-surface->Sun vector.
-    let sun = normalize(uniforms.sun_pos - in.world_pos);
-    let sunlit = max(dot(n, sun), 0.0);
+    // The Sol direction at this surface point; both positions are in the render
+    // frame, so the difference is the true planet-surface->Sol vector.
+    let sol = normalize(uniforms.sol_pos - in.world_pos);
+    let sunlit = max(dot(n, sol), 0.0);
 
     let color = albedo * (PLANET_AMBIENT + sunlit);
     return vec4<f32>(color, 1.0);
@@ -807,7 +807,7 @@ fn fs_planet(in: PlanetOutput) -> @location(0) vec4<f32> {
 // renderer classifies this on the CPU and routes it here), a mesh is wasteful -
 // the planet is at most a few pixels. The impostor is a single camera-facing
 // quad whose fragment shader ray-traces the true oblate ellipsoid, samples the
-// same group-1 albedo texture, and Lambert-lights it from the Sun, so the
+// same group-1 albedo texture, and Lambert-lights it from Sol, so the
 // silhouette, rotation/libration, terminator, and texture all stay faithful.
 //
 // The rays are treated as PARALLEL (orthographic), which is exact here: the
@@ -818,7 +818,7 @@ fn fs_planet(in: PlanetOutput) -> @location(0) vec4<f32> {
 
 // Drawn within the far plane, on the same shell radius as the backdrop. Depth
 // is irrelevant (the pass neither tests nor writes it - billboards are always
-// the far bodies and are painted over by the later opaque Earth/Moon/meshes).
+// the far bodies and are painted over by the later opaque Terra/Luna/meshes).
 const PLANET_BILLBOARD_SHELL_KM: f32 = STARS_RADIUS_KM;
 // The quad spans the equatorial angular radius times this margin, so the full
 // ellipse (corners included) lands inside the quad; edge rays miss and discard.
@@ -925,8 +925,8 @@ fn fs_planet_billboard(in: PlanetBillboardOutput) -> @location(0) vec4<f32> {
     let albedo = textureSampleLevel(planet_texture, planet_sampler, uv, 0.0).rgb;
     let n = normalize(planet.rot * n_body);
     let surf = planet.pos + planet.rot * (p1 * radii);
-    let sun = normalize(uniforms.sun_pos - surf);
-    let sunlit = max(dot(n, sun), 0.0);
+    let sol = normalize(uniforms.sol_pos - surf);
+    let sunlit = max(dot(n, sol), 0.0);
 
     let color = albedo * (PLANET_AMBIENT + sunlit);
     return vec4<f32>(color, 1.0);

@@ -15,10 +15,10 @@ pub mod satellite;
 use glam::{Mat3, Mat4, Vec3};
 use satkit::Instant;
 
-pub use body::{BodyState, CelestialBody, EarthSystemEntity};
+pub use body::{BodyState, CelestialBody, TerraSystemEntity};
 pub use clock::Clock;
 
-use crate::earth;
+use crate::terra;
 use crate::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
@@ -29,10 +29,10 @@ use celestial_sphere::CelestialSphere;
 /// astronomical data - no `Camera` or windowing dependency - so it can cross
 /// the camera-agnostic `simulation` boundary the same way [`RenderState`] does:
 /// it is defined here but consumed by the camera in `application`. The geometry
-/// accessors delegate to the single-source-of-truth body modules (`earth` /
-/// `moon`), so the camera rig never duplicates surface math.
+/// accessors delegate to the single-source-of-truth body modules (`terra` /
+/// `luna`), so the camera rig never duplicates surface math.
 ///
-/// Earth sits at the world origin; the Moon's and the planets' centers come
+/// Terra sits at the world origin; Luna's and the planets' centers come
 /// from the ephemeris and are refreshed every frame (they move), so the target
 /// carries the center alongside the body identity.
 #[derive(Clone, Copy)]
@@ -40,26 +40,26 @@ pub struct CameraTarget {
     /// Which body the camera orbits. Geometry (radius, surface) is read through
     /// this identity (see [`CelestialBody`]).
     pub body: CelestialBody,
-    /// The orbited body's center in the world frame (km). Earth is the origin
-    /// (`ZERO`); the Moon and the planets carry their live ephemeris center.
+    /// The orbited body's center in the world frame (km). Terra is the origin
+    /// (`ZERO`); Luna and the planets carry their live ephemeris center.
     /// Because a planet's center can be billions of km out - far past f32
     /// precision in world-km - a planet target renders with a floating origin
     /// (the scene is drawn relative to `render_origin`, which equals this
     /// center; see `RenderState::render_origin` and `Camera::view_proj`).
-    /// Earth/Moon keep the origin at Earth.
+    /// Terra/Luna keep the origin at Terra.
     pub center_world: Vec3,
 }
 
 impl CameraTarget {
-    /// The Earth target (the familiar default): identity Earth at the origin.
-    pub fn earth() -> CameraTarget {
+    /// The Terra target (the familiar default): identity Terra at the origin.
+    pub fn terra() -> CameraTarget {
         CameraTarget {
-            body: CelestialBody::EARTH,
+            body: CelestialBody::TERRA,
             center_world: Vec3::ZERO,
         }
     }
 
-    /// Whether two targets name the same body, ignoring the (per-frame) Moon/
+    /// Whether two targets name the same body, ignoring the (per-frame) Luna/
     /// planet center. The camera uses this to detect a genuine body switch (and
     /// reframe) without treating a body's normal ephemeris drift as a change. A
     /// derived `PartialEq` would compare the centers and so fire every frame.
@@ -69,22 +69,22 @@ impl CameraTarget {
         self.body == other.body
     }
 
-    /// The body center in the world frame (km). Earth is the origin.
+    /// The body center in the world frame (km). Terra is the origin.
     pub fn center_world(&self) -> Vec3 {
         self.center_world
     }
 
     /// The world-space origin the scene is rendered relative to for this target
-    /// (the "floating origin"). Earth and the Moon are close enough to the
-    /// Earth origin that f32 world-km is precise, so they keep the origin at
-    /// Earth (`ZERO`) - which makes their render output bit-identical to the
+    /// (the "floating origin"). Terra and Luna are close enough to the
+    /// Terra origin that f32 world-km is precise, so they keep the origin at
+    /// Terra (`ZERO`) - which makes their render output bit-identical to the
     /// pre-planet renderer. A planet sits too far out for that, so the origin
     /// shifts to the planet's center, keeping the orbited body near the
     /// numerical origin where f32 precision is restored.
     pub fn render_origin(&self) -> Vec3 {
         match self.body {
-            CelestialBody::EarthSystem(_) => Vec3::ZERO,
-            // Any planet: too far out for the Earth origin, so the scene is
+            CelestialBody::TerraSystem(_) => Vec3::ZERO,
+            // Any planet: too far out for the Terra origin, so the scene is
             // drawn relative to its own center.
             _ => self.center_world,
         }
@@ -130,12 +130,12 @@ pub trait Simulation {
     fn celestial_to_world(&self) -> Mat3;
 
     /// Which body the orbital camera should center on this frame. Defaults to
-    /// the Earth, so every Earth-only scenario inherits it untouched; the
+    /// Terra, so every Terra-only scenario inherits it untouched; the
     /// eclipse scenarios override it to return the user-selected body (the
-    /// Moon's center pulled from the ephemeris). The application reads this
+    /// Luna's center pulled from the ephemeris). The application reads this
     /// each frame and re-aims the camera (see `application::camera`).
     fn camera_target(&self) -> CameraTarget {
-        CameraTarget::earth()
+        CameraTarget::terra()
     }
 
     /// Produce this frame's render state from the application-resolved camera.
@@ -158,31 +158,31 @@ pub struct RenderState {
     /// at the numerical origin so far planet targets stay f32-precise.
     pub view_proj: Mat4,
     /// Camera eye in the **floating-origin (render) frame** (km), i.e. relative
-    /// to `render_origin` (= the absolute eye for Earth/Moon). The renderer's
+    /// to `render_origin` (= the absolute eye for Terra/Luna). The renderer's
     /// per-body positions are all expressed in this same frame.
     pub camera_pos: Vec3,
     /// The world-space point the render frame is centered on: the camera
     /// target's center (`camera_target.render_origin()`), `ZERO` for
-    /// Earth/Moon. The renderer subtracts it (on the CPU) from each body's
+    /// Terra/Luna. The renderer subtracts it (on the CPU) from each body's
     /// absolute world position below so the GPU only ever sees small,
     /// target-local coordinates; it is NOT uploaded to the shader.
     pub render_origin: Vec3,
-    /// Sun position in the absolute world frame, km (true geocentric). The
+    /// Sol position in the absolute world frame, km (true geocentric). The
     /// renderer expresses it relative to `render_origin` and every lit pass
-    /// derives its Sun direction from it (`normalize(sun - surface)`); there is
-    /// no Earth-fixed `sun_dir` in the render path.
-    pub sun_pos_world: Vec3,
+    /// derives its Sol direction from it (`normalize(sol - surface)`); there is
+    /// no Earth-fixed `sol_dir` in the render path.
+    pub sol_pos_world: Vec3,
     /// World -> star-texture (galactic) rotation for the equirectangular
     /// star-map lookup (uploaded as `star_rot_inv`). This is the
     /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
     /// from the equatorial frame the camera rig uses.
     pub star_rot_inv: Mat3,
     /// The celestial bodies to draw this frame (identity + placement), as a
-    /// flat list. The renderer pulls the Moon's placement from here for the
+    /// flat list. The renderer pulls Luna's placement from here for the
     /// lunar mesh + the analytic eclipse-shadow geometry (its radius comes
-    /// from the identity, `moon::MEAN_RADIUS_KM`), and routes each planet
-    /// entry to the planet pipeline by identity. Earth/Moon scenarios carry
-    /// only the Earth system (Earth + Moon), so no planet entry exists
+    /// from the identity, `luna::MEAN_RADIUS_KM`), and routes each planet
+    /// entry to the planet pipeline by identity. Terra/Luna scenarios carry
+    /// only the Terra system (Terra + Luna), so no planet entry exists
     /// and the planet pipeline never runs; the solar-system scenario (and
     /// render mode) carry the whole list.
     pub celestial_bodies: Vec<BodyState>,
@@ -197,7 +197,7 @@ pub struct RenderState {
 pub struct SatelliteMarker {
     /// Marker position in the world frame (km).
     pub position_km: Vec3,
-    /// Whether the marker is visible (false when the solid Earth occludes it).
+    /// Whether the marker is visible (false when the solid Terra occludes it).
     pub visible: bool,
 }
 
@@ -229,7 +229,7 @@ pub fn init() {
 }
 
 /// The shared simulation core: the clock (datetime + play/paused + speed) and
-/// the ephemeris-driven celestial sphere (Sun direction + star-map
+/// the ephemeris-driven celestial sphere (Sol direction + star-map
 /// orientation). Held by composition inside each scenario's simulation struct,
 /// which adds its own satellite list and implements [`Simulation`].
 ///
@@ -275,33 +275,33 @@ impl SimulationState {
     }
 }
 
-/// Tracks which body the user has chosen to orbit (Earth or Moon) and builds
-/// the EARTH / MOON selector panel. Shared by the scenarios that offer a Moon
-/// target (the eclipses); Earth-only scenarios never hold one.
+/// Tracks which body the user has chosen to orbit (Terra or Luna) and builds
+/// the TERRA / LUNA selector panel. Shared by the scenarios that offer a Luna
+/// target (the eclipses); Terra-only scenarios never hold one.
 ///
 /// Two radio toggles can't both `&mut` one selection field - a panel's element
 /// callbacks all coexist, so each must capture a *disjoint* mutable field (the
 /// same rule that makes the Run toggle and speed slider capture `paused` vs
 /// `multiplier` separately). So a key press only sets a disjoint `request_*`
 /// flag; [`apply_requests`](Self::apply_requests) reconciles it into
-/// `moon_selected` once per frame. That is a one-frame latency, imperceptible
+/// `luna_selected` once per frame. That is a one-frame latency, imperceptible
 /// and identical to the existing clock-edit delay.
 pub struct TargetSelector {
-    moon_selected: bool,
-    /// Set by the EARTH key; cleared in `apply_requests`.
-    request_earth: bool,
-    /// Set by the MOON key; a field disjoint from `request_earth` so the two
+    luna_selected: bool,
+    /// Set by the TERRA key; cleared in `apply_requests`.
+    request_terra: bool,
+    /// Set by the LUNA key; a field disjoint from `request_terra` so the two
     /// key callbacks can coexist.
-    request_moon: bool,
+    request_luna: bool,
 }
 
 impl TargetSelector {
-    /// Builds a selector with the initial choice (`true` = Moon).
-    pub fn new(moon_selected: bool) -> Self {
+    /// Builds a selector with the initial choice (`true` = Luna).
+    pub fn new(luna_selected: bool) -> Self {
         Self {
-            moon_selected,
-            request_earth: false,
-            request_moon: false,
+            luna_selected,
+            request_terra: false,
+            request_luna: false,
         }
     }
 
@@ -309,36 +309,36 @@ impl TargetSelector {
     /// flags. Call once per frame *before* [`Simulation::camera_target`] is
     /// read (i.e. at the top of the scenario's `advance`). A simultaneous
     /// press of both keys in one frame is impossible from a mouse, but
-    /// resolve it to Moon for determinism.
+    /// resolve it to Luna for determinism.
     pub fn apply_requests(&mut self) {
-        if self.request_moon {
-            self.moon_selected = true;
-        } else if self.request_earth {
-            self.moon_selected = false;
+        if self.request_luna {
+            self.luna_selected = true;
+        } else if self.request_terra {
+            self.luna_selected = false;
         }
-        self.request_earth = false;
-        self.request_moon = false;
+        self.request_terra = false;
+        self.request_luna = false;
     }
 
-    /// Resolves the current choice into a [`CameraTarget`], filling the Moon
+    /// Resolves the current choice into a [`CameraTarget`], filling Luna
     /// center from the live ephemeris.
-    pub fn resolve(&self, moon_center: Vec3) -> CameraTarget {
-        if self.moon_selected {
+    pub fn resolve(&self, luna_center: Vec3) -> CameraTarget {
+        if self.luna_selected {
             CameraTarget {
-                body: CelestialBody::MOON,
-                center_world: moon_center,
+                body: CelestialBody::LUNA,
+                center_world: luna_center,
             }
         } else {
-            CameraTarget::earth()
+            CameraTarget::terra()
         }
     }
 
-    /// The top-right EARTH / MOON selector panel: a header plus two latching
+    /// The top-right TERRA / LUNA selector panel: a header plus two latching
     /// keys, the chosen body lit. The keys' callbacks set disjoint request
-    /// flags (see the type docs); `moon_selected` is snapshotted up front so no
+    /// flags (see the type docs); `luna_selected` is snapshotted up front so no
     /// shared borrow outlives into the callbacks.
     pub fn panel(&mut self) -> UIDrawablePanel<'_> {
-        let moon_active = self.moon_selected;
+        let luna_active = self.luna_selected;
         let elements: Vec<Box<dyn Instrument + '_>> = vec![
             Box::new(Header {
                 position: [0.0, 0.0],
@@ -347,18 +347,18 @@ impl TargetSelector {
             Box::new(InteractiveToggle {
                 toggle: Toggle {
                     position: [0.0, 26.0],
-                    label: "Earth".to_string(),
-                    active: !moon_active,
+                    label: "Terra".to_string(),
+                    active: !luna_active,
                 },
-                on_toggle: Box::new(|| self.request_earth = true),
+                on_toggle: Box::new(|| self.request_terra = true),
             }),
             Box::new(InteractiveToggle {
                 toggle: Toggle {
                     position: [104.0, 26.0],
-                    label: "Moon".to_string(),
-                    active: moon_active,
+                    label: "Luna".to_string(),
+                    active: luna_active,
                 },
-                on_toggle: Box::new(|| self.request_moon = true),
+                on_toggle: Box::new(|| self.request_luna = true),
             }),
         ];
 
@@ -371,16 +371,16 @@ impl TargetSelector {
     }
 }
 
-/// Every selectable body, ordered by distance from the Sun, with the Moon
-/// placed right after its parent Earth. This is also the top-to-bottom order of
+/// Every selectable body, ordered by distance from Sol, with Luna
+/// placed right after its parent Terra. This is also the top-to-bottom order of
 /// the selector panel's keys. The `request_*` fields of [`BodySelector`] and
 /// the `apply_requests` branches mirror this order index-for-index; keep all
 /// three in sync if the list changes.
 const SELECTABLE_BODIES: [CelestialBody; 9] = [
     CelestialBody::Mercury,
     CelestialBody::Venus,
-    CelestialBody::EARTH,
-    CelestialBody::MOON,
+    CelestialBody::TERRA,
+    CelestialBody::LUNA,
     CelestialBody::Mars,
     CelestialBody::Jupiter,
     CelestialBody::Saturn,
@@ -388,8 +388,8 @@ const SELECTABLE_BODIES: [CelestialBody; 9] = [
     CelestialBody::Neptune,
 ];
 
-/// Index of Earth in [`SELECTABLE_BODIES`] - the scenario's start target.
-const EARTH_INDEX: usize = 2;
+/// Index of Terra in [`SELECTABLE_BODIES`] - the scenario's start target.
+const TERRA_INDEX: usize = 2;
 
 /// Tracks which solar-system body the camera orbits and builds the selector
 /// panel: one always-visible latching key per body (the chosen one lit), so the
@@ -410,8 +410,8 @@ pub struct BodySelector {
     /// without borrowing a shared place. In [`SELECTABLE_BODIES`] order.
     request_mercury: bool,
     request_venus: bool,
-    request_earth: bool,
-    request_moon: bool,
+    request_terra: bool,
+    request_luna: bool,
     request_mars: bool,
     request_jupiter: bool,
     request_saturn: bool,
@@ -421,13 +421,13 @@ pub struct BodySelector {
 
 impl Default for BodySelector {
     fn default() -> Self {
-        // Start on the Earth (the familiar default view).
+        // Start on Terra (the familiar default view).
         Self {
-            selected: EARTH_INDEX,
+            selected: TERRA_INDEX,
             request_mercury: false,
             request_venus: false,
-            request_earth: false,
-            request_moon: false,
+            request_terra: false,
+            request_luna: false,
             request_mars: false,
             request_jupiter: false,
             request_saturn: false,
@@ -448,9 +448,9 @@ impl BodySelector {
             self.selected = 0;
         } else if self.request_venus {
             self.selected = 1;
-        } else if self.request_earth {
+        } else if self.request_terra {
             self.selected = 2;
-        } else if self.request_moon {
+        } else if self.request_luna {
             self.selected = 3;
         } else if self.request_mars {
             self.selected = 4;
@@ -465,8 +465,8 @@ impl BodySelector {
         }
         self.request_mercury = false;
         self.request_venus = false;
-        self.request_earth = false;
-        self.request_moon = false;
+        self.request_terra = false;
+        self.request_luna = false;
         self.request_mars = false;
         self.request_jupiter = false;
         self.request_saturn = false;
@@ -486,7 +486,7 @@ impl BodySelector {
     }
 
     /// The top-right selector panel: a header plus one latching key per body,
-    /// in a single column ordered by distance from the Sun (the chosen body
+    /// in a single column ordered by distance from Sol (the chosen body
     /// lit). `selected` is snapshotted up front so no shared borrow
     /// outlives into the per-key callbacks, which each set a disjoint
     /// `request_*` flag.
@@ -514,11 +514,11 @@ impl BodySelector {
             }),
             Box::new(InteractiveToggle {
                 toggle: key(2),
-                on_toggle: Box::new(|| self.request_earth = true),
+                on_toggle: Box::new(|| self.request_terra = true),
             }),
             Box::new(InteractiveToggle {
                 toggle: key(3),
-                on_toggle: Box::new(|| self.request_moon = true),
+                on_toggle: Box::new(|| self.request_luna = true),
             }),
             Box::new(InteractiveToggle {
                 toggle: key(4),
@@ -617,8 +617,8 @@ impl UIDrawable for SimulationState {
     }
 }
 
-/// Whether the solid Earth blocks the line of sight from `eye` to `target`
-/// (both world-space km). Approximates the planet as a sphere of mean Earth
+/// Whether the solid Terra blocks the line of sight from `eye` to `target`
+/// (both world-space km). Approximates the planet as a sphere of mean Terra
 /// radius - slightly conservative against the WGS84 ellipsoid, which is fine
 /// for deciding whether to hide the marker.
 pub(crate) fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
@@ -629,13 +629,13 @@ pub(crate) fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
     }
     let dir = to_target / distance;
 
-    // Ray-sphere intersection of the line of sight with the Earth sphere.
+    // Ray-sphere intersection of the line of sight with the Terra sphere.
     let b = dir.dot(eye);
-    let c = eye.length_squared() - earth::MEAN_RADIUS_KM * earth::MEAN_RADIUS_KM;
+    let c = eye.length_squared() - terra::MEAN_RADIUS_KM * terra::MEAN_RADIUS_KM;
     let disc = b * b - c;
     if disc < 0.0 {
-        return false; // line of sight misses the Earth entirely
+        return false; // line of sight misses Terra entirely
     }
     let t = -b - disc.sqrt(); // nearest intersection along the ray
-    t > 0.0 && t < distance // Earth sits between the eye and the station
+    t > 0.0 && t < distance // Terra sits between the eye and the station
 }

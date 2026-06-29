@@ -96,7 +96,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
 
     /// Builds the application with a specific initial camera instead of the
     /// default whole-body view. Used by scenarios that want to frame a specific
-    /// event on launch (e.g. the eclipse scenarios aim at the Sun/Moon); the
+    /// event on launch (e.g. the eclipse scenarios aim at the Sol/Luna); the
     /// camera is fully interactive afterward.
     pub fn with_camera(simulation: S, camera: Camera) -> Self {
         Self {
@@ -237,7 +237,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         let celestial_to_world = self.simulation.celestial_to_world();
 
         // Re-aim the orbital camera at this frame's target (the scenario's
-        // chosen body, with the Moon's center refreshed from the ephemeris). On
+        // chosen body, with Luna's center refreshed from the ephemeris). On
         // a genuine body switch the reframe invalidates any in-flight zoom/flick
         // (they target the old body's scale), so cancel them.
         let target = self.simulation.camera_target();

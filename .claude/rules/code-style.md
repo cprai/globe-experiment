@@ -14,7 +14,7 @@ paths:
 
 ## Module conventions
 
-Six top-level modules + `earth`:
+Six top-level modules + `terra`:
 - **`application`** — window, camera, input, egui logic. Owns `Camera` +
   `Controller`. `ApplicationState<S: Simulation>` is generic over the
   simulation — nothing outside this module names the `Camera` type.
@@ -33,7 +33,7 @@ Six top-level modules + `earth`:
   `simulation`, not here. `ui/instruments/*.rs` is one `Instrument`-impl struct
   per file; `ui/theme.rs` the Apollo look + palette; `ui/spec.rs` the serde
   `ui`-overlay spec (deserialized straight into the bare instrument structs).
-- **`earth`** — WGS84 constants + helpers. Single source of truth for all
+- **`terra`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per
   past scenario, each with a `run()`. Satellites live here, not in
@@ -46,7 +46,7 @@ Six top-level modules + `earth`:
 - **Atmosphere medium constants**: `build.rs mod atmosphere` (bake) AND
   `shaders/scene.wgsl` (shader twins) — both must stay in sync.
 - **Input feel constants**: `src/application/input.rs` top.
-- **Earth physical constants + helpers**: `src/earth.rs`.
+- **Terra physical constants + helpers**: `src/terra.rs`.
 - **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
   — the distance/near/default limits are radius *ratios* (`*_RADII`), scaled at
   use by the orbit target's `mean_radius_km()`; `FAR_PLANE` stays a fixed km.

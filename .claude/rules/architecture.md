@@ -20,27 +20,27 @@ src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
                          (render takes one --scene JSON + --output/width/height)
 src/snapshot.rs          headless single-frame render mode (no EOP range check);
                          SceneSpec = --scene JSON (simulation + camera +
-                         optional ui); camera.target "earth"/"moon"
-                         (CameraTargetSpec, default earth); optional mock-panel
+                         optional ui); camera.target "terra"/"luna"
+                         (CameraTargetSpec, default terra); optional mock-panel
                          overlay (build_ui_frame)
 src/scenarios/mod.rs     scenario registry
 src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
 src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
-                         run() frames the Earth day side via Camera::looking_toward;
-                         TargetSelector (default Earth) for the EARTH/MOON panel
+                         run() frames the Terra day side via Camera::looking_toward;
+                         TargetSelector (default Terra) for the TERRA/LUNA panel
 src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
-                         run() launches orbiting the Moon (Moon-target
-                         looking_toward); TargetSelector (default Moon)
+                         run() launches orbiting Luna (Luna-target
+                         looking_toward); TargetSelector (default Luna)
 src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
-                         pos/scale; BodySelector (one key per body: Earth, Moon,
-                         the 7 planets) drives camera_target; default Earth view
+                         pos/scale; BodySelector (one key per body: Terra, Luna,
+                         the 7 planets) drives camera_target; default Terra view
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
 src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
-                         orbiting a CameraTarget (Earth/Moon); per-frame retarget
+                         orbiting a CameraTarget (Terra/Luna); per-frame retarget
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed
                          zoom, reset_animation (on target switch)
 src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
@@ -80,28 +80,28 @@ src/ui/spec.rs           the serde-deserialized render --scene `ui` overlay: a
                          themselves + a UiPanel + PanelSet (UIDrawable). No mirror
                          type - the bare structs derive Deserialize, so each
                          element clones into an inert boxed Instrument
-src/earth.rs             WGS84 constants + surface_position / geodetic_normal helpers
-src/moon.rs              lunar constants (triaxial ellipsoid radii, mean radius)
+src/terra.rs             WGS84 constants + surface_position / geodetic_normal helpers
+src/luna.rs              lunar constants (triaxial ellipsoid radii, mean radius)
                          + surface_position / geodetic_normal (body-fixed frame);
-                         the Earth-style single source of truth for Moon geometry
+                         the Terra-style single source of truth for Luna geometry
 src/planet.rs            the 7 planets' data, hung off the CelestialBody planet
                          variants (no separate Planet enum): ALL[CelestialBody;7]
                          + data-driven table (oblate radii, IAU rotation
                          constants, texture file) accessed via impl CelestialBody
                          + surface_position / geodetic_normal free fns. satkit-
-                         free, like earth/moon; references simulation::body for
+                         free, like terra/luna; references simulation::body for
                          the CelestialBody type
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
-                         (7 pipelines incl. Moon + planet mesh + planet
+                         (7 pipelines incl. Luna + planet mesh + planet
                          billboard; reversed-Z
                          Depth32Float buffer). Planets use a separate group-1
                          bind group (per-planet uniform + texture)
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
                          (+ matching depth buffer)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
-                         wgs84_ellipsoid + moon_ellipsoid + planet_ellipsoid
+                         wgs84_ellipsoid + luna_ellipsoid + planet_ellipsoid
 src/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
-                         enum (EarthSystem(EarthSystemEntity Earth|Moon), then
+                         enum (TerraSystem(TerraSystemEntity Terra|Luna), then
                          each planet Mercury..Neptune as its own variant) +
                          total geometry accessors (name/mean_radius/surface/
                          normal; planet data hangs off these variants in
@@ -109,28 +109,28 @@ src/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
                          + placement). The shared vocabulary for RenderState,
                          CameraTarget, and the selectors
 src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
-                         to Earth), SimulationState (core: clock + celestial
+                         to Terra), SimulationState (core: clock + celestial
                          sphere) + its shared-core impl UIDrawable, RenderState
-                         (render_origin/sun_pos_world + celestial_bodies:
-                         Vec<BodyState>, the flat render list incl. the Moon),
+                         (render_origin/sol_pos_world + celestial_bodies:
+                         Vec<BodyState>, the flat render list incl. Luna),
                          SatelliteTelemetry, CameraTarget (struct: body:
                          CelestialBody + center_world; render_origin(), consumed
-                         by application's Camera), TargetSelector (EARTH/MOON,
+                         by application's Camera), TargetSelector (TERRA/LUNA,
                          eclipses), BodySelector (one latching key per body, 9
-                         bodies ordered by distance from the Sun, solar_system)
-src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
-                         + Moon position (DE440) and IAU lunar rotation;
-                         sun_pos_world + the 7 planets' position (DE440) and IAU
+                         bodies ordered by distance from Sol, solar_system)
+src/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
+                         + Luna position (DE440) and IAU lunar rotation;
+                         sol_pos_world + the 7 planets' position (DE440) and IAU
                          planet rotation, all assembled into bodies:
-                         Vec<BodyState> (Earth, Moon, 7 planets in planet::ALL
+                         Vec<BodyState> (Terra, Luna, 7 planets in planet::ALL
                          order); iau_body_to_gcrf helper
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/scene.wgsl       ALL shader code (7 passes in one module: + planet mesh
                          + distant-planet billboard impostor; analytic
                          eclipse shadows). Planet uniform/texture are group 1
-OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Earth x4,
-                         stars, Moon, 7 planets) + 3 f16 LUT KTX2 + DE440
+OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Terra x4,
+                         stars, Luna, 7 planets) + 3 f16 LUT KTX2 + DE440
                          ephemeris + EOP-All.csv
 ```
 
@@ -138,13 +138,13 @@ OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Earth x
 
 ```
 main        -> application, simulation, renderer, scenarios
-application -> simulation, renderer, ui, earth, (winit, egui, egui_winit, glam)
+application -> simulation, renderer, ui, terra, (winit, egui, egui_winit, glam)
 ui          -> (egui)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState), earth, moon, planet, (wgpu, egui_wgpu, ktx2, glam)
-simulation  -> earth, moon, planet, ui, (satkit, egui via ui, glam)  # impl UIDrawable
+renderer    -> simulation (RenderState), terra, luna, planet, (wgpu, egui_wgpu, ktx2, glam)
+simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # impl UIDrawable
                                        # for SimulationState; NO winit/wgpu/Camera
-earth       -> (glam)
-moon        -> (glam)
+terra       -> (glam)
+luna        -> (glam)
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # the 7 planets' data off the CelestialBody
                                        # variants (mutual ref with simulation::body)
@@ -171,9 +171,9 @@ celestial_to_world(&self) -> Mat3
     Earth-fixed world frame. Called by the application before each frame to
     resolve the camera into world space.
 
-camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::earth()]
+camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::terra()]
     Which body the orbital camera orbits this frame. The application reads it
-    and calls Camera::retarget before resolving eye/view_proj. Earth-only
+    and calls Camera::retarget before resolving eye/view_proj. Terra-only
     scenarios inherit the default; the eclipse scenarios override it from a
     TargetSelector (panel-driven).
 
@@ -268,6 +268,6 @@ need not know the `clock` submodule path.
   consumed by `application`'s `Camera` — the two allowed edges. `CameraTarget`
   is plain data: it names no `Camera`/winit/wgpu type, only the orbit body (a
   `CelestialBody` identity) + its world center, with geometry accessors
-  delegating through the identity to `earth`/`moon`/`planet`. The
+  delegating through the identity to `terra`/`luna`/`planet`. The
   scenario→application *camera* channel is the `Simulation::camera_target`
   return value, so the application still owns all camera mechanics.)

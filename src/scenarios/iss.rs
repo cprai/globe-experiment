@@ -92,13 +92,13 @@ impl Simulation for IssSimulation {
         RenderState {
             view_proj,
             camera_pos: eye,
-            // Earth target: the origin stays at Earth (planet-free scene).
+            // Terra target: the origin stays at Terra (planet-free scene).
             render_origin: Vec3::ZERO,
-            sun_pos_world: celestial.sun_pos_world,
+            sol_pos_world: celestial.sol_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
-            // The Earth system (Earth + Moon); no planets, so the planet
+            // The Terra system (Terra + Luna); no planets, so the planet
             // pipeline stays off.
-            celestial_bodies: celestial.earth_system_bodies(),
+            celestial_bodies: celestial.terra_system_bodies(),
             markers,
         }
     }

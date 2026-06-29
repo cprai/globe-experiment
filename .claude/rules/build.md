@@ -24,7 +24,7 @@ present. Currently eighteen entries:
   from satkit's astrokit-astro-data bucket) — embedded; loaded via
   `frametransform::init_iers_table_from_bytes` for the full celestial-sphere
   GCRF<->ITRF transforms.
-- **Six 8K Earth/star/Moon textures** (JPEG/TIFF verbatim): `8k_earth_daymap.jpg`,
+- **Six 8K Terra/star/Luna textures** (JPEG/TIFF verbatim): `8k_earth_daymap.jpg`,
   `8k_earth_nightmap.jpg`, `8k_earth_normal_map.tif`, `8k_earth_specular_map.tif`,
   `8k_stars_milky_way.jpg`, `8k_moon.jpg` (lunar albedo). Decoded at **runtime**
   by `renderer::upload_image` (not at build time). Whether each is sRGB or

@@ -86,9 +86,9 @@ struct CameraSpec {
     distance: f32,
     /// Tilt off nadir, degrees (0 looks straight down).
     tilt: f32,
-    /// Which body the camera orbits: `"earth"` (default) or `"moon"`. The
+    /// Which body the camera orbits: `"terra"` (default) or `"luna"`. The
     /// distance/tilt are relative to the chosen body's surface, so framing the
-    /// Moon usually wants a much smaller `distance` than the Earth.
+    /// Luna usually wants a much smaller `distance` than Terra.
     #[serde(default)]
     target: CameraTargetSpec,
 }
@@ -96,15 +96,15 @@ struct CameraSpec {
 /// The orbit body for the render camera. Mirrors the runtime [`CameraTarget`]
 /// kinds, but center-free: a body's world center is filled from the ephemeris
 /// at render time (the JSON only names the body). Lowercase JSON tokens
-/// (`"earth"`, `"moon"`, `"mars"`, ...); defaults to Earth so existing scenes
+/// (`"terra"`, `"luna"`, `"mars"`, ...); defaults to Terra so existing scenes
 /// are unchanged. A planet target renders with a floating origin (see
 /// `CameraTarget::render_origin`).
 #[derive(serde::Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum CameraTargetSpec {
     #[default]
-    Earth,
-    Moon,
+    Terra,
+    Luna,
     Mercury,
     Venus,
     Mars,
@@ -118,8 +118,8 @@ impl CameraTargetSpec {
     /// The celestial-body identity this token names.
     fn body(self) -> CelestialBody {
         match self {
-            CameraTargetSpec::Earth => CelestialBody::EARTH,
-            CameraTargetSpec::Moon => CelestialBody::MOON,
+            CameraTargetSpec::Terra => CelestialBody::TERRA,
+            CameraTargetSpec::Luna => CelestialBody::LUNA,
             CameraTargetSpec::Mercury => CelestialBody::Mercury,
             CameraTargetSpec::Venus => CelestialBody::Venus,
             CameraTargetSpec::Mars => CelestialBody::Mars,
@@ -133,8 +133,8 @@ impl CameraTargetSpec {
     /// Lowercase body name, for the summary line.
     fn name(self) -> &'static str {
         match self {
-            CameraTargetSpec::Earth => "earth",
-            CameraTargetSpec::Moon => "moon",
+            CameraTargetSpec::Terra => "terra",
+            CameraTargetSpec::Luna => "luna",
             CameraTargetSpec::Mercury => "mercury",
             CameraTargetSpec::Venus => "venus",
             CameraTargetSpec::Mars => "mars",
@@ -186,7 +186,7 @@ pub fn run(params: RenderParams) {
     // is sampled with the galactic-corrected `star_tex_rot_inv` below.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    // Resolve the orbit body: Earth at the origin, or the Moon/a planet at its
+    // Resolve the orbit body: Terra at the origin, or the Luna/a planet at its
     // live ephemeris center (the celestial sphere carries every body). The
     // distance clamp then uses the chosen target's radius-scaled limits.
     let body = scene.camera.target.body();
@@ -210,10 +210,10 @@ pub fn run(params: RenderParams) {
         view_proj: camera.view_proj(aspect, celestial_to_world),
         camera_pos: eye,
         render_origin: camera.target.render_origin(),
-        sun_pos_world: celestial.sun_pos_world,
+        sol_pos_world: celestial.sol_pos_world,
         star_rot_inv: celestial.star_tex_rot_inv,
-        // The whole list (Earth system + all planets) so any body can be the
-        // render target; when Earth/Moon is targeted the planets sit far
+        // The whole list (Terra system + all planets) so any body can be the
+        // render target; when Terra/Luna is targeted the planets sit far
         // off-screen.
         celestial_bodies: celestial.bodies.clone(),
         // Bodies only: render mode tracks no satellites, so no markers.

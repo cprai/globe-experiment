@@ -1,11 +1,11 @@
 mod application;
-mod earth;
-mod moon;
+mod luna;
 mod planet;
 mod renderer;
 mod scenarios;
 mod simulation;
 mod snapshot;
+mod terra;
 mod ui;
 
 use std::path::PathBuf;
@@ -53,8 +53,8 @@ enum Cli {
     Render {
         /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
         /// {"longitude", "latitude", "distance" (km), "tilt", "target":
-        /// "earth"|"moon"|"mercury"|...|"neptune"}, "ui": [panels]}`.
-        /// `camera.target` and `ui` are optional (target defaults to "earth";
+        /// "terra"|"luna"|"mercury"|...|"neptune"}, "ui": [panels]}`.
+        /// `camera.target` and `ui` are optional (target defaults to "terra";
         /// omit `ui` for a body-only frame). See `snapshot::SceneSpec` /
         /// `ui::UiPanel`. Unknown keys are rejected.
         #[arg(long)]
@@ -83,15 +83,15 @@ enum ScenarioName {
     /// The International Space Station and the Hubble Space Telescope.
     #[value(name = "iss_and_hubble")]
     IssAndHubble,
-    /// The 2025-03-14 total lunar eclipse (no satellites; framed on the Moon).
+    /// The 2025-03-14 total lunar eclipse (no satellites; framed on Luna).
     #[value(name = "lunar_eclipse")]
     LunarEclipse,
     /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
     /// side).
     #[value(name = "solar_eclipse")]
     SolarEclipse,
-    /// The whole solar system: fly the camera to and orbit any of Earth, the
-    /// Moon, or the seven planets (no satellites).
+    /// The whole solar system: fly the camera to and orbit any of Terra, the
+    /// Luna, or the seven planets (no satellites).
     #[value(name = "solar_system")]
     SolarSystem,
 }

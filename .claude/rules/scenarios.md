@@ -29,39 +29,39 @@ range-check it against the EOP window below).
 ### Initial camera framing (optional)
 
 A scenario's `run()` can frame its event on launch instead of the default
-whole-Earth view: build the simulation, read its `celestial_sphere`, compute a
+whole-Terra view: build the simulation, read its `celestial_sphere`, compute a
 `Camera` with `Camera::looking_toward(target, star_rot_inv, world_look,
 distance)` (orbits `target` with the look axis along a world-frame direction —
-e.g. Earth target aimed at `-sun_dir` for the day side, or a Moon target aimed
-at the Moon's center (`celestial.moon().placement.pos_world`)), and pass it to
+e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna target aimed
+at Luna's center (`celestial.luna().placement.pos_world`)), and pass it to
 `ApplicationState::with_camera(sim, camera)`
 instead of `::new`. The camera is fully interactive afterward. The solar eclipse
-frames the Earth day side; the lunar eclipse launches **orbiting the Moon** (a
-Moon-target camera looking toward the Moon's center sits on the Moon's
-Earth-facing side, so the Earth is behind the camera — no limb offset needed).
+frames the Terra day side; the lunar eclipse launches **orbiting Luna** (a
+Luna-target camera looking toward Luna's center sits on Luna's
+Terra-facing side, so Terra is behind the camera — no limb offset needed).
 
-### Camera-target selection (Earth or Moon)
+### Camera-target selection (Terra or Luna)
 
-A scenario that offers more than the Earth holds a `simulation::TargetSelector`
+A scenario that offers more than Terra holds a `simulation::TargetSelector`
 and overrides `Simulation::camera_target()` to return
-`self.selector.resolve(self.simulation.celestial_sphere.moon().placement.pos_world)`.
+`self.selector.resolve(self.simulation.celestial_sphere.luna().placement.pos_world)`.
 The
-selector's EARTH / MOON radio panel is appended in `get_drawables` (after the
+selector's TERRA / LUNA radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scenario's `advance()` calls
 `self.selector.apply_requests()` *before* the frame's `camera_target` is read, so
 the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
 the clock's Run toggle vs speed slider). Satellite scenarios skip all this and
-inherit the Earth-only default.
+inherit the Terra-only default.
 
 ### Multi-body selection (solar_system)
 
 The `solar_system` scenario (empty, no satellites; clock from 2025-06-01) offers
 **nine** orbit bodies, so it holds a `simulation::BodySelector` instead of
 `TargetSelector`. `SELECTABLE_BODIES` lists them ordered by distance from the
-Sun with the Moon right after Earth (Mercury, Venus, Earth, Moon, Mars, Jupiter,
-Saturn, Uranus, Neptune); `selected` defaults to `EARTH_INDEX` so the scenario
-starts on the Earth (matching the default whole-Earth camera). The panel shows
+Sol with Luna right after Terra (Mercury, Venus, Terra, Luna, Mars, Jupiter,
+Saturn, Uranus, Neptune); `selected` defaults to `TERRA_INDEX` so the scenario
+starts on Terra (matching the default whole-Terra camera). The panel shows
 **one always-visible latching key per body** (a single column, the chosen one
 lit), so each key callback needs a **disjoint** `request_*` field — hence nine
 named flags (not an array, whose elements can't be captured disjointly), in
@@ -73,7 +73,7 @@ via `celestial.center_world(body)`. `frame_state` fills
 `get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
-  `crate::simulation` for visibility, and reads sun/star values from
+  `crate::simulation` for visibility, and reads sol/star values from
   `self.simulation.celestial_sphere`. The near-identical propagation loop
   across scenarios is **intentional** — each may diverge (marker style,
   visibility logic, non-satellite objects); premature factoring adds

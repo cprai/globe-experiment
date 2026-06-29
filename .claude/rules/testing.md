@@ -18,14 +18,14 @@
   parentheses); treat its errors as worth investigating but confirm with an
   actual run. Naga is authoritative.
 - **Manual pass after risky changes**: pan, flick (inertia), zoom to
-  min/max, tilt to clamp, play/pause + speed slider (watch Sun, stars, and
+  min/max, tilt to clamp, play/pause + speed slider (watch Sol, stars, and
   satellite advance together), window resize, minimize/restore. Confirm idle
   (paused) renders **zero** frames.
 - **After atmosphere-constant or mapping changes**, verify **both** the bake
   and shader sides and re-run — bit-identical output is the goal for neutral
   changes.
 
-## Astronomical correctness verification (Sun + star backdrop)
+## Astronomical correctness verification (Sol + star backdrop)
 
 How to prove the celestial sphere is astronomically right (not just that it
 renders), independent of satkit. Used to validate the full IERS-2010 switch.
@@ -36,12 +36,12 @@ time ch. 12 (GMST/GAST). Shares no code or data with satkit/DE440, so agreement
 is a real cross-check. Expect ~0.01 deg residual (Meeus's own theory error), no
 systematic bias.
 
-**Sun / Earth orientation — use the printed subsolar point.** `render` prints
+**Sol / Earth orientation — use the printed subsolar point.** `render` prints
 `subsolar: lat L lon O`. The relationships:
 - `subsolar_lat = solar declination` (delta).
-- `subsolar_lon = RA_sun - GAST` (reduce to +/-180). This is epoch-clean (GHA
-  is a physical ECEF angle), so it validates the Sun ephemeris AND the sidereal
-  Earth-rotation phase that also orients the stars. Run a spread of dates
+- `subsolar_lon = RA_sol - GAST` (reduce to +/-180). This is epoch-clean (GHA
+  is a physical ECEF angle), so it validates the Sol ephemeris AND the sidereal
+  Terra-rotation phase that also orients the stars. Run a spread of dates
   (equinoxes/solstices + arbitrary + old, to exercise the EOP range); both
   agree to <0.01 deg.
 
@@ -50,10 +50,10 @@ systematic bias.
 `p.transpose() * (star_rot_inv * w)` (undo the Y-up permutation), then
 `RA=atan2(y,x)`, `Dec=asin(z)`. Check at **J2000.0** (`2000-01-01T12:00:00Z`),
 where the J2000/GCRF backdrop and the of-date sky coincide (epoch-clean):
-- Earth pole `w=(0,1,0)` -> **Dec = 90.000** (pole sits on the celestial pole).
+- Terra pole `w=(0,1,0)` -> **Dec = 90.000** (pole sits on the celestial pole).
 - Prime-meridian/equator point `w=(0,0,1)` -> **RA = GAST** (the star frame's
   absolute rotational pinning equals sidereal time).
-- `star_rot_inv * sun_dir` -> Sun's RA/Dec on the backdrop, matches Meeus (Sun
+- `star_rot_inv * sol_dir` -> Sol's RA/Dec on the backdrop, matches Meeus (Sol
   lands among the correct constellations).
 
 **Precession sanity (what the IERS tables drive).** Away from J2000 the J2000-

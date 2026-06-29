@@ -27,7 +27,7 @@ changing them safely.
    - the **Bruneton transmittance mapping**.
    These appear in both `build.rs::bake_inscatter` / `bake_transmittance` /
    `sample_transmittance` and in `scene.wgsl::fs_atmosphere` /
-   `sun_transmittance`. A change on one side silently corrupts the atmosphere.
+   `sol_transmittance`. A change on one side silently corrupts the atmosphere.
 
 ## Steps
 1. Edit the constant/mapping on **both** the bake side (`build.rs`) and the
