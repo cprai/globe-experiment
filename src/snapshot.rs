@@ -253,7 +253,7 @@ pub fn run(params: RenderParams) {
         ));
     }
 
-    print_summary(&params, &scene.camera, &time, &celestial, distance);
+    print_summary(&params, &scene.camera, &time, distance);
 }
 
 /// Parses an RFC3339 UTC datetime into a satkit [`Instant`] via `humantime`.
@@ -313,16 +313,9 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
 }
 
 /// Prints a concise summary of the rendered frame to stdout: the resolved
-/// datetime, the subsolar point (so the day side / terminator location is
-/// known), the camera, and the output path. Informational only - render mode is
-/// deliberately silent about EOP range (see the module note).
-fn print_summary(
-    params: &RenderParams,
-    camera: &CameraSpec,
-    time: &Instant,
-    celestial: &CelestialSphere,
-    distance: f32,
-) {
+/// datetime, the camera, and the output path. Informational only - render mode
+/// is deliberately silent about EOP range (see the module note).
+fn print_summary(params: &RenderParams, camera: &CameraSpec, time: &Instant, distance: f32) {
     let (year, month, day, hour, minute, second) = time.as_datetime();
 
     // Note if the supplied distance was clamped into the camera's valid range.
@@ -337,22 +330,6 @@ fn print_summary(
         "  datetime:  {year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{:02} UTC",
         second as i32
     );
-    println!(
-        "  subsolar:  lat {:.3} lon {:.3} deg",
-        celestial.subsolar_lat_deg, celestial.subsolar_lon_deg
-    );
-    // The inertial camera longitude/latitude whose look axis points straight at
-    // the Moon (earth in the foreground); offset a few degrees off it to clear
-    // the Earth's limb and frame the Moon. Parallels the subsolar aim hint.
-    let moon_dir = celestial.moon_pos_world.normalize();
-    let aim = -(celestial.star_rot_inv * moon_dir);
-    let aim_lon = aim.x.atan2(aim.z).to_degrees();
-    let aim_lat = aim.y.asin().to_degrees();
-    println!(
-        "  moon:      sublunar lat {:.3} lon {:.3} deg, distance {:.0} km",
-        celestial.sublunar_lat_deg, celestial.sublunar_lon_deg, celestial.moon_distance_km
-    );
-    println!("  moon-aim:  camera lon {aim_lon:.3} lat {aim_lat:.3} deg (look toward the Moon)");
     let target = camera.target.name();
     println!(
         "  camera:    orbit {target}, lon {:.3} lat {:.3} deg, distance {:.1} km{clamped}, tilt {:.3} deg",

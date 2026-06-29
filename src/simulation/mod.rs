@@ -18,8 +18,8 @@ pub use clock::Clock;
 
 use crate::planet::Planet;
 use crate::ui::{
-    DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
-    Slider, Toggle, UIDrawable, UIDrawablePanel,
+    Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
+    UIDrawable, UIDrawablePanel,
 };
 use crate::{earth, moon};
 use celestial_sphere::{CelestialSphere, PlanetState};
@@ -604,8 +604,8 @@ impl BodySelector {
 }
 
 impl UIDrawable for SimulationState {
-    /// The shared-core panel, read from live state: the ephemeris subsolar
-    /// point, the clock datetime, and the play/pause + speed controls whose
+    /// The shared-core panel, read from live state: the clock datetime, and
+    /// the play/pause + speed controls whose
     /// callbacks mutate the live clock. The two control callbacks capture
     /// disjoint clock fields (`paused` vs `multiplier`) via direct field
     /// assignment - a `Clock` method would borrow the whole clock and collide.
@@ -614,8 +614,6 @@ impl UIDrawable for SimulationState {
         // so no shared borrow of the clock outlives into the mutable callback
         // captures below.
         let datetime = self.clock.datetime_label();
-        let subsolar_lat = format!("{:.2} deg", self.celestial_sphere.subsolar_lat_deg);
-        let subsolar_lon = format!("{:.2} deg", self.celestial_sphere.subsolar_lon_deg);
         let speed = format!("{:.1}x", self.clock.multiplier);
         let running = !self.clock.paused;
 
@@ -631,36 +629,29 @@ impl UIDrawable for SimulationState {
         let elements: Vec<Box<dyn Instrument + '_>> = vec![
             Box::new(Header {
                 position: [0.0, 0.0],
-                title: "Time / Subsolar".to_string(),
+                title: "Time".to_string(),
             }),
             Box::new(Readout {
                 position: [0.0, 26.0],
                 label: "UTC".to_string(),
                 value: datetime,
             }),
-            Box::new(DualReadout {
-                position: [0.0, 52.0],
-                left_label: "Lat".to_string(),
-                left_value: subsolar_lat,
-                right_label: "Lon".to_string(),
-                right_value: subsolar_lon,
-            }),
             Box::new(InteractiveToggle {
                 toggle: Toggle {
-                    position: [0.0, 84.0],
+                    position: [0.0, 52.0],
                     label: "Run".to_string(),
                     active: running,
                 },
                 on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
             }),
             Box::new(Readout {
-                position: [104.0, 86.0],
+                position: [104.0, 54.0],
                 label: "Speed".to_string(),
                 value: speed,
             }),
             Box::new(InteractiveSlider {
                 slider: Slider {
-                    position: [0.0, 114.0],
+                    position: [0.0, 82.0],
                     value: speed_exp,
                     range: exp_range,
                 },
@@ -671,7 +662,7 @@ impl UIDrawable for SimulationState {
         vec![UIDrawablePanel {
             anchor: PanelAnchor::TopLeft,
             offset: [10.0, 10.0],
-            size: [340.0, 148.0],
+            size: [340.0, 116.0],
             elements,
         }]
     }

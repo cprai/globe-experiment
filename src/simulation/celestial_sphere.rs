@@ -144,9 +144,6 @@ pub struct CelestialSphere {
     /// from the camera-rig frame above so the static galactic->equatorial
     /// re-orientation does not move existing scenarios' camera framing.
     pub star_tex_rot_inv: Mat3,
-    /// Subsolar geodetic latitude/longitude (degrees), for display.
-    pub subsolar_lat_deg: f32,
-    pub subsolar_lon_deg: f32,
     /// Moon center in the Earth-fixed (ECEF) world frame, km. At true scale
     /// (~384,400 km away), so the Moon renders at its real angular size and
     /// distance.
@@ -161,13 +158,6 @@ pub struct CelestialSphere {
     /// Moon mean radius, km - for the analytic eclipse-shadow geometry (the
     /// Moon as a shadow caster/receiver is treated as a sphere of this radius).
     pub moon_radius_km: f32,
-    /// Sublunar geodetic latitude/longitude (degrees) - the geographic point
-    /// directly beneath the Moon. For display / aiming, like the subsolar
-    /// point.
-    pub sublunar_lat_deg: f32,
-    pub sublunar_lon_deg: f32,
-    /// Earth-Moon center distance, km (for display).
-    pub moon_distance_km: f32,
     /// The seven planets' world-frame centers + orientations this frame, in
     /// `planet::ALL` order. True geocentric positions (DE440) and IAU
     /// orientation - consumed by the solar-system scenario; ignored by the
@@ -233,10 +223,6 @@ impl CelestialSphere {
         let galactic_offset = p * R_EQU2GAL * p.transpose();
         let star_tex_rot_inv = galactic_offset * star_rot_inv;
 
-        // Subsolar point (inverse of earth::geodetic_normal) for display.
-        let subsolar_lat_deg = sun_dir.y.asin().to_degrees();
-        let subsolar_lon_deg = sun_dir.x.atan2(sun_dir.z).to_degrees();
-
         // Moon: position from the same DE440 ephemeris as the Sun (GCRF,
         // inertial, meters), rotated into the Earth-fixed world frame. Rendered
         // at true scale, so it sits ~384,400 km out and shows its real angular
@@ -275,24 +261,14 @@ impl CelestialSphere {
             }
         });
 
-        let moon_distance_km = moon_pos_world.length();
-        let moon_dir = moon_pos_world / moon_distance_km;
-        let sublunar_lat_deg = moon_dir.y.asin().to_degrees();
-        let sublunar_lon_deg = moon_dir.x.atan2(moon_dir.z).to_degrees();
-
         Self {
             sun_dir,
             sun_pos_world,
             star_rot_inv,
             star_tex_rot_inv,
-            subsolar_lat_deg,
-            subsolar_lon_deg,
             moon_pos_world,
             moon_rot,
             moon_radius_km: moon::MEAN_RADIUS_KM,
-            sublunar_lat_deg,
-            sublunar_lon_deg,
-            moon_distance_km,
             planets,
         }
     }
