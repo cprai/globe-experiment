@@ -8,6 +8,9 @@ files. Read all loaded rules before making changes.
 **When `.claude/rules/*.md` and the source disagree, the source wins.**
 Look-tuning constants in `scene.wgsl` in particular drift between sessions.
 
+**After completing all changes, print a one-line commit message describing the
+currently uncommitted changes — as an example only. Do NOT make any commits.**
+
 ---
 
 ## What this is
