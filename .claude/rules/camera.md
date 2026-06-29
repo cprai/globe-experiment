@@ -37,7 +37,7 @@ camera that orbits `target` and whose look axis points along a **world-frame**
 direction (it maps the direction back through `star_rot_inv` into the inertial
 rig). Scenarios use it with `ApplicationState::with_camera(sim, camera)` to frame
 an event on launch (solar eclipse: Earth target aimed at `-sun_dir`; lunar
-eclipse: Moon target aimed at `moon_pos_world`, so it launches orbiting the
+eclipse: Moon target aimed at the Moon's center, so it launches orbiting the
 Moon); the default constructor `::new` still gives the whole-Earth view.
 
 ## Render frame (floating origin) — all rendering is camera-target-local
@@ -50,8 +50,9 @@ planet's center, or `Vec3::ZERO` for Earth/Moon). The GPU never handles an
 absolute world position.
 
 - `RenderState.render_origin` is the target center; the renderer subtracts it on
-  the **CPU** (in `prepare`) from every absolute body position
-  (`sun_pos_world`, `moon_pos_world`, each planet's `pos_world`) before upload.
+  the **CPU** (in `prepare`) from every absolute body position (`sun_pos_world`,
+  and each `BodyState.placement.pos_world` in `celestial_bodies` — the Moon and
+  each planet) before upload.
   `render_origin` is **not** a shader uniform — the shader is purely local.
 - The orbited body's center IS `render_origin`, so its uploaded position is a
   **bit-exact zero** (`pos - render_origin == 0`): its mesh is drawn in pure
@@ -69,15 +70,18 @@ absolute world position.
 
 ## Camera target (orbit Earth, Moon, or a planet)
 
-The camera orbits a **`CameraTarget`** (`{ Earth, Moon { center_world },
-Planet { planet, center_world } }`, defined in `simulation`, plain data +
-geometry accessors delegating to `earth` / `moon` / `planet` — a sanctioned
-`simulation`->`application` data edge like `RenderState`).
+The camera orbits a **`CameraTarget`** (a struct `{ body: CelestialBody,
+center_world: Vec3 }`, defined in `simulation`, plain data + geometry accessors
+delegating through the `CelestialBody` identity to `earth` / `moon` / `planet` —
+a sanctioned `simulation`->`application` data edge like `RenderState`). The
+`body` is `EarthSystem(Earth)`, `EarthSystem(Moon)`, or `Planet(p)`; orbiting
+the Moon is `EarthSystem(Moon)`.
 `Camera` holds a `target` field. The rig is built by `world_frame_relative` in
 the render frame (see above): for Earth/Moon it equals the absolute rig; for a
 planet it is the small local offset. The camera stays star-fixed while tracking
-the body's moving ephemeris position. `same_kind` treats two `Planet`s as equal
-only when the *same* planet (so cycling Mars->Jupiter reframes); `retarget`
+the body's moving ephemeris position. `same_kind` compares the `CelestialBody`
+identity, so two planet targets are equal only when the *same* planet (cycling
+Mars->Jupiter reframes); `retarget`
 re-aims at any off-origin center.
 The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of

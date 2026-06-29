@@ -57,7 +57,7 @@ impl Simulation for SolarEclipseSimulation {
 
     fn camera_target(&self) -> CameraTarget {
         self.selector
-            .resolve(self.simulation.celestial_sphere.moon_pos_world)
+            .resolve(self.simulation.celestial_sphere.moon().placement.pos_world)
     }
 
     fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
@@ -71,10 +71,9 @@ impl Simulation for SolarEclipseSimulation {
             render_origin: Vec3::ZERO,
             sun_pos_world: celestial.sun_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
-            moon_pos_world: celestial.moon_pos_world,
-            moon_rot: celestial.moon_rot,
-            moon_radius_km: celestial.moon_radius_km,
-            planets: Vec::new(),
+            // The Earth system (Earth + Moon); no planets, so the planet
+            // pipeline stays off.
+            celestial_bodies: celestial.earth_system_bodies(),
             markers: Vec::new(),
         }
     }
@@ -105,7 +104,7 @@ pub fn run() {
     // instant. The view stays interactive afterward.
     let celestial = &sim.simulation.celestial_sphere;
     let camera = Camera::looking_toward(
-        CameraTarget::Earth,
+        CameraTarget::earth(),
         celestial.star_rot_inv,
         -celestial.sun_dir,
         VIEW_DISTANCE_KM,

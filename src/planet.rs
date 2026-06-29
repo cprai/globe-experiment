@@ -2,14 +2,16 @@
 //! real-world units - the multi-body sibling of [`crate::earth`] and
 //! [`crate::moon`].
 //!
-//! Like those modules this is **pure body geometry**: it gives each planet's
-//! body-fixed surface points and outward normals in the same parameterization
-//! convention (**+Y is north** / the rotation pole, prime meridian -> **+Z**,
-//! +X is 90 deg east), plus the data the rest of the program needs to place,
-//! orient, and texture the body. The orientation of each body frame in the
-//! world is supplied separately by the ephemeris-driven IAU rotation (see
-//! `celestial_sphere`); here we only define the geometry + the IAU constants it
-//! consumes. It deliberately depends on neither satkit nor wgpu, exactly like
+//! The planets are no longer a separate enum: they are variants of
+//! [`CelestialBody`] (`Mercury`..`Neptune`). This module hangs their
+//! planet-specific data and geometry off those variants - the oblate radii, the
+//! IAU rotation constants, the texture file, and the body-fixed surface
+//! points/normals - in the same parameterization convention as the Earth/Moon
+//! (**+Y is north** / the rotation pole, prime meridian -> **+Z**, +X is 90 deg
+//! east). The orientation of each body frame in the world is supplied
+//! separately by the ephemeris-driven IAU rotation (see `celestial_sphere`);
+//! here we only define the geometry + the IAU constants it consumes. It
+//! deliberately depends on neither satkit nor wgpu, exactly like
 //! `earth`/`moon`.
 //!
 //! Each planet is modeled as an **oblate ellipsoid of revolution** (equatorial
@@ -19,32 +21,21 @@
 
 use glam::Vec3;
 
-/// The seven classical planets, in increasing distance from the Sun. Earth and
-/// the Moon are handled by their own modules (`earth`/`moon`); this enum is the
-/// set of bodies that share the generic textured/sun-lit planet rendering path.
-/// The array order is also the order the renderer loads the planet textures and
-/// builds the per-planet meshes/bind groups, so the two must not drift.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Planet {
-    Mercury,
-    Venus,
-    Mars,
-    Jupiter,
-    Saturn,
-    Uranus,
-    Neptune,
-}
+use crate::simulation::body::CelestialBody;
 
-/// Every planet, in load/render order. Indexed by the renderer's per-planet GPU
-/// resource arrays and by the scenario's body selector.
-pub const ALL: [Planet; 7] = [
-    Planet::Mercury,
-    Planet::Venus,
-    Planet::Mars,
-    Planet::Jupiter,
-    Planet::Saturn,
-    Planet::Uranus,
-    Planet::Neptune,
+/// Every planet, in increasing distance from the Sun - the load/render order.
+/// Indexed by the renderer's per-planet GPU resource arrays and used to filter
+/// the planet entries out of the celestial-body render list. The array order is
+/// also the order the renderer loads the planet textures and builds the
+/// per-planet meshes/bind groups, so the two must not drift.
+pub const ALL: [CelestialBody; 7] = [
+    CelestialBody::Mercury,
+    CelestialBody::Venus,
+    CelestialBody::Mars,
+    CelestialBody::Jupiter,
+    CelestialBody::Saturn,
+    CelestialBody::Uranus,
+    CelestialBody::Neptune,
 ];
 
 /// IAU rotational elements for a planet (IAU/IAG Working Group on Cartographic
@@ -68,7 +59,6 @@ pub struct Rotation {
 
 /// Per-planet constants table entry.
 struct Data {
-    name: &'static str,
     /// Equatorial radius (km); the +X and +Z semi-axes.
     equatorial_radius_km: f64,
     /// Polar radius (km); the +Y (rotation-pole) semi-axis.
@@ -80,14 +70,15 @@ struct Data {
     rotation: Rotation,
 }
 
-impl Planet {
+impl CelestialBody {
     /// The planet's constants. `const fn` so the table is evaluated at compile
-    /// time and the accessors below stay zero-cost.
-    const fn data(self) -> Data {
+    /// time and the accessors below stay zero-cost. Panics on a non-planet body
+    /// (the Earth/Moon have their own geometry modules); the accessors are only
+    /// ever reached for planet variants.
+    const fn planet_data(self) -> Data {
         match self {
             // Mercury: a near-perfect sphere; prograde, very slow spin.
-            Planet::Mercury => Data {
-                name: "Mercury",
+            CelestialBody::Mercury => Data {
                 equatorial_radius_km: 2439.7,
                 polar_radius_km: 2439.7,
                 texture_file: "8k_mercury.jpg",
@@ -101,8 +92,7 @@ impl Planet {
                 },
             },
             // Venus: sphere; retrograde spin (negative w_rate), nearly upright.
-            Planet::Venus => Data {
-                name: "Venus",
+            CelestialBody::Venus => Data {
                 equatorial_radius_km: 6051.8,
                 polar_radius_km: 6051.8,
                 texture_file: "8k_venus_surface.jpg",
@@ -116,8 +106,7 @@ impl Planet {
                 },
             },
             // Mars: slightly oblate; ~24.6 h prograde day.
-            Planet::Mars => Data {
-                name: "Mars",
+            CelestialBody::Mars => Data {
                 equatorial_radius_km: 3396.19,
                 polar_radius_km: 3376.20,
                 texture_file: "8k_mars.jpg",
@@ -131,8 +120,7 @@ impl Planet {
                 },
             },
             // Jupiter: strongly oblate; ~9.9 h System III rotation.
-            Planet::Jupiter => Data {
-                name: "Jupiter",
+            CelestialBody::Jupiter => Data {
                 equatorial_radius_km: 71492.0,
                 polar_radius_km: 66854.0,
                 texture_file: "8k_jupiter.jpg",
@@ -146,8 +134,7 @@ impl Planet {
                 },
             },
             // Saturn: most oblate of all; ~10.7 h rotation.
-            Planet::Saturn => Data {
-                name: "Saturn",
+            CelestialBody::Saturn => Data {
                 equatorial_radius_km: 60268.0,
                 polar_radius_km: 54364.0,
                 texture_file: "8k_saturn.jpg",
@@ -161,8 +148,7 @@ impl Planet {
                 },
             },
             // Uranus: oblate; retrograde spin about a nearly equator-on pole.
-            Planet::Uranus => Data {
-                name: "Uranus",
+            CelestialBody::Uranus => Data {
                 equatorial_radius_km: 25559.0,
                 polar_radius_km: 24973.0,
                 texture_file: "2k_uranus.jpg",
@@ -176,8 +162,7 @@ impl Planet {
                 },
             },
             // Neptune: oblate; prograde (the N-libration trig terms dropped).
-            Planet::Neptune => Data {
-                name: "Neptune",
+            CelestialBody::Neptune => Data {
                 equatorial_radius_km: 24764.0,
                 polar_radius_km: 24341.0,
                 texture_file: "2k_neptune.jpg",
@@ -190,78 +175,73 @@ impl Planet {
                     w_rate_per_day: 541.1397757,
                 },
             },
+            // The Earth/Moon are not planets - they have their own geometry
+            // modules and never reach the planet accessors.
+            CelestialBody::EarthSystem(_) => {
+                panic!("planet data requested for a non-planet body")
+            }
         }
-    }
-
-    /// Display name (e.g. "Jupiter"), for the body-selector readout.
-    pub fn name(self) -> &'static str {
-        self.data().name
-    }
-
-    /// IAU volumetric-ish mean radius (km), `(2*req + rpol)/3`. Used to scale
-    /// the camera's distance/zoom/near limits so the interaction feel is the
-    /// same fraction of the body whichever planet is orbited.
-    pub fn mean_radius_km(self) -> f32 {
-        let d = self.data();
-        ((2.0 * d.equatorial_radius_km + d.polar_radius_km) / 3.0) as f32
     }
 
     /// Equatorial semi-axis (+X/+Z) in km. The renderer uses it for the
     /// apparent-size test and to size + trace the billboard impostor ellipsoid.
+    /// Planet variants only.
     pub fn equatorial_radius_km(self) -> f32 {
-        self.data().equatorial_radius_km as f32
+        self.planet_data().equatorial_radius_km as f32
     }
 
     /// Polar semi-axis (+Y, the rotation pole) in km; the impostor's
-    /// oblateness.
+    /// oblateness. Planet variants only.
     pub fn polar_radius_km(self) -> f32 {
-        self.data().polar_radius_km as f32
+        self.planet_data().polar_radius_km as f32
     }
 
     /// The IAU rotational elements (evaluated against time in
-    /// `celestial_sphere`).
+    /// `celestial_sphere`). Planet variants only.
     pub fn rotation(self) -> Rotation {
-        self.data().rotation
+        self.planet_data().rotation
     }
 
-    /// `OUT_DIR` file name of the planet's albedo texture.
+    /// `OUT_DIR` file name of the planet's albedo texture. Planet variants
+    /// only.
     pub fn texture_file(self) -> &'static str {
-        self.data().texture_file
+        self.planet_data().texture_file
     }
+}
 
-    /// Point on the oblate planet ellipsoid at the given planetographic
-    /// latitude/longitude (radians), in the body frame (km). Parametric form
-    /// (the sphere direction with each axis scaled by its semi-axis), matching
-    /// the equirectangular texture exactly as `earth`/`moon` do.
-    pub fn surface_position(self, latitude: f32, longitude: f32) -> Vec3 {
-        let d = self.data();
-        let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
-        let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
-        let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
+/// Point on the oblate planet ellipsoid at the given planetographic
+/// latitude/longitude (radians), in the body frame (km). Parametric form (the
+/// sphere direction with each axis scaled by its semi-axis), matching the
+/// equirectangular texture exactly as `earth`/`moon` do. `body` must be a
+/// planet variant.
+pub fn surface_position(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
+    let d = body.planet_data();
+    let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
+    let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
+    let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
 
-        Vec3::new(
-            (req * cos_lat * sin_lon) as f32,
-            (rpol * sin_lat) as f32,
-            (req * cos_lat * cos_lon) as f32,
-        )
-    }
+    Vec3::new(
+        (req * cos_lat * sin_lon) as f32,
+        (rpol * sin_lat) as f32,
+        (req * cos_lat * cos_lon) as f32,
+    )
+}
 
-    /// Outward unit normal of the oblate ellipsoid at the given latitude/
-    /// longitude (radians), in the body frame. The ellipsoid gradient
-    /// `(x/rx^2, y/ry^2, z/rz^2)` (with `rx = rz = req`, `ry = rpol`), not the
-    /// radial direction - so the gas giants' visible flattening lights
-    /// correctly at the poles.
-    pub fn geodetic_normal(self, latitude: f32, longitude: f32) -> Vec3 {
-        let d = self.data();
-        let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
-        let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
-        let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
+/// Outward unit normal of the oblate ellipsoid at the given latitude/longitude
+/// (radians), in the body frame. The ellipsoid gradient `(x/rx^2, y/ry^2,
+/// z/rz^2)` (with `rx = rz = req`, `ry = rpol`), not the radial direction - so
+/// the gas giants' visible flattening lights correctly at the poles. `body`
+/// must be a planet variant.
+pub fn geodetic_normal(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
+    let d = body.planet_data();
+    let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
+    let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
+    let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
 
-        Vec3::new(
-            (cos_lat * sin_lon / (req * req)) as f32,
-            (sin_lat / (rpol * rpol)) as f32,
-            (cos_lat * cos_lon / (req * req)) as f32,
-        )
-        .normalize()
-    }
+    Vec3::new(
+        (cos_lat * sin_lon / (req * req)) as f32,
+        (sin_lat / (rpol * rpol)) as f32,
+        (cos_lat * cos_lon / (req * req)) as f32,
+    )
+    .normalize()
 }

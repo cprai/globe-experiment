@@ -84,10 +84,13 @@ src/earth.rs             WGS84 constants + surface_position / geodetic_normal he
 src/moon.rs              lunar constants (triaxial ellipsoid radii, mean radius)
                          + surface_position / geodetic_normal (body-fixed frame);
                          the Earth-style single source of truth for Moon geometry
-src/planet.rs            the 7 planets: Planet enum + ALL + data-driven table
-                         (oblate radii, IAU rotation constants, texture file) +
-                         surface_position / geodetic_normal. satkit-free, like
-                         earth/moon
+src/planet.rs            the 7 planets' data, hung off the CelestialBody planet
+                         variants (no separate Planet enum): ALL[CelestialBody;7]
+                         + data-driven table (oblate radii, IAU rotation
+                         constants, texture file) accessed via impl CelestialBody
+                         + surface_position / geodetic_normal free fns. satkit-
+                         free, like earth/moon; references simulation::body for
+                         the CelestialBody type
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
                          (7 pipelines incl. Moon + planet mesh + planet
                          billboard; reversed-Z
@@ -97,19 +100,30 @@ src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen rend
                          (+ matching depth buffer)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
                          wgs84_ellipsoid + moon_ellipsoid + planet_ellipsoid
+src/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
+                         enum (EarthSystem(EarthSystemEntity Earth|Moon), then
+                         each planet Mercury..Neptune as its own variant) +
+                         total geometry accessors (name/mean_radius/surface/
+                         normal; planet data hangs off these variants in
+                         src/planet.rs), Placement (pos+rot), BodyState (identity
+                         + placement). The shared vocabulary for RenderState,
+                         CameraTarget, and the selectors
 src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          to Earth), SimulationState (core: clock + celestial
                          sphere) + its shared-core impl UIDrawable, RenderState
-                         (moon fields + render_origin/sun_pos_world/planets),
-                         SatelliteTelemetry, CameraTarget (Earth/Moon/Planet
-                         orbit body + render_origin(), consumed by application's
-                         Camera), TargetSelector (EARTH/MOON, eclipses),
-                         BodySelector (one latching key per body, 9 bodies
-                         ordered by distance from the Sun, solar_system)
+                         (render_origin/sun_pos_world + celestial_bodies:
+                         Vec<BodyState>, the flat render list incl. the Moon),
+                         SatelliteTelemetry, CameraTarget (struct: body:
+                         CelestialBody + center_world; render_origin(), consumed
+                         by application's Camera), TargetSelector (EARTH/MOON,
+                         eclipses), BodySelector (one latching key per body, 9
+                         bodies ordered by distance from the Sun, solar_system)
 src/simulation/celestial_sphere.rs  ephemeris-driven Sun + star-map orientation
                          + Moon position (DE440) and IAU lunar rotation;
                          sun_pos_world + the 7 planets' position (DE440) and IAU
-                         planet rotation (PlanetState[]); iau_body_to_gcrf helper
+                         planet rotation, all assembled into bodies:
+                         Vec<BodyState> (Earth, Moon, 7 planets in planet::ALL
+                         order); iau_body_to_gcrf helper
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/scene.wgsl       ALL shader code (7 passes in one module: + planet mesh
@@ -131,7 +145,9 @@ simulation  -> earth, moon, planet, ui, (satkit, egui via ui, glam)  # impl UIDr
                                        # for SimulationState; NO winit/wgpu/Camera
 earth       -> (glam)
 moon        -> (glam)
-planet      -> (glam)   # satkit-free body geometry, like earth/moon
+planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
+                                       # the 7 planets' data off the CelestialBody
+                                       # variants (mutual ref with simulation::body)
 scenarios   -> simulation, ui, application
 ```
 
@@ -155,7 +171,7 @@ celestial_to_world(&self) -> Mat3
     Earth-fixed world frame. Called by the application before each frame to
     resolve the camera into world space.
 
-camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::Earth]
+camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::earth()]
     Which body the orbital camera orbits this frame. The application reads it
     and calls Camera::retarget before resolving eye/view_proj. Earth-only
     scenarios inherit the default; the eclipse scenarios override it from a
@@ -250,7 +266,8 @@ need not know the `clock` submodule path.
   resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but
   consumed by `renderer`, and `CameraTarget` is defined in `simulation` but
   consumed by `application`'s `Camera` — the two allowed edges. `CameraTarget`
-  is plain data: it names no `Camera`/winit/wgpu type, only the orbit body +
-  its world center, with geometry accessors delegating to `earth`/`moon`. The
+  is plain data: it names no `Camera`/winit/wgpu type, only the orbit body (a
+  `CelestialBody` identity) + its world center, with geometry accessors
+  delegating through the identity to `earth`/`moon`/`planet`. The
   scenario→application *camera* channel is the `Simulation::camera_target`
   return value, so the application still owns all camera mechanics.)

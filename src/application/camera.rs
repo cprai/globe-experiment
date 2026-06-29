@@ -46,7 +46,7 @@ impl Default for Camera {
             // ~2 Earth radii above the surface: the whole body in view.
             distance: Self::DEFAULT_DISTANCE_RADII * earth::MEAN_RADIUS_KM,
             tilt: 0.0,
-            target: CameraTarget::Earth,
+            target: CameraTarget::earth(),
         }
     }
 }

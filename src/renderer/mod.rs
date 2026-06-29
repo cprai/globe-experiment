@@ -10,8 +10,9 @@ use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::earth;
+use crate::moon;
 use crate::planet;
-use crate::simulation::RenderState;
+use crate::simulation::{CelestialBody, EarthSystemEntity, RenderState};
 use mesh::Vertex;
 
 pub use headless::HeadlessRenderer;
@@ -904,8 +905,8 @@ impl SceneRenderer {
             });
 
         // The embedded planet albedo maps, in planet::ALL order. The literal
-        // include_bytes! paths must match `Planet::texture_file()` (the single
-        // source of the planet<->file mapping), which is also used as the upload
+        // include_bytes! paths must match `CelestialBody::texture_file()` (the
+        // single source of the planet<->file mapping), which is also used as the upload
         // label below; build.rs downloads exactly these names into OUT_DIR.
         let planet_texture_bytes: [&[u8]; 7] = [
             include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
@@ -1383,7 +1384,21 @@ impl SceneRenderer {
         // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
         // columns are padded to vec4 stride.
         let star_cols = render.star_rot_inv.to_cols_array_2d();
-        let moon_cols = render.moon_rot.to_cols_array_2d();
+
+        // The Moon's placement drives the lunar mesh + the analytic eclipse
+        // shadows; its radius is implied by the identity (`moon::MEAN_RADIUS_KM`).
+        // Pull it from the body list. If the scene carries no Moon (not the case
+        // in any current scenario) it simply isn't drawn, so a zero placement is
+        // harmless here.
+        let moon = render
+            .celestial_bodies
+            .iter()
+            .find(|state| state.body == CelestialBody::EarthSystem(EarthSystemEntity::Moon))
+            .map(|state| state.placement);
+        let moon_pos_world = moon.map_or(glam::Vec3::ZERO, |placement| placement.pos_world);
+        let moon_cols = moon
+            .map_or(glam::Mat3::IDENTITY, |placement| placement.rot)
+            .to_cols_array_2d();
 
         let uniforms = Uniforms {
             view_proj: render.view_proj.to_cols_array(),
@@ -1396,10 +1411,10 @@ impl SceneRenderer {
             moon_rot: std::array::from_fn(|c| {
                 [moon_cols[c][0], moon_cols[c][1], moon_cols[c][2], 0.0]
             }),
-            moon_pos: (render.moon_pos_world - origin).to_array(),
+            moon_pos: (moon_pos_world - origin).to_array(),
             _pad2: 0.0,
             moon_params: [
-                render.moon_radius_km,
+                moon::MEAN_RADIUS_KM,
                 earth::MEAN_RADIUS_KM,
                 SUN_ANGULAR_RADIUS_RAD,
                 0.0,
@@ -1416,20 +1431,36 @@ impl SceneRenderer {
         self.draw_earth_system = origin == glam::Vec3::ZERO;
 
         // One model uniform per planet to draw this frame, each at its center
-        // RELATIVE to the render origin. `render.planets` is in planet::ALL
-        // order (empty for non-solar scenarios), the same order as
-        // `self.planets`, so they zip 1:1. While here, classify each planet by
-        // its apparent size into the mesh vs billboard draw lists.
+        // RELATIVE to the render origin. `render.celestial_bodies` is a flat
+        // list (Earth, Moon, planets); the `Planet` entries drive this loop. The
+        // GPU resources `self.planets` are in `planet::ALL` order, so each
+        // planet identity maps to its slot by its position in that array. While
+        // here, classify each planet by its apparent size into the mesh vs
+        // billboard draw lists. No planet entry (Earth/Moon scenarios) ->
+        // both lists stay empty and the planet pipeline never runs.
         self.mesh_planet_indices.clear();
         self.billboard_planet_indices.clear();
-        for (i, (gpu, state)) in self.planets.iter().zip(&render.planets).enumerate() {
-            let pos_render = state.pos_world - origin;
-            let rot_cols = state.rot.to_cols_array_2d();
+        // Render-frame center per GPU slot, for the far-to-near billboard sort
+        // below. Only the slots filled this frame (reached via the index lists)
+        // are read.
+        let mut planet_pos_render = [glam::Vec3::ZERO; planet::ALL.len()];
+        for state in &render.celestial_bodies {
+            // Keep only the planets: their identity's position in `planet::ALL`
+            // is also their GPU slot. Earth/Moon are not in that array, so this
+            // filters them out.
+            let body = state.body;
+            let Some(i) = planet::ALL.iter().position(|candidate| *candidate == body) else {
+                continue;
+            };
+            let gpu = &self.planets[i];
+            let pos_render = state.placement.pos_world - origin;
+            planet_pos_render[i] = pos_render;
+            let rot_cols = state.placement.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
                 pos: pos_render.to_array(),
-                equatorial_radius_km: state.planet.equatorial_radius_km(),
-                polar_radius_km: state.planet.polar_radius_km(),
+                equatorial_radius_km: body.equatorial_radius_km(),
+                polar_radius_km: body.polar_radius_km(),
                 _pad: [0.0; 3],
             };
             queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&planet_uniform));
@@ -1438,11 +1469,8 @@ impl SceneRenderer {
             // frame): 2*atan(req/distance). Below the threshold the planet is a
             // few pixels at most, so it goes to the billboard impostor.
             let distance = (pos_render - render.camera_pos).length();
-            let arcsec = 2.0
-                * (state.planet.equatorial_radius_km() / distance)
-                    .atan()
-                    .to_degrees()
-                * 3600.0;
+            let arcsec =
+                2.0 * (body.equatorial_radius_km() / distance).atan().to_degrees() * 3600.0;
             if arcsec < PLANET_BILLBOARD_MAX_ARCSEC {
                 self.billboard_planet_indices.push(i);
             } else {
@@ -1453,8 +1481,8 @@ impl SceneRenderer {
         // (the impostor pass is depth-off). Cache the distance via the squared
         // length to avoid a sqrt per comparison.
         self.billboard_planet_indices.sort_by(|&a, &b| {
-            let da = (render.planets[a].pos_world - origin - render.camera_pos).length_squared();
-            let db = (render.planets[b].pos_world - origin - render.camera_pos).length_squared();
+            let da = (planet_pos_render[a] - render.camera_pos).length_squared();
+            let db = (planet_pos_render[b] - render.camera_pos).length_squared();
             db.total_cmp(&da)
         });
 

@@ -67,11 +67,9 @@ impl Simulation for SolarSystemSimulation {
             render_origin: target.render_origin(),
             sun_pos_world: celestial.sun_pos_world,
             star_rot_inv: celestial.star_tex_rot_inv,
-            moon_pos_world: celestial.moon_pos_world,
-            moon_rot: celestial.moon_rot,
-            moon_radius_km: celestial.moon_radius_km,
-            // All seven planets, drawn at their true positions.
-            planets: celestial.planets.to_vec(),
+            // The whole list: the Earth system (Earth + Moon) and all seven
+            // planets, drawn at their true positions.
+            celestial_bodies: celestial.bodies.clone(),
             markers: Vec::new(),
         }
     }

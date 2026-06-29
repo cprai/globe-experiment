@@ -30,10 +30,9 @@ use std::time::UNIX_EPOCH;
 use satkit::Instant;
 
 use crate::application::Camera;
-use crate::planet::Planet;
 use crate::renderer::{HeadlessRenderer, MAX_FRAME_DIMENSION, UiFrame};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{self, CameraTarget, RenderState};
+use crate::simulation::{self, CameraTarget, CelestialBody, RenderState};
 use crate::ui::{self, PanelSet, UiPanel};
 
 /// Parameters for one single-frame render, built by `main` from the parsed CLI.
@@ -116,17 +115,18 @@ enum CameraTargetSpec {
 }
 
 impl CameraTargetSpec {
-    /// The planet this token names, or `None` for Earth/Moon.
-    fn planet(self) -> Option<Planet> {
+    /// The celestial-body identity this token names.
+    fn body(self) -> CelestialBody {
         match self {
-            CameraTargetSpec::Earth | CameraTargetSpec::Moon => None,
-            CameraTargetSpec::Mercury => Some(Planet::Mercury),
-            CameraTargetSpec::Venus => Some(Planet::Venus),
-            CameraTargetSpec::Mars => Some(Planet::Mars),
-            CameraTargetSpec::Jupiter => Some(Planet::Jupiter),
-            CameraTargetSpec::Saturn => Some(Planet::Saturn),
-            CameraTargetSpec::Uranus => Some(Planet::Uranus),
-            CameraTargetSpec::Neptune => Some(Planet::Neptune),
+            CameraTargetSpec::Earth => CelestialBody::EARTH,
+            CameraTargetSpec::Moon => CelestialBody::MOON,
+            CameraTargetSpec::Mercury => CelestialBody::Mercury,
+            CameraTargetSpec::Venus => CelestialBody::Venus,
+            CameraTargetSpec::Mars => CelestialBody::Mars,
+            CameraTargetSpec::Jupiter => CelestialBody::Jupiter,
+            CameraTargetSpec::Saturn => CelestialBody::Saturn,
+            CameraTargetSpec::Uranus => CelestialBody::Uranus,
+            CameraTargetSpec::Neptune => CelestialBody::Neptune,
         }
     }
 
@@ -186,30 +186,13 @@ pub fn run(params: RenderParams) {
     // is sampled with the galactic-corrected `star_tex_rot_inv` below.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    // Resolve the orbit body: Earth at the origin, or the Moon at its live
-    // ephemeris center. The distance clamp then uses the chosen target's
-    // radius-scaled limits.
-    let target = match scene.camera.target {
-        CameraTargetSpec::Earth => CameraTarget::Earth,
-        CameraTargetSpec::Moon => CameraTarget::Moon {
-            center_world: celestial.moon_pos_world,
-        },
-        // A planet: pull its live center from the celestial sphere (in
-        // `planet::ALL` order, so every planet is present).
-        other => {
-            let planet = other
-                .planet()
-                .expect("non-earth/moon target names a planet");
-            let state = celestial
-                .planets
-                .iter()
-                .find(|s| s.planet == planet)
-                .expect("planet present in celestial sphere");
-            CameraTarget::Planet {
-                planet,
-                center_world: state.pos_world,
-            }
-        }
+    // Resolve the orbit body: Earth at the origin, or the Moon/a planet at its
+    // live ephemeris center (the celestial sphere carries every body). The
+    // distance clamp then uses the chosen target's radius-scaled limits.
+    let body = scene.camera.target.body();
+    let target = CameraTarget {
+        body,
+        center_world: celestial.center_world(body),
     };
     let camera = Camera {
         longitude: scene.camera.longitude,
@@ -229,12 +212,10 @@ pub fn run(params: RenderParams) {
         render_origin: camera.target.render_origin(),
         sun_pos_world: celestial.sun_pos_world,
         star_rot_inv: celestial.star_tex_rot_inv,
-        moon_pos_world: celestial.moon_pos_world,
-        moon_rot: celestial.moon_rot,
-        moon_radius_km: celestial.moon_radius_km,
-        // All planets are available so any of them can be the render target;
-        // when Earth/Moon is targeted they sit far off-screen.
-        planets: celestial.planets.to_vec(),
+        // The whole list (Earth system + all planets) so any body can be the
+        // render target; when Earth/Moon is targeted the planets sit far
+        // off-screen.
+        celestial_bodies: celestial.bodies.clone(),
         // Bodies only: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };

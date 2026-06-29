@@ -7,6 +7,7 @@
 //! does depend on `ui` for the `UIDrawable`/`Instrument` types the shared-core
 //! panel is built from.
 
+pub mod body;
 pub mod celestial_sphere;
 pub mod clock;
 pub mod satellite;
@@ -14,15 +15,15 @@ pub mod satellite;
 use glam::{Mat3, Mat4, Vec3};
 use satkit::Instant;
 
+pub use body::{BodyState, CelestialBody, EarthSystemEntity};
 pub use clock::Clock;
 
-use crate::planet::Planet;
+use crate::earth;
 use crate::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };
-use crate::{earth, moon};
-use celestial_sphere::{CelestialSphere, PlanetState};
+use celestial_sphere::CelestialSphere;
 
 /// The body the orbital camera orbits, with its world-space center (km). Plain
 /// astronomical data - no `Camera` or windowing dependency - so it can cross
@@ -31,52 +32,46 @@ use celestial_sphere::{CelestialSphere, PlanetState};
 /// accessors delegate to the single-source-of-truth body modules (`earth` /
 /// `moon`), so the camera rig never duplicates surface math.
 ///
-/// Earth sits at the world origin; the Moon's center comes from the ephemeris
-/// and is refreshed every frame (it moves), so the `Moon` variant carries it.
+/// Earth sits at the world origin; the Moon's and the planets' centers come
+/// from the ephemeris and are refreshed every frame (they move), so the target
+/// carries the center alongside the body identity.
 #[derive(Clone, Copy)]
-pub enum CameraTarget {
-    Earth,
-    Moon {
-        center_world: Vec3,
-    },
-    /// One of the seven planets, at its true geocentric center (km). Because
-    /// that center can be billions of km out - far past f32 precision in
-    /// world-km - a planet target renders with a floating origin (the scene is
-    /// drawn relative to `render_origin`, which equals this center; see
-    /// `RenderState::render_origin` and `Camera::view_proj`). Earth/Moon keep
-    /// the origin at Earth.
-    Planet {
-        planet: Planet,
-        center_world: Vec3,
-    },
+pub struct CameraTarget {
+    /// Which body the camera orbits. Geometry (radius, surface) is read through
+    /// this identity (see [`CelestialBody`]).
+    pub body: CelestialBody,
+    /// The orbited body's center in the world frame (km). Earth is the origin
+    /// (`ZERO`); the Moon and the planets carry their live ephemeris center.
+    /// Because a planet's center can be billions of km out - far past f32
+    /// precision in world-km - a planet target renders with a floating origin
+    /// (the scene is drawn relative to `render_origin`, which equals this
+    /// center; see `RenderState::render_origin` and `Camera::view_proj`).
+    /// Earth/Moon keep the origin at Earth.
+    pub center_world: Vec3,
 }
 
 impl CameraTarget {
+    /// The Earth target (the familiar default): identity Earth at the origin.
+    pub fn earth() -> CameraTarget {
+        CameraTarget {
+            body: CelestialBody::EARTH,
+            center_world: Vec3::ZERO,
+        }
+    }
+
     /// Whether two targets name the same body, ignoring the (per-frame) Moon/
     /// planet center. The camera uses this to detect a genuine body switch (and
     /// reframe) without treating a body's normal ephemeris drift as a change. A
     /// derived `PartialEq` would compare the centers and so fire every frame.
-    /// Two `Planet` targets match only when they are the *same* planet, so
+    /// Two planet targets match only when they are the *same* planet, so
     /// cycling Mars -> Jupiter reframes.
     pub fn same_kind(&self, other: &CameraTarget) -> bool {
-        match (self, other) {
-            (CameraTarget::Earth, CameraTarget::Earth) => true,
-            (CameraTarget::Moon { .. }, CameraTarget::Moon { .. }) => true,
-            (CameraTarget::Planet { planet: a, .. }, CameraTarget::Planet { planet: b, .. }) => {
-                a == b
-            }
-            _ => false,
-        }
+        self.body == other.body
     }
 
     /// The body center in the world frame (km). Earth is the origin.
     pub fn center_world(&self) -> Vec3 {
-        match self {
-            CameraTarget::Earth => Vec3::ZERO,
-            CameraTarget::Moon { center_world } | CameraTarget::Planet { center_world, .. } => {
-                *center_world
-            }
-        }
+        self.center_world
     }
 
     /// The world-space origin the scene is rendered relative to for this target
@@ -87,9 +82,11 @@ impl CameraTarget {
     /// shifts to the planet's center, keeping the orbited body near the
     /// numerical origin where f32 precision is restored.
     pub fn render_origin(&self) -> Vec3 {
-        match self {
-            CameraTarget::Earth | CameraTarget::Moon { .. } => Vec3::ZERO,
-            CameraTarget::Planet { center_world, .. } => *center_world,
+        match self.body {
+            CelestialBody::EarthSystem(_) => Vec3::ZERO,
+            // Any planet: too far out for the Earth origin, so the scene is
+            // drawn relative to its own center.
+            _ => self.center_world,
         }
     }
 
@@ -97,32 +94,20 @@ impl CameraTarget {
     /// limits, near plane, and pan rate by this so the interaction feel is the
     /// same fraction of the body whichever one is targeted.
     pub fn mean_radius_km(&self) -> f32 {
-        match self {
-            CameraTarget::Earth => earth::MEAN_RADIUS_KM,
-            CameraTarget::Moon { .. } => moon::MEAN_RADIUS_KM,
-            CameraTarget::Planet { planet, .. } => planet.mean_radius_km(),
-        }
+        self.body.mean_radius_km()
     }
 
     /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
     /// body frame (km). The camera treats this as an inertial-frame direction
     /// (see `application::camera`); the magnitude is what differs per body.
     pub fn surface_position(&self, latitude: f32, longitude: f32) -> Vec3 {
-        match self {
-            CameraTarget::Earth => earth::surface_position(latitude, longitude),
-            CameraTarget::Moon { .. } => moon::surface_position(latitude, longitude),
-            CameraTarget::Planet { planet, .. } => planet.surface_position(latitude, longitude),
-        }
+        self.body.surface_position(latitude, longitude)
     }
 
     /// Outward unit normal of the body surface at `(lat, lon)` (radians), in
     /// the body frame - the local "up" the eye offsets along.
     pub fn geodetic_normal(&self, latitude: f32, longitude: f32) -> Vec3 {
-        match self {
-            CameraTarget::Earth => earth::geodetic_normal(latitude, longitude),
-            CameraTarget::Moon { .. } => moon::geodetic_normal(latitude, longitude),
-            CameraTarget::Planet { planet, .. } => planet.geodetic_normal(latitude, longitude),
-        }
+        self.body.geodetic_normal(latitude, longitude)
     }
 }
 
@@ -150,7 +135,7 @@ pub trait Simulation {
     /// Moon's center pulled from the ephemeris). The application reads this
     /// each frame and re-aims the camera (see `application::camera`).
     fn camera_target(&self) -> CameraTarget {
-        CameraTarget::Earth
+        CameraTarget::earth()
     }
 
     /// Produce this frame's render state from the application-resolved camera.
@@ -192,19 +177,15 @@ pub struct RenderState {
     /// galactic->equatorial-corrected matrix (`star_tex_rot_inv`), distinct
     /// from the equatorial frame the camera rig uses.
     pub star_rot_inv: Mat3,
-    /// Moon center in the absolute world frame (km), at true scale and
-    /// distance.
-    pub moon_pos_world: Vec3,
-    /// Rotation from the Moon's body-fixed (selenographic) frame to the world
-    /// frame - the ephemeris + IAU lunar orientation. Applied to the lunar
-    /// mesh.
-    pub moon_rot: Mat3,
-    /// Moon mean radius (km), for the analytic eclipse-shadow geometry.
-    pub moon_radius_km: f32,
-    /// The planets to draw this frame (centers + orientations), in
-    /// `planet::ALL` order. Empty for every scenario except the solar-system
-    /// one, so the planet pipeline never runs elsewhere.
-    pub planets: Vec<PlanetState>,
+    /// The celestial bodies to draw this frame (identity + placement), as a
+    /// flat list. The renderer pulls the Moon's placement from here for the
+    /// lunar mesh + the analytic eclipse-shadow geometry (its radius comes
+    /// from the identity, `moon::MEAN_RADIUS_KM`), and routes each planet
+    /// entry to the planet pipeline by identity. Earth/Moon scenarios carry
+    /// only the Earth system (Earth + Moon), so no planet entry exists
+    /// and the planet pipeline never runs; the solar-system scenario (and
+    /// render mode) carry the whole list.
+    pub celestial_bodies: Vec<BodyState>,
     /// One marker per tracked satellite, in the same order as the scenario's
     /// satellite list. The renderer draws them instanced.
     pub markers: Vec<SatelliteMarker>,
@@ -343,11 +324,12 @@ impl TargetSelector {
     /// center from the live ephemeris.
     pub fn resolve(&self, moon_center: Vec3) -> CameraTarget {
         if self.moon_selected {
-            CameraTarget::Moon {
+            CameraTarget {
+                body: CelestialBody::MOON,
                 center_world: moon_center,
             }
         } else {
-            CameraTarget::Earth
+            CameraTarget::earth()
         }
     }
 
@@ -389,42 +371,21 @@ impl TargetSelector {
     }
 }
 
-/// One body the solar-system scenario's camera can orbit. Earth and the Moon
-/// sit at the Earth origin; the planets carry their own geometry via
-/// [`Planet`].
-#[derive(Clone, Copy)]
-enum SelectableBody {
-    Earth,
-    Moon,
-    Planet(Planet),
-}
-
-impl SelectableBody {
-    /// Display name for the selector key (delegates to [`Planet::name`]).
-    fn name(self) -> &'static str {
-        match self {
-            SelectableBody::Earth => "Earth",
-            SelectableBody::Moon => "Moon",
-            SelectableBody::Planet(planet) => planet.name(),
-        }
-    }
-}
-
 /// Every selectable body, ordered by distance from the Sun, with the Moon
 /// placed right after its parent Earth. This is also the top-to-bottom order of
 /// the selector panel's keys. The `request_*` fields of [`BodySelector`] and
 /// the `apply_requests` branches mirror this order index-for-index; keep all
 /// three in sync if the list changes.
-const SELECTABLE_BODIES: [SelectableBody; 9] = [
-    SelectableBody::Planet(Planet::Mercury),
-    SelectableBody::Planet(Planet::Venus),
-    SelectableBody::Earth,
-    SelectableBody::Moon,
-    SelectableBody::Planet(Planet::Mars),
-    SelectableBody::Planet(Planet::Jupiter),
-    SelectableBody::Planet(Planet::Saturn),
-    SelectableBody::Planet(Planet::Uranus),
-    SelectableBody::Planet(Planet::Neptune),
+const SELECTABLE_BODIES: [CelestialBody; 9] = [
+    CelestialBody::Mercury,
+    CelestialBody::Venus,
+    CelestialBody::EARTH,
+    CelestialBody::MOON,
+    CelestialBody::Mars,
+    CelestialBody::Jupiter,
+    CelestialBody::Saturn,
+    CelestialBody::Uranus,
+    CelestialBody::Neptune,
 ];
 
 /// Index of Earth in [`SELECTABLE_BODIES`] - the scenario's start target.
@@ -514,25 +475,13 @@ impl BodySelector {
     }
 
     /// Resolves the current choice into a [`CameraTarget`], filling the body
-    /// center from the live ephemeris (`celestial.planets` is in `planet::ALL`
-    /// order, so every planet is present).
+    /// center from the live ephemeris (`celestial` carries every selectable
+    /// body, so the lookup always succeeds).
     pub fn resolve(&self, celestial: &CelestialSphere) -> CameraTarget {
-        match SELECTABLE_BODIES[self.selected] {
-            SelectableBody::Earth => CameraTarget::Earth,
-            SelectableBody::Moon => CameraTarget::Moon {
-                center_world: celestial.moon_pos_world,
-            },
-            SelectableBody::Planet(planet) => {
-                let state = celestial
-                    .planets
-                    .iter()
-                    .find(|s| s.planet == planet)
-                    .expect("selected planet present in celestial sphere");
-                CameraTarget::Planet {
-                    planet,
-                    center_world: state.pos_world,
-                }
-            }
+        let body = SELECTABLE_BODIES[self.selected];
+        CameraTarget {
+            body,
+            center_world: celestial.center_world(body),
         }
     }
 

@@ -3,7 +3,7 @@ use glam::Vec3;
 
 use crate::earth;
 use crate::moon;
-use crate::planet::Planet;
+use crate::simulation::CelestialBody;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -107,11 +107,11 @@ pub fn moon_ellipsoid(stacks: u32, slices: u32) -> Mesh {
 /// ephemeris-driven IAU rotation; the per-planet radii live in the
 /// `position`/`normal` closures (`crate::planet`), so the geometry stays in one
 /// place.
-pub fn planet_ellipsoid(stacks: u32, slices: u32, planet: Planet) -> Mesh {
+pub fn planet_ellipsoid(stacks: u32, slices: u32, body: CelestialBody) -> Mesh {
     ellipsoid(
         stacks,
         slices,
-        |lat, lon| planet.surface_position(lat, lon),
-        |lat, lon| planet.geodetic_normal(lat, lon),
+        |lat, lon| body.surface_position(lat, lon),
+        |lat, lon| body.geodetic_normal(lat, lon),
     )
 }

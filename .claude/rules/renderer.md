@@ -100,14 +100,19 @@ instance buffer** (`MarkerInstance { position: vec3, visible: f32 }`), not
 in the uniform block. The uniform and marker instances are written every frame
 in `prepare` (`queue.write_buffer`). The Moon mesh is a separate vertex/index
 buffer (`mesh::moon_ellipsoid`), drawn with its own model transform via
-`moon_rot`/`moon_pos`; the Earth shell mesh is rebound for the atmosphere
-pass that follows it.
+`moon_rot`/`moon_pos` — sourced in `prepare` from the Moon entry of
+`RenderState.celestial_bodies` (`EarthSystem(Moon)`), its radius from the
+identity (`moon::MEAN_RADIUS_KM`); the Earth shell mesh is rebound for the
+atmosphere pass that follows it.
 
 **Planets (group 1).** Each planet has its own mesh (`mesh::planet_ellipsoid`),
 a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render frame)
 + `equatorial_radius_km` + `polar_radius_km` + pad), and a group-1 bind group
-(uniform + texture + the shared sampler). `prepare` classifies each planet in
-`RenderState.planets` order by apparent angular size and routes it to one of two
+(uniform + texture + the shared sampler). `prepare` walks the planet entries of
+`RenderState.celestial_bodies` (a body whose identity is found in `planet::ALL`),
+maps each to its GPU slot by its position in `planet::ALL`, then classifies it by
+apparent angular size and
+routes it to one of two
 shared pipelines (both layout `[group0, group1]`): the **mesh** pipeline
 (`vs_planet`/`fs_planet`, same solid-body reversed-Z depth as the Moon) for
 large/near planets, or the **billboard** pipeline (`vs_planet_billboard`/
@@ -182,10 +187,11 @@ planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
 - **No EOP range check** in render mode. Out-of-range datetimes render and
   silently degrade. This is deliberate — documented in `snapshot.rs` and
   `scenarios.md`.
-- **No markers** in render mode (`RenderState.markers` is empty). All 7 planets
-  are filled in `RenderState.planets`, so `camera.target` can be any of `"earth"`,
-  `"moon"`, or a planet (`"mars"`, ..., `"neptune"`); the camera's
-  `render_origin` is set from the resolved target.
+- **No markers** in render mode (`RenderState.markers` is empty). The whole
+  body list (Earth system + all 7 planets) is filled in
+  `RenderState.celestial_bodies` (`celestial.bodies.clone()`), so `camera.target`
+  can be any of `"earth"`, `"moon"`, or a planet (`"mars"`, ..., `"neptune"`);
+  the camera's `render_origin` is set from the resolved target.
 - **One `--scene` JSON drives the whole frame** (`snapshot::SceneSpec`,
   `deny_unknown_fields`): a `simulation` section (datetime), a `camera` section,
   and an optional `ui` section (`Vec<ui::UiPanel>`). The output target

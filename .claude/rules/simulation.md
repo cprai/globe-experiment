@@ -100,8 +100,10 @@ The Moon is positioned and oriented per frame in `CelestialSphere::at`:
 
 ## Ephemeris-driven planets (celestial_sphere.rs)
 
-`CelestialSphere::at` also fills `sun_pos_world` (km, for planet lighting) and a
-`PlanetState[7]` (in `planet::ALL` order), each per frame from the same DE440:
+`CelestialSphere::at` also fills `sun_pos_world` (km, for planet lighting) and
+assembles the seven planets into the `bodies: Vec<BodyState>` render list
+(after the Earth + Moon entries, in `planet::ALL` order), each per frame from
+the same DE440:
 - **Position**: `geocentric_pos(SolarSystem::X, time)` -> ITRF via the same
   `qgcrf2itrf` -> world via `P`, /1000 for km. True geocentric, so the outer
   planets are billions of km out (hence the **floating origin**, see `camera.md`).

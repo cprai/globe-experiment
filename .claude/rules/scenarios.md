@@ -33,17 +33,19 @@ whole-Earth view: build the simulation, read its `celestial_sphere`, compute a
 `Camera` with `Camera::looking_toward(target, star_rot_inv, world_look,
 distance)` (orbits `target` with the look axis along a world-frame direction —
 e.g. Earth target aimed at `-sun_dir` for the day side, or a Moon target aimed
-at `moon_pos_world`), and pass it to `ApplicationState::with_camera(sim, camera)`
+at the Moon's center (`celestial.moon().placement.pos_world`)), and pass it to
+`ApplicationState::with_camera(sim, camera)`
 instead of `::new`. The camera is fully interactive afterward. The solar eclipse
 frames the Earth day side; the lunar eclipse launches **orbiting the Moon** (a
-Moon-target camera looking toward `moon_pos_world` sits on the Moon's
+Moon-target camera looking toward the Moon's center sits on the Moon's
 Earth-facing side, so the Earth is behind the camera — no limb offset needed).
 
 ### Camera-target selection (Earth or Moon)
 
 A scenario that offers more than the Earth holds a `simulation::TargetSelector`
 and overrides `Simulation::camera_target()` to return
-`self.selector.resolve(self.simulation.celestial_sphere.moon_pos_world)`. The
+`self.selector.resolve(self.simulation.celestial_sphere.moon().placement.pos_world)`.
+The
 selector's EARTH / MOON radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scenario's `advance()` calls
@@ -63,11 +65,12 @@ starts on the Earth (matching the default whole-Earth camera). The panel shows
 **one always-visible latching key per body** (a single column, the chosen one
 lit), so each key callback needs a **disjoint** `request_*` field — hence nine
 named flags (not an array, whose elements can't be captured disjointly), in
-`SELECTABLE_BODIES` order, that `apply_requests` folds into `selected`. Its
-`resolve(&celestial)` fills the chosen body's center from `celestial.planets`
-(in `planet::ALL` order). `frame_state` fills `RenderState.planets`
-(`celestial.planets.to_vec()`) + `render_origin` from the resolved target. The
-panel is appended in `get_drawables` like the eclipse selector.
+`SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
+folds into `selected`. Its `resolve(&celestial)` fills the chosen body's center
+via `celestial.center_world(body)`. `frame_state` fills
+`RenderState.celestial_bodies` (`celestial.bodies.clone()` — the whole list) +
+`render_origin` from the resolved target. The panel is appended in
+`get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, and reads sun/star values from

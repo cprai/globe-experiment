@@ -31,13 +31,29 @@ use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
 
-use crate::moon;
-use crate::planet::{self, Planet, Rotation};
+use crate::planet::{self, Rotation};
+use crate::simulation::body::{BodyState, CelestialBody, Placement};
 
-/// The JPL DE440 ephemeris, embedded in the binary. build.rs downloads it
-/// straight into `OUT_DIR` so this `include_bytes!` can pick it up - no runtime
-/// data file.
-const EPHEMERIS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linux_p1550p2650.440"));
+/// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
+/// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s straight
+/// out of these bytes with an unaligned-unsafe `copy_nonoverlapping`. In debug
+/// builds the `ub_checks` precondition aborts when the source is not 8-aligned,
+/// and where the linker places an `include_bytes!` static is not controllable
+/// (any code change can shift it from coincidentally aligned to not). The JPL
+/// record layout is `f64`-aligned from the file start, so an 8-aligned base
+/// makes every read aligned. Release builds skip the check, but the read is
+/// still UB if misaligned - so align it for both.
+#[repr(C, align(8))]
+struct Align8<T: ?Sized>(T);
+
+/// The JPL DE440 ephemeris, embedded in the binary (8-aligned, see [`Align8`]).
+/// build.rs downloads it straight into `OUT_DIR` so this `include_bytes!` can
+/// pick it up - no runtime data file.
+static EPHEMERIS_ALIGNED: &Align8<[u8]> = &Align8(*include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/linux_p1550p2650.440"
+)));
+const EPHEMERIS: &[u8] = &EPHEMERIS_ALIGNED.0;
 
 /// CelesTrak's Earth-orientation parameters (`EOP-All.csv`), embedded the same
 /// way as the ephemeris (build.rs downloads it straight into `OUT_DIR`).
@@ -144,41 +160,50 @@ pub struct CelestialSphere {
     /// from the camera-rig frame above so the static galactic->equatorial
     /// re-orientation does not move existing scenarios' camera framing.
     pub star_tex_rot_inv: Mat3,
-    /// Moon center in the Earth-fixed (ECEF) world frame, km. At true scale
-    /// (~384,400 km away), so the Moon renders at its real angular size and
-    /// distance.
-    pub moon_pos_world: Vec3,
-    /// Rotation taking a vector in the Moon's body-fixed (selenographic,
-    /// project +Y-north convention) frame into the world frame. Built from
-    /// the ephemeris Earth orientation and the IAU lunar rotation model, so
-    /// the near side faces Earth with the correct libration. Applied to the
-    /// lunar mesh's positions and normals; it is a pure rotation, so
-    /// normals need no inverse-transpose.
-    pub moon_rot: Mat3,
-    /// Moon mean radius, km - for the analytic eclipse-shadow geometry (the
-    /// Moon as a shadow caster/receiver is treated as a sphere of this radius).
-    pub moon_radius_km: f32,
-    /// The seven planets' world-frame centers + orientations this frame, in
-    /// `planet::ALL` order. True geocentric positions (DE440) and IAU
-    /// orientation - consumed by the solar-system scenario; ignored by the
-    /// Earth/Moon scenarios.
-    pub planets: [PlanetState; 7],
+    /// Every renderable body's world-frame placement this frame, as a flat list
+    /// (identity + center + orientation): the **Earth** (at the origin,
+    /// identity orientation - the world frame *is* Earth-fixed), the
+    /// **Moon** (true scale/distance ~384,400 km out, IAU lunar
+    /// orientation), then the **seven planets** in `planet::ALL` order
+    /// (true geocentric DE440 positions + IAU orientation). The Moon's
+    /// placement also drives the analytic eclipse shadows; its radius comes
+    /// from the identity (`moon::MEAN_RADIUS_KM`), not stored here. A
+    /// scenario takes the subset it draws - the Earth system
+    /// (Earth + Moon), or all of them.
+    pub bodies: Vec<BodyState>,
 }
 
-/// One planet's world-frame placement for a single frame: its center (true
-/// geocentric, km) and the body-fixed -> world rotation (ephemeris Earth
-/// orientation composed with the IAU planet rotation). The mesh + texture come
-/// from the renderer; this is just where to put and how to orient it.
-#[derive(Clone, Copy, Debug)]
-pub struct PlanetState {
-    pub planet: Planet,
-    /// Planet center in the Earth-fixed (ECEF) world frame, km. At true scale
-    /// and distance (millions to billions of km), so it is rendered with a
-    /// floating origin (see `RenderState::render_origin`).
-    pub pos_world: Vec3,
-    /// Rotation taking a vector in the planet's body-fixed frame into the world
-    /// frame. Pure rotation, so it carries normals too.
-    pub rot: Mat3,
+impl CelestialSphere {
+    /// The placement of one body this frame, if present.
+    pub fn body(&self, body: CelestialBody) -> Option<&BodyState> {
+        self.bodies.iter().find(|state| state.body == body)
+    }
+
+    /// The Moon's placement this frame (always present). Convenience for the
+    /// eclipse scenarios and the rotation test.
+    pub fn moon(&self) -> &BodyState {
+        self.body(CelestialBody::MOON)
+            .expect("Moon present in the celestial sphere")
+    }
+
+    /// The world-frame center (km) of one body this frame; `ZERO` for the Earth
+    /// (the origin). Used by the body selectors to fill a [`CameraTarget`].
+    pub fn center_world(&self, body: CelestialBody) -> Vec3 {
+        self.body(body)
+            .map(|state| state.placement.pos_world)
+            .unwrap_or(Vec3::ZERO)
+    }
+
+    /// Just the Earth-system bodies (the Earth + the Moon) - what the
+    /// Earth/Moon scenarios draw, so the planet pipeline stays off (no `Planet`
+    /// entry reaches the renderer).
+    pub fn earth_system_bodies(&self) -> Vec<BodyState> {
+        self.bodies
+            .iter()
+            .filter(|state| matches!(state.body, CelestialBody::EarthSystem(_)))
+            .copied()
+            .collect()
+    }
 }
 
 impl CelestialSphere {
@@ -243,49 +268,69 @@ impl CelestialSphere {
         );
         let moon_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
 
+        // The render list, in a fixed order: the Earth (at the origin, identity
+        // orientation - the world frame is Earth-fixed), then the Moon, then the
+        // seven planets. The Moon and planet placements reuse the exact
+        // expressions above/below; only the container differs from the
+        // pre-refactor fields, so the rendered output is unchanged.
+        let mut bodies = Vec::with_capacity(2 + planet::ALL.len());
+        bodies.push(BodyState {
+            body: CelestialBody::EARTH,
+            placement: Placement {
+                pos_world: Vec3::ZERO,
+                rot: Mat3::IDENTITY,
+            },
+        });
+        bodies.push(BodyState {
+            body: CelestialBody::MOON,
+            placement: Placement {
+                pos_world: moon_pos_world,
+                rot: moon_rot,
+            },
+        });
+
         // The planets: true geocentric position from the same DE440 ephemeris,
         // and a body->world rotation built like the Moon's but from the IAU
         // planet rotation (axial tilt + spin, no libration series). Same `P^T`
         // un-permute of the mesh's project-convention axes into the standard
         // (Z=pole) frame the IAU elements are defined in.
-        let planets = std::array::from_fn(|i| {
-            let planet = planet::ALL[i];
+        for &planet in &planet::ALL {
             let body_gcrf =
                 geocentric_pos(planet_body(planet), time).expect("planet ephemeris lookup");
             let pos_world = p * (nvec(q_gcrf2itrf * body_gcrf) / 1000.0);
             let rot = p * r_gcrf2itrf * iau_body_to_gcrf(planet.rotation(), time) * p.transpose();
-            PlanetState {
-                planet,
-                pos_world,
-                rot,
-            }
-        });
+            bodies.push(BodyState {
+                body: planet,
+                placement: Placement { pos_world, rot },
+            });
+        }
 
         Self {
             sun_dir,
             sun_pos_world,
             star_rot_inv,
             star_tex_rot_inv,
-            moon_pos_world,
-            moon_rot,
-            moon_radius_km: moon::MEAN_RADIUS_KM,
-            planets,
+            bodies,
         }
     }
 }
 
 /// The satkit ephemeris body for one of our planets. Kept here (not in
 /// `planet`) so that module stays free of any satkit dependency, exactly like
-/// `earth`/`moon`.
-fn planet_body(planet: Planet) -> SolarSystem {
+/// `earth`/`moon`. Called only on the planet variants (from the `planet::ALL`
+/// loop); the Earth/Moon are positioned separately.
+fn planet_body(planet: CelestialBody) -> SolarSystem {
     match planet {
-        Planet::Mercury => SolarSystem::Mercury,
-        Planet::Venus => SolarSystem::Venus,
-        Planet::Mars => SolarSystem::Mars,
-        Planet::Jupiter => SolarSystem::Jupiter,
-        Planet::Saturn => SolarSystem::Saturn,
-        Planet::Uranus => SolarSystem::Uranus,
-        Planet::Neptune => SolarSystem::Neptune,
+        CelestialBody::Mercury => SolarSystem::Mercury,
+        CelestialBody::Venus => SolarSystem::Venus,
+        CelestialBody::Mars => SolarSystem::Mars,
+        CelestialBody::Jupiter => SolarSystem::Jupiter,
+        CelestialBody::Saturn => SolarSystem::Saturn,
+        CelestialBody::Uranus => SolarSystem::Uranus,
+        CelestialBody::Neptune => SolarSystem::Neptune,
+        CelestialBody::EarthSystem(_) => {
+            unreachable!("planet_body called on a non-planet body")
+        }
     }
 }
 
@@ -480,9 +525,10 @@ mod tests {
         let sphere = CelestialSphere::at(&time);
 
         // Outward normal at the sub-Earth point in world space.
-        let sub_earth = sphere.moon_rot * Vec3::Z;
+        let moon = sphere.moon().placement;
+        let sub_earth = moon.rot * Vec3::Z;
         // Direction from the Moon back toward Earth (Earth is at the origin).
-        let toward_earth = (-sphere.moon_pos_world).normalize();
+        let toward_earth = (-moon.pos_world).normalize();
 
         let angle = sub_earth
             .dot(toward_earth)
