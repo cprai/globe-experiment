@@ -2,7 +2,6 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
 use crate::luna;
-use crate::simulation::CelestialBody;
 use crate::terra;
 
 #[repr(C)]
@@ -98,20 +97,5 @@ pub fn luna_ellipsoid(stacks: u32, slices: u32) -> Mesh {
         slices,
         luna::surface_position,
         luna::geodetic_normal,
-    )
-}
-
-/// Generates an oblate planet ellipsoid, in kilometers, in the planet's
-/// body-fixed frame (the same +Y-north / +Z-prime-meridian convention as the
-/// Terra mesh). The renderer orients it into world space with the
-/// ephemeris-driven IAU rotation; the per-planet radii live in the
-/// `position`/`normal` closures (`crate::planet`), so the geometry stays in one
-/// place.
-pub fn planet_ellipsoid(stacks: u32, slices: u32, body: CelestialBody) -> Mesh {
-    ellipsoid(
-        stacks,
-        slices,
-        |lat, lon| body.surface_position(lat, lon),
-        |lat, lon| body.geodetic_normal(lat, lon),
     )
 }

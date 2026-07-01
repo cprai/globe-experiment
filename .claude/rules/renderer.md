@@ -47,10 +47,9 @@ surface lost/timeout recovery.
 load in parallel via `into_par_iter` (the 7 planet textures decode in a separate
 `par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 5
 group-0 render pipelines concurrently (Terra surface, atmosphere, stars, markers,
-Luna); the **planet mesh pipeline** (a 6th) and the **planet billboard pipeline**
-(a 7th) are built after the join (they borrow `planet_layout`). This is the
-**sanctioned** parallel decode — do not confuse it with the phase-1 reverted
-`thread::scope` approach.
+Luna); the single **planet impostor pipeline** (a 6th) is built after the join
+(it borrows `planet_layout`). This is the **sanctioned** parallel decode — do
+not confuse it with the phase-1 reverted `thread::scope` approach.
 
 ## `Gfx::init` device setup
 
@@ -71,26 +70,31 @@ Device requested with `Features::empty()` + `experimental_features: disabled`.
 ## Render frame — all positions are camera-target-local
 
 **The whole shader works in the render frame: every position uniform is relative
-to the camera target's center.** `prepare` subtracts `RenderState.render_origin`
-on the CPU from each absolute body position before upload, so the GPU never sees
-an absolute world position (the far-planet f32-jitter fix). There is **no
-`render_origin` uniform and no `sol_dir`** — the shader is purely local and
-derives every Sol direction from `sol_pos`. The orbited body's position is a
-bit-exact zero (`pos - render_origin`), so its mesh draws in local coordinates.
-For Terra/Luna (`render_origin == 0`) the render frame is the absolute frame.
+to the camera target's center.** `prepare` first derives the scene from the
+frame's time (`CelestialSphere::at(RenderState.time)` — Sol, Luna, the 7
+planets, star matrices), then subtracts the origin
+(`RenderState.camera_target.render_origin(&celestial)`) on the CPU from each absolute body
+position before upload, so the GPU never sees an absolute world position (the
+far-planet f32-jitter fix). There is **no `render_origin` uniform and no
+`sol_dir`** — the shader is purely local and derives every Sol direction from
+`sol_pos`. The orbited body's position is a bit-exact zero (`pos - origin`), so
+it draws in local coordinates. For Terra/Luna (`render_origin == 0`) the render
+frame is the absolute frame. `prepare` also rebuilds `view_proj` (and its
+inverse) from the camera rig via `view_proj_reversed_z`.
 
 ## Uniforms struct layout (must match Rust `Uniforms` and WGSL `Uniforms`)
 
 ```
-view_proj:    mat4x4<f32>            // built in the render frame (camera.rs)
-camera_pos:   vec3<f32> + 1 f32 pad  (_pad0)   // eye, render frame km
-star_rot_inv: mat3x3<f32>            // Rust: 3 columns each padded to [f32;4]
-marker:       vec4<f32>              // x,y = viewport px; z = radius px; w = unused
-luna_rot:     mat3x3<f32>            // body-fixed -> world; cols padded to [f32;4]
-luna_pos:     vec3<f32> + 1 f32 pad (_pad2)   // Luna center, render frame km
-luna_params:  vec4<f32>              // x = Luna radius km; y = Terra radius km;
+view_proj:     mat4x4<f32>           // rebuilt in prepare (view_proj_reversed_z)
+inv_view_proj: mat4x4<f32>           // for the planet impostor's perspective ray
+camera_pos:    vec3<f32> + 1 f32 pad (_pad0)   // eye, render frame km
+star_rot_inv:  mat3x3<f32>           // Rust: 3 columns each padded to [f32;4]
+marker:        vec4<f32>             // x,y = viewport px; z = radius px; w = unused
+luna_rot:      mat3x3<f32>           // body-fixed -> world; cols padded to [f32;4]
+luna_pos:      vec3<f32> + 1 f32 pad (_pad2)   // Luna center, render frame km
+luna_params:   vec4<f32>             // x = Luna radius km; y = Terra radius km;
                                      //   z = Sol angular radius rad; w = unused
-sol_pos:      vec3<f32> + 1 f32 pad (_pad4)   // Sol, render frame km; lights every
+sol_pos:       vec3<f32> + 1 f32 pad (_pad4)   // Sol, render frame km; lights every
                                      //   body + aims the backdrop disc
 ```
 
@@ -100,34 +104,34 @@ instance buffer** (`MarkerInstance { position: vec3, visible: f32 }`), not
 in the uniform block. The uniform and marker instances are written every frame
 in `prepare` (`queue.write_buffer`). The Luna mesh is a separate vertex/index
 buffer (`mesh::luna_ellipsoid`), drawn with its own model transform via
-`luna_rot`/`luna_pos` — sourced in `prepare` from the Luna entry of
-`RenderState.celestial_bodies` (`TerraSystem(Luna)`), its radius from the
+`luna_rot`/`luna_pos` — sourced in `prepare` from the Luna entry of the derived
+`CelestialSphere::at(time).bodies` (`TerraSystem(Luna)`), its radius from the
 identity (`luna::MEAN_RADIUS_KM`); the Terra shell mesh is rebound for the
 atmosphere pass that follows it.
 
-**Planets (group 1).** Each planet has its own mesh (`mesh::planet_ellipsoid`),
-a per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render frame)
-+ `equatorial_radius_km` + `polar_radius_km` + pad), and a group-1 bind group
-(uniform + texture + the shared sampler). `prepare` walks the planet entries of
-`RenderState.celestial_bodies` (a body whose identity is found in `planet::ALL`),
-maps each to its GPU slot by its position in `planet::ALL`, then classifies it by
-apparent angular size and
-routes it to one of two
-shared pipelines (both layout `[group0, group1]`): the **mesh** pipeline
-(`vs_planet`/`fs_planet`, same solid-body reversed-Z depth as Luna) for
-large/near planets, or the **billboard** pipeline (`vs_planet_billboard`/
-`fs_planet_billboard`, no vertex buffer, depth-off) for far ones. The mesh and
-billboard draw indices are rebuilt each `prepare` (`mesh_planet_indices` /
-`billboard_planet_indices`, the latter far-to-near sorted); both empty except the
-solar-system scenario. The 7 planet textures live ONLY in group 1, so group 0
-stays at 9 sampled textures — clear of the portable 16-per-stage limit.
+**Planets (group 1) — single shader impostor, no mesh.** Each planet has a
+per-planet `PlanetUniform` (`rot` mat3x3 cols->vec4 + `pos` vec3 (render frame) +
+`ndc_center` vec2 + `ndc_half_extent` vec2 + `equatorial_radius_km` +
+`polar_radius_km` + `depth` + `perspective`) and a group-1 bind group (uniform +
+texture + the shared sampler). `prepare` walks the planet entries of the derived
+`bodies` (identity found in `planet::ALL`), maps each to its GPU slot by its
+position in `planet::ALL`, **projects the center to screen space** (NDC center +
+quad half-extent + reversed-Z depth), and picks the trace mode by apparent
+angular size (`perspective` flag). All draw through one shared pipeline
+(`vs_planet`/`fs_planet`, layout `[group0, group1]`, no vertex buffer, solid-body
+reversed-Z depth write + `Greater`): the fragment shader ray-traces the oblate
+ellipsoid — perspective (eye-ray via `inv_view_proj`) for near planets,
+orthographic (parallel-ray) for far ones — and writes per-fragment depth. The
+draw list `planet_draw_indices` (planets whose center projects in front of the
+camera) is rebuilt each `prepare`; order is irrelevant (depth-tested). The 7
+planet textures live ONLY in group 1, so group 0 stays at 9 sampled textures —
+clear of the portable 16-per-stage limit.
 
-**Terra-system gate.** `prepare` sets `draw_terra_system = (render_origin == 0)`;
+**Terra-system gate.** `prepare` sets `draw_terra_system = (origin == ZERO)`;
 `render` draws the Terra surface, atmosphere, Luna, and markers only when true
 (orbiting Terra/Luna). Orbiting a planet they are skipped. **Draw order: stars
--> distant-planet billboards -> Terra surface -> Luna -> near-planet meshes ->
-atmosphere -> markers** (the Terra-system ones gated; billboards draw right after
-the backdrop so the later opaque bodies paint over them).
+-> planet impostors -> Terra surface -> Luna -> atmosphere -> markers** (the
+Terra-system ones gated; the depth buffer keeps a planet behind Terra hidden).
 
 ## Bind group 0 layout
 
@@ -154,12 +158,12 @@ tangent vectors.
 
 ## Bind group 1 layout (planets)
 
-Used by both planet pipelines (mesh + billboard); one bind group per planet, the
-right one set per draw.
+Used by the single planet impostor pipeline; one bind group per planet, set per
+draw.
 
 | binding | resource | notes |
 |---|---|---|
-| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos` (render frame) + `equatorial_radius_km` + `polar_radius_km` |
+| 0 | per-planet `PlanetUniform` | VERTEX_FRAGMENT; `rot` + `pos` (render frame) + `ndc_center` + `ndc_half_extent` + `equatorial_radius_km` + `polar_radius_km` + `depth` + `perspective` |
 | 1 | planet texture | `Rgba8UnormSrgb` (8K for inner/gas, 2K for ice giants) |
 | 2 | sampler | the shared `terra_sampler` (repeat U / clamp V) |
 
@@ -168,14 +172,21 @@ right one set per draw.
 `Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
 `depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
 target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
-`0.0`) build both. All six scene pipelines declare `depth_stencil`; egui's
-overlay pipeline is built with `depth_stencil_format: Some(DEPTH_FORMAT)`.
+`0.0`) build both. All six scene pipelines declare `depth_stencil` (the planet
+impostor writes `@builtin(frag_depth)`); egui's overlay pipeline is built with
+`depth_stencil_format: Some(DEPTH_FORMAT)`.
 
 ## Renderer constants
 
-`STACKS 64`, `SLICES 128` (mesh resolution; shared by Terra, Luna, and
-planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
-`SOL_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra width).
+`STACKS 64`, `SLICES 128` (mesh resolution; Terra + Luna only — planets are
+impostors), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
+`SOL_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra width), projection consts
+`FOV_Y_DEG 45` / `NEAR_PLANE_RADII 0.01` / `FAR_PLANE_KM 500000` (far-plane
+*floor*; `prepare` grows the actual far plane to `max(FAR_PLANE_KM,
+|camera_pos| + 2*radius)` so a large orbited body is never clipped), planet
+impostor `PLANET_PERSPECTIVE_MIN_ARCSEC 1800` / `PLANET_QUAD_MARGIN 1.3` /
+`PLANET_MIN_DEPTH 1e-6` (clamps a beyond-far planet's depth so it is not
+z-clipped).
 
 ## Headless render mode (`HeadlessRenderer` + `snapshot`)
 
@@ -187,11 +198,10 @@ planet meshes), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
 - **No EOP range check** in render mode. Out-of-range datetimes render and
   silently degrade. This is deliberate — documented in `snapshot.rs` and
   `scenarios.md`.
-- **No markers** in render mode (`RenderState.markers` is empty). The whole
-  body list (Terra system + all 7 planets) is filled in
-  `RenderState.celestial_bodies` (`celestial.bodies.clone()`), so `camera.target`
-  can be any of `"terra"`, `"luna"`, or a planet (`"mars"`, ..., `"neptune"`);
-  the camera's `render_origin` is set from the resolved target.
+- **No markers** in render mode (`RenderState.markers` is empty). The renderer
+  derives every body from `RenderState.time`, so `camera.target` can be any of
+  `"terra"`, `"luna"`, or a planet (`"mars"`, ..., `"neptune"`); the render
+  origin is taken from the resolved `camera_target`.
 - **One `--scene` JSON drives the whole frame** (`snapshot::SceneSpec`,
   `deny_unknown_fields`): a `simulation` section (datetime), a `camera` section,
   and an optional `ui` section (`Vec<ui::UiPanel>`). The output target

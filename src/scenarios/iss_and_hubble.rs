@@ -3,9 +3,10 @@
 //! original default scene, now expressed as a named scenario (CLI:
 //! `globe-experiment scenario iss_and_hubble`).
 
-use glam::{Mat3, Mat4, Vec3};
+use glam::Vec3;
 
 use crate::application::{self, ApplicationState};
+use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::satellite::Satellite;
 use crate::simulation::{
     self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
@@ -74,11 +75,11 @@ impl Simulation for IssAndHubbleSimulation {
         self.simulation.advance()
     }
 
-    fn celestial_to_world(&self) -> Mat3 {
-        self.simulation.celestial_to_world()
+    fn celestial(&self) -> &CelestialSphere {
+        &self.simulation.celestial_sphere
     }
 
-    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
+    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
         let now = self.simulation.clock.now();
 
         let mut markers = Vec::with_capacity(self.satellites.len());
@@ -87,7 +88,8 @@ impl Simulation for IssAndHubbleSimulation {
             let state = sat.state_at(&now);
             markers.push(SatelliteMarker {
                 position_km: state.position_km,
-                visible: !marker_occluded(eye, state.position_km),
+                // Terra target, so the render-frame eye is the absolute eye.
+                visible: !marker_occluded(camera_pos, state.position_km),
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),
@@ -101,17 +103,14 @@ impl Simulation for IssAndHubbleSimulation {
         // comes from the same propagation as the markers.
         self.last_telemetry = sat_telemetry;
 
-        let celestial = &self.simulation.celestial_sphere;
         RenderState {
-            view_proj,
-            camera_pos: eye,
-            // Terra target: the origin stays at Terra (planet-free scene).
-            render_origin: Vec3::ZERO,
-            sol_pos_world: celestial.sol_pos_world,
-            star_rot_inv: celestial.star_tex_rot_inv,
-            // The Terra system (Terra + Luna); no planets, so the planet
-            // pipeline stays off.
-            celestial_bodies: celestial.terra_system_bodies(),
+            time: now,
+            // Terra target (the default): the renderer derives the Terra system
+            // from the time and keeps the origin at Terra.
+            camera_target: self.camera_target(),
+            camera_pos,
+            camera_look_at: look_at,
+            camera_up: up,
             markers,
         }
     }

@@ -57,19 +57,25 @@ So P is consistent with every WGS84 helper and with every satkit result.
   polar radius on +Y) in the **same body convention** — +Y = north (rotation
   pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`
   scales the sphere direction per axis; `geodetic_normal` is the gradient
-  (`x/req^2, y/rpol^2, z/req^2`), not radial.
+  (`x/req^2, y/rpol^2, z/req^2`), not radial. Planets are drawn as **shader
+  impostors** (no mesh): `fs_planet` ray-traces this same oblate ellipsoid
+  (`radii = vec3(req, rpol, req)`) and derives the geodetic normal + the
+  equirectangular UV analytically, matching the convention above.
 - Oriented into the world per frame by `planet_rot` = `P * R_gcrf2itrf *
-  iau_body_to_gcrf * P^T` (same `P^T` un-permute as Luna; see `simulation.md`).
+  iau_body_to_gcrf * P^T` (same `P^T` un-permute as Luna; see `simulation.md`);
+  the impostor applies it as `planet.rot` to the traced surface point + normal.
 
 ## Equirectangular UV mapping
 
-- Forward (mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at south.
-  Sampler repeats on U (dateline wrap), clamps on V (poles). Seam column
+- Forward (Terra/Luna mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at
+  south. Sampler repeats on U (dateline wrap), clamps on V (poles). Seam column
   duplicated.
-- Inverse (`fs_stars`, by direction `d`): `u = atan2(d.x, d.z)/(2*pi) + 0.5`,
-  `v = acos(d.y)/pi`. Computed **per fragment** — interpolating `u` across a
-  triangle crossing the +/-180 seam would smear the entire texture. Here `d`
-  is in the star texture's frame: `d = star_tex_rot_inv * view_dir`. The
+- Inverse (`fs_stars` and `fs_planet`, by a body-frame point/direction): `u =
+  atan2(p.x, p.z)/(2*pi) + 0.5`, `v = acos(p.y)/pi`. Computed **per fragment** —
+  for the planet impostor the point comes from the ray-traced hit (so there is
+  no seam-interpolation smear); for `fs_stars` interpolating `u` across a
+  triangle crossing the +/-180 seam would smear the entire texture, so `d` is
+  the star texture's frame direction `d = star_tex_rot_inv * view_dir`. The
   texture is drawn in **galactic** coordinates, so `star_tex_rot_inv` carries a
   static galactic->equatorial offset on top of the equatorial orientation (see
   `simulation.md`).

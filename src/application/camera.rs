@@ -1,15 +1,18 @@
-use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
+use glam::{Mat3, Quat, Vec3};
 
 use crate::simulation::CameraTarget;
+use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::terra;
 
 /// Orbital camera that lives in the **inertial (star-fixed) frame** and orbits
-/// a chosen body (the [`CameraTarget`] - Terra or Luna).
+/// a chosen subject (the [`CameraTarget`] - Terra, Luna, a planet, or a free
+/// point).
 ///
 /// The orbital math builds the rig (eye/target/up) around the *target's center*
 /// exactly as a surface-anchored camera would, but that rig is interpreted in
-/// the celestial frame and rotated into the Earth-fixed world frame at render
-/// time (see `view_proj`). So the camera does not rotate with the world: it
+/// the celestial frame and rotated into the Earth-fixed world frame (see
+/// `world_rig`; the renderer then builds the projection). So the camera does
+/// not rotate with the world: it
 /// holds still relative to the stars while the scene spins beneath it. The
 /// longitude/latitude therefore select an inertial viewing direction, not a
 /// fixed geographic point. With a Luna target the same construction keeps the
@@ -52,22 +55,14 @@ impl Default for Camera {
 }
 
 impl Camera {
-    const FOV_Y: f32 = 45.0;
-    // Distance/near/default limits as fractions of the *target body's* mean
-    // radius (was a hard-coded Terra radius). ~0.01 radii above the surface up to
-    // ~10 radii out; the default view sits ~2 radii above the surface.
+    // Distance/default limits as fractions of the *target body's* mean radius
+    // (was a hard-coded Terra radius). ~0.01 radii above the surface up to ~10
+    // radii out; the default view sits ~2 radii above the surface. The FOV, near
+    // plane, and far plane now live with the projection in `renderer` (the
+    // renderer rebuilds view_proj from the rig this camera emits).
     const MIN_DISTANCE_RADII: f32 = 0.01;
     const MAX_DISTANCE_RADII: f32 = 10.0;
-    const NEAR_PLANE_RADII: f32 = 0.01;
     const DEFAULT_DISTANCE_RADII: f32 = 2.0;
-    // The far plane is a fixed 500,000 km (NOT a multiple of a body radius like
-    // the other limits): it must enclose Luna at lunar apogee (~406,700 km)
-    // plus the camera's own distance, and - when orbiting Luna - Terra
-    // ~384,400 km away; the star shell (222,985 km) sits well inside it.
-    // Spanning ~17-64 km to 500,000 km is a ~4-orders-of-magnitude depth range,
-    // which is why `view_proj` uses a reversed-Z projection (see there) - it
-    // keeps depth precision usable across the whole range.
-    const FAR_PLANE: f32 = 500_000.0;
     const MAX_TILT: f32 = 80.0;
 
     /// Closest the eye may sit above the target surface, in km.
@@ -78,11 +73,6 @@ impl Camera {
     /// Farthest the eye may sit from the target surface, in km.
     fn max_distance(&self) -> f32 {
         Self::MAX_DISTANCE_RADII * self.target.mean_radius_km()
-    }
-
-    /// Near clip plane for the target, in km.
-    fn near_plane(&self) -> f32 {
-        Self::NEAR_PLANE_RADII * self.target.mean_radius_km()
     }
 
     /// The full-body framing distance for the target, in km. Used when a body
@@ -115,7 +105,8 @@ impl Camera {
     pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
         // Ground arc length spanned by one pixel at the target plane, in km.
         let km_per_pixel =
-            2.0 * self.distance * (Self::FOV_Y / 2.0).to_radians().tan() / viewport_height.max(1.0);
+            2.0 * self.distance * (crate::renderer::FOV_Y_DEG / 2.0).to_radians().tan()
+                / viewport_height.max(1.0);
 
         // Convert that arc length to an angle on the body: one radian of arc
         // subtends ~one mean radius of surface distance, so scaling by the
@@ -123,53 +114,31 @@ impl Camera {
         (km_per_pixel / self.target.mean_radius_km()).to_degrees()
     }
 
-    /// The view-projection matrix. `celestial_to_world` is the rotation from
-    /// the inertial (star) frame the rig lives in to the Earth-fixed world
-    /// frame the scene is drawn in (the inverse of the celestial sphere's
-    /// world->celestial rotation); applying it keeps the camera fixed relative
-    /// to the stars while the world rotates beneath it.
-    pub fn view_proj(&self, aspect: f32, celestial_to_world: Mat3) -> Mat4 {
-        // Built in the floating-origin (render) frame, where the orbited body
-        // sits at the numerical origin. Computed WITHOUT forming the absolute
-        // eye: a far planet's absolute position is billions of km, so
-        // `absolute_eye - render_origin` in f32 cancels catastrophically (the
-        // view translation snaps to ~hundreds of km and the camera jitters).
-        // `world_frame_relative` keeps the math local instead. For Terra/Luna
-        // (render_origin 0) this equals the absolute rig - bit-identical.
-        let (eye, target, up) = self.world_frame_relative(celestial_to_world);
-
-        let view = Mat4::look_at_rh(eye, target, up);
-        let proj = Mat4::perspective_rh(
-            Self::FOV_Y.to_radians(),
-            aspect.max(0.01),
-            self.near_plane(),
-            Self::FAR_PLANE,
-        );
-
-        // Reversed-Z: remap clip depth so the near plane maps to 1 and the far
-        // plane to 0 (paired with a depth buffer cleared to 0.0 and a `Greater`
-        // depth test in the renderer). Across this scene's enormous near/far
-        // span the floating-point depth buffer would otherwise have almost no
-        // precision far from the camera (where Luna is); reversed-Z spreads
-        // the mantissa's precision evenly, so Terra still occludes Luna
-        // cleanly. `z_clip' = w_clip - z_clip`, i.e. negate the proj Z row and
-        // add the W row.
-        let reverse_z = Mat4::from_cols(
-            Vec4::new(1.0, 0.0, 0.0, 0.0),
-            Vec4::new(0.0, 1.0, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, -1.0, 0.0),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-        );
-
-        reverse_z * proj * view
-    }
-
-    /// The camera eye in the floating-origin (render) frame (km) - what the
-    /// renderer uploads as `camera_pos` and uses to center the star shell.
-    /// Precise for far targets (see `world_frame_relative`); for Terra/Luna
-    /// (render_origin 0) it is the absolute eye.
-    pub fn eye_relative(&self, celestial_to_world: Mat3) -> Vec3 {
-        self.world_frame_relative(celestial_to_world).0
+    /// The camera rig for the renderer: the eye, the look-at point, and the up
+    /// vector, all in the floating-origin (render) frame.
+    /// `celestial_to_world` is the rotation from the inertial (star) frame the
+    /// rig lives in to the Earth-fixed world frame the scene is drawn in (the
+    /// inverse of the celestial sphere's world->celestial rotation); applying
+    /// it keeps the camera fixed relative to the stars while the world
+    /// rotates beneath it.
+    ///
+    /// The renderer rebuilds the view-projection matrix from these (see
+    /// `renderer::view_proj_reversed_z`). The look direction is carried as the
+    /// look-at *point* rather than a normalized forward vector so the
+    /// renderer's `look_at_rh` reproduces the old `view_proj` bit-for-bit
+    /// (re-normalizing a forward and re-projecting would drift by sub-ULP
+    /// and speckle every antialiased edge). The eye is kept in the render
+    /// frame - computed WITHOUT ever forming the absolute eye - because a
+    /// far planet's absolute position is billions of km, so `absolute_eye -
+    /// render_origin` in f32 would cancel catastrophically (the view
+    /// translation snaps to ~hundreds of km and the camera jitters). For
+    /// Terra/Luna (render_origin 0) the render frame is the absolute frame.
+    pub fn world_rig(
+        &self,
+        celestial: &CelestialSphere,
+        celestial_to_world: Mat3,
+    ) -> (Vec3, Vec3, Vec3) {
+        self.world_frame_relative(celestial, celestial_to_world)
     }
 
     /// An inertial camera that orbits `target` and whose look axis points along
@@ -212,7 +181,12 @@ impl Camera {
     /// body's scale). Keeping the existing longitude/latitude for a Terra
     /// switch is fine: any inertial direction frames Terra at the
     /// origin.
-    pub fn retarget(&mut self, target: CameraTarget, celestial_to_world: Mat3) -> bool {
+    pub fn retarget(
+        &mut self,
+        target: CameraTarget,
+        celestial: &CelestialSphere,
+        celestial_to_world: Mat3,
+    ) -> bool {
         let switched = !self.target.same_kind(&target);
         self.target = target;
 
@@ -225,7 +199,7 @@ impl Camera {
             // `looking_toward` uses with a world look direction of +center. An
             // Terra target keeps the existing longitude/latitude (any inertial
             // direction frames Terra at the origin).
-            let center = self.target.center_world();
+            let center = self.target.center_world(celestial);
             if center != Vec3::ZERO {
                 let star_rot_inv = celestial_to_world.transpose();
                 let radial = -(star_rot_inv * center.normalize_or_zero());
@@ -247,9 +221,13 @@ impl Camera {
     /// offset` (local, precise). For Terra/Luna (render_origin 0) the shift
     /// is the body center, so this equals the absolute rig - bit-identical
     /// to the pre-planet renderer.
-    fn world_frame_relative(&self, celestial_to_world: Mat3) -> (Vec3, Vec3, Vec3) {
+    fn world_frame_relative(
+        &self,
+        celestial: &CelestialSphere,
+        celestial_to_world: Mat3,
+    ) -> (Vec3, Vec3, Vec3) {
         let (eye, target, up) = self.frame();
-        let shift = self.target.center_world() - self.target.render_origin();
+        let shift = self.target.center_world(celestial) - self.target.render_origin(celestial);
         (
             shift + celestial_to_world * eye,
             shift + celestial_to_world * target,

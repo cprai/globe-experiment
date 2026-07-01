@@ -36,20 +36,23 @@ paths:
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
   top) so it is compatible with the depth attachment.
-- **Draw order: stars -> distant-planet billboards -> Terra surface -> Luna ->
-  near-planet meshes -> atmosphere -> markers**, one render pass. Luna +
-  planet meshes (solid bodies, depth write + `Greater`) draw between the surface
-  and atmosphere so the depth buffer resolves occlusion before the additive
-  atmosphere. Each planet is classified per frame by apparent angular size
-  (CPU, in `prepare`, `2*atan(req/distance)` vs `PLANET_BILLBOARD_MAX_ARCSEC`):
-  large/near ones draw as **meshes** (`vs_planet`/`fs_planet`); far ones below
-  the threshold draw as **billboard impostors** (`vs_planet_billboard`/
-  `fs_planet_billboard`) - a camera-facing quad (no vertex buffer) that
-  ray-traces the oblate ellipsoid (orthographic / parallel-ray, f32-safe at
-  distance), still textured + Lambert-lit. Billboards are depth-off and drawn
-  right after the backdrop (they are always the far bodies, so the later opaque
-  draws paint over them); they are sorted far-to-near in `prepare`. Both share
-  the group-1 bind group; only the solar-system scenario fills the planets.
+- **Draw order: stars -> planet impostors -> Terra surface -> Luna ->
+  atmosphere -> markers**, one render pass. Every planet is a **single shader
+  impostor** (`vs_planet`/`fs_planet`): a camera-facing quad (no vertex buffer)
+  placed in screen space by the CPU (in `prepare`, projecting the planet center
+  to NDC) that ray-traces the oblate ellipsoid, textured + Lambert-lit, and
+  **writes per-fragment depth** (reversed-Z, same as the solid bodies) - so the
+  depth buffer resolves planet-vs-planet and Terra-vs-planet occlusion and draw
+  order does not matter (impostors draw right after the backdrop). The trace is
+  **distance-adaptive**, chosen per planet on the CPU by apparent angular size
+  (`2*asin(req/distance)` vs `PLANET_PERSPECTIVE_MIN_ARCSEC`): a near/orbited
+  planet uses the **perspective** eye-ray trace (reconstructed from the
+  fragment's NDC via `inv_view_proj`, f32-safe because distance/radius is small
+  there) and writes the true hit-point depth; a distant planet uses the
+  **orthographic** parallel-ray trace (built from the quad-corner offset,
+  f32-safe at any distance) and the center's baseline depth. The group-1 bind
+  group is shared; only the solar-system scenario shows the planets prominently
+  (the Terra/Luna views carry them too, but far off-screen).
 - **Terra system is gated to Terra/Luna targets.** The Terra surface, atmosphere,
   Luna, and satellite markers draw only when `render_origin == 0` (orbiting the
   Terra or Luna); the renderer sets a `draw_terra_system` flag. Orbiting a
@@ -58,11 +61,12 @@ paths:
 - **Render frame (floating origin): the shader is fully camera-target-local.**
   Every position uniform (`camera_pos`, `luna_pos`, `sol_pos`, the per-planet
   `pos`) is **already relative to the camera target** — the renderer subtracts
-  `render_origin` on the CPU, so there is NO `render_origin` uniform and no
-  `world - render_origin` in any vertex shader. The orbited body's `pos` is a
-  bit-exact zero, so its mesh is drawn in pure local coordinates (the f32-jitter
-  fix). For Terra/Luna (`render_origin == 0`) the render frame is the absolute
-  frame, so geometry is bit-identical. There is **no `sol_dir`**: every lit pass
+  the origin (`camera_target.render_origin()`) on the CPU, so there is NO
+  `render_origin` uniform and no `world - render_origin` in any vertex shader.
+  The orbited body's `pos` is a bit-exact zero, so it is drawn in pure local
+  coordinates (the f32-jitter fix). For Terra/Luna (`render_origin == 0`) the
+  render frame is the absolute frame, so geometry is bit-identical. There is
+  **no `sol_dir`**: every lit pass
   derives its Sol direction from `sol_pos` (`normalize(sol_pos - world_pos)` for
   surfaces, `normalize(sol_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
@@ -169,16 +173,21 @@ MEAN_RADIUS_KM ~6371.0088     GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418
 ANGULAR_VELOCITY_RAD_S 7.292115e-5
 ```
 
-**`src/application/camera.rs`** (limits are radius *ratios* `*_RADII`, scaled by
-the orbit target's `mean_radius_km()`; values below are the Terra target):
+**`src/application/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
+scaled by the orbit target's `mean_radius_km()`; values below are the Terra
+target). FOV/near/far moved to `renderer`:
 ```
-FOV_Y 45 deg   MIN_DISTANCE_RADII 0.01 (~63.7)   MAX_DISTANCE_RADII 10 (~63710)
-NEAR_PLANE_RADII 0.01 (~63.7)   FAR_PLANE 500000 (fixed km)   MAX_TILT 80
+MIN_DISTANCE_RADII 0.01 (~63.7)   MAX_DISTANCE_RADII 10 (~63710)   MAX_TILT 80
 DEFAULT_DISTANCE_RADII 2 (Terra ~12742)   defaults: lon 0, lat 0, tilt 0   lat clamp +/-89
 ```
 
-**`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128`, `MARKER_RADIUS_PX 6`,
-`PLANET_BILLBOARD_MAX_ARCSEC 1800` (angular-diameter cutoff: below it a planet
-draws as a billboard impostor, above it as a mesh). Billboard shader consts in
-`scene.wgsl`: `PLANET_BILLBOARD_SHELL_KM = STARS_RADIUS_KM`,
-`PLANET_BILLBOARD_MARGIN 1.15`.
+**`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128` (Terra/Luna meshes only),
+`MARKER_RADIUS_PX 6`, projection `FOV_Y_DEG 45`, `NEAR_PLANE_RADII 0.01`
+(* target radius), `FAR_PLANE_KM 500000` (far-plane *floor*; the actual far
+plane is `max(FAR_PLANE_KM, |camera_pos| + 2*radius)`, so a large orbited body
+at max zoom-out is never z-clipped). Planet impostor:
+`PLANET_PERSPECTIVE_MIN_ARCSEC 1800` (angular-diameter cutoff: at/above it the
+impostor uses the perspective trace, below it orthographic),
+`PLANET_QUAD_MARGIN 1.3` (Rust) / `PLANET_QUAD_MARGIN 1.3` (`scene.wgsl`, must
+match), and `PLANET_MIN_DEPTH 1e-6` (clamps a beyond-far planet so it is not
+z-clipped).

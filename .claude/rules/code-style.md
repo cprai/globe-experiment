@@ -48,8 +48,10 @@ Six top-level modules + `terra`:
 - **Input feel constants**: `src/application/input.rs` top.
 - **Terra physical constants + helpers**: `src/terra.rs`.
 - **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
-  — the distance/near/default limits are radius *ratios* (`*_RADII`), scaled at
-  use by the orbit target's `mean_radius_km()`; `FAR_PLANE` stays a fixed km.
+  — the distance/default limits are radius *ratios* (`*_RADII`), scaled at use by
+  the orbit target's `mean_radius_km()`. **Projection** consts live in `renderer`
+  (`FOV_Y_DEG`, `NEAR_PLANE_RADII`, `FAR_PLANE_KM`); the far plane is a *floor* —
+  `prepare` grows it to enclose a large orbited body (see `camera.md`).
 - **All build assets**: in `OUT_DIR`, `include_bytes!`-ed. No `assets/` dir.
 - **TLE data**: inline source `const`s in the scenario files, not in
   `satellite.rs`. The `ISS_TLE` literal is **deliberately duplicated** across

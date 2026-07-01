@@ -14,9 +14,12 @@ celestial frame and rotated into the world by:
 celestial_to_world = star_rot_inv.transpose()
 ```
 
-This is `SimulationState::celestial_to_world()`, applied in
-`ApplicationState::redraw` via `camera.view_proj(aspect, c2w)` and
-`camera.eye(c2w)`.
+`ApplicationState::redraw` reads the frame's sphere from
+`Simulation::celestial()`, derives `celestial_to_world =
+star_rot_inv.transpose()`, and calls `camera.world_rig(celestial, c2w)` (which
+returns the eye, look-at point, and up in the render frame; the renderer
+rebuilds the projection from them). The camera takes the sphere so it can
+resolve its target's moving center (see "Camera target" below).
 
 Because `star_rot_inv * celestial_to_world = I`, a rig held constant in the
 celestial frame yields a constant star lookup direction — **stars are locked
@@ -49,54 +52,69 @@ relative to the camera target's center** (`CameraTarget::render_origin()` — th
 planet's center, or `Vec3::ZERO` for Terra/Luna). The GPU never handles an
 absolute world position.
 
-- `RenderState.render_origin` is the target center; the renderer subtracts it on
-  the **CPU** (in `prepare`) from every absolute body position (`sol_pos_world`,
-  and each `BodyState.placement.pos_world` in `celestial_bodies` — Luna and
-  each planet) before upload.
+- The renderer computes the origin as
+  `RenderState.camera_target.render_origin(&celestial)` (the sphere it derived
+  from `RenderState.time`) and subtracts it on the **CPU** (in `prepare`) from
+  every absolute body
+  position (`sol_pos_world`, and each `BodyState.placement.pos_world` — Luna and
+  each planet, derived from `CelestialSphere::at(time)`) before upload.
   `render_origin` is **not** a shader uniform — the shader is purely local.
-- The orbited body's center IS `render_origin`, so its uploaded position is a
-  **bit-exact zero** (`pos - render_origin == 0`): its mesh is drawn in pure
-  local coordinates, which is what kills the jitter. (Even the f64->f32 ephemeris
-  rounding cancels here, since the camera target uses the *same* f32 value.)
-- `Camera::view_proj` / `Camera::eye_relative` build the rig via
-  `world_frame_relative`: `(center - render_origin) + c2w*offset` — they never
-  form the absolute eye (`absolute_eye - render_origin` would cancel
-  catastrophically, snapping the view translation to ~hundreds of km). For the
-  orbited body `center == render_origin`, so the rig is just `c2w*offset`.
+- The orbited body's center IS the origin, so its uploaded position is a
+  **bit-exact zero** (`pos - origin == 0`): it is drawn in pure local
+  coordinates, which is what kills the jitter. (Even the f64->f32 ephemeris
+  rounding cancels here, since the renderer re-derives the same `CelestialSphere`
+  the camera target's center came from, the *same* f32 value.)
+- `Camera::world_rig(celestial, c2w)` builds the rig via `world_frame_relative`:
+  `(center - render_origin) + c2w*offset`, where `center` /`render_origin` are
+  resolved from the passed `&CelestialSphere` — it never forms the absolute eye
+  (`absolute_eye - render_origin` would cancel catastrophically, snapping the
+  view translation to ~hundreds of km). For the orbited body
+  `center == render_origin`, so the rig is just `c2w*offset`. The renderer then
+  builds `view_proj` from the rig's eye + look-at point + up
+  (`renderer::view_proj_reversed_z`).
 - For Terra/Luna (`render_origin == 0`) the render frame **is** the absolute
-  frame, so the camera geometry is bit-identical to the pre-planet renderer.
-  (Lighting differs by < 1 LSB: every pass now derives the Sol direction from
-  Sol *position* rather than a precomputed `sol_dir`.)
+  frame, so the camera geometry is **bit-identical** to the pre-planet renderer
+  (verified: AE=0 headless A/B for Terra/Luna/eclipse). Passing the look-at
+  *point* (not a re-normalized forward vector) is what preserves the bit
+  identity. (Lighting differs by < 1 LSB: every pass derives the Sol direction
+  from Sol *position* rather than a precomputed `sol_dir`.)
 
-## Camera target (orbit Terra, Luna, or a planet)
+## Camera target (orbit Terra, Luna, a planet, or a free point)
 
-The camera orbits a **`CameraTarget`** (a struct `{ body: CelestialBody,
-center_world: Vec3 }`, defined in `simulation`, plain data + geometry accessors
-delegating through the `CelestialBody` identity to `terra` / `luna` / `planet` —
-a sanctioned `simulation`->`application` data edge like `RenderState`). The
-`body` is `TerraSystem(Terra)`, `TerraSystem(Luna)`, or `Planet(p)`; orbiting
-Luna is `TerraSystem(Luna)`.
-`Camera` holds a `target` field. The rig is built by `world_frame_relative` in
-the render frame (see above): for Terra/Luna it equals the absolute rig; for a
-planet it is the small local offset. The camera stays star-fixed while tracking
-the body's moving ephemeris position. `same_kind` compares the `CelestialBody`
-identity, so two planet targets are equal only when the *same* planet (cycling
-Mars->Jupiter reframes); `retarget`
-re-aims at any off-origin center.
+The camera orbits a **`CameraTarget`** (an enum `Body(CelestialBody) |
+Coordinate(Vec3)`, defined in `simulation`, a sanctioned `simulation`->
+`application` data edge like `RenderState`). It is a pure **identity**: it does
+NOT store the body's center. The position-dependent accessors take the sphere
+(`center_world(&celestial)`, `render_origin(&celestial)`) and look the center up
+from the ephemeris; the static ones (`mean_radius_km`, `surface_position`,
+`geodetic_normal`) delegate through the `CelestialBody` identity to `terra` /
+`luna` / `planet` with no sphere. For `Body`, the identity is `TerraSystem(Terra)`,
+`TerraSystem(Luna)`, or a planet; orbiting Luna is `TerraSystem(Luna)`. The
+`Coordinate` variant orbits a free world point with synthetic geometry (a
+Terra-radius scale + a center look-at anchor) — future-proof scaffolding, not
+wired into any scenario yet.
+`Camera` holds a `target` field (identity only). The rig is built by
+`world_frame_relative(&celestial, c2w)` in the render frame (see above): for
+Terra/Luna it equals the absolute rig; for a planet (or coordinate) it is the
+small local offset. The camera stays star-fixed while tracking the body's moving
+ephemeris position (re-resolved from the sphere each frame). `same_kind` compares
+the `CelestialBody` identity (two planet targets are equal only when the *same*
+planet, so cycling Mars->Jupiter reframes; two coordinates always match);
+`retarget(target, &celestial, c2w)` re-aims at any off-origin center.
 The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
 
-Each frame `ApplicationState::redraw` calls `Camera::retarget(target, c2w)` with
-`Simulation::camera_target()` (defaults to Terra; the eclipse scenarios override
-it from a `TargetSelector` driven by the panel's TERRA / LUNA keys). `retarget`
-always refreshes the Luna center; on a genuine **body switch** it reframes
-(distance = body default, tilt 0, Luna re-aimed at the near side) and returns
-`true`, and the application calls `Controller::reset_animation()` to cancel any
-in-flight zoom/flick (which targets the old body's scale). The headless `render`
-path picks the body directly: the `--scene` `camera.target` field is
-`"terra"` (default) or `"luna"` (a center-free `CameraTargetSpec` in
-`snapshot.rs`; the Luna center is filled from the ephemeris at render time).
+Each frame `ApplicationState::redraw` calls `Camera::retarget(target, &celestial,
+c2w)` with `Simulation::camera_target()` (defaults to Terra; the eclipse
+scenarios override it from a `TargetSelector` driven by the panel's TERRA / LUNA
+keys). On a genuine **body switch** it reframes (distance = body default, tilt 0,
+re-aimed at the target's center resolved from the sphere) and returns `true`, and
+the application calls `Controller::reset_animation()` to cancel any in-flight
+zoom/flick (which targets the old body's scale). The headless `render` path picks
+the body directly: the `--scene` `camera.target` field is `"terra"` (default),
+`"luna"`, or a planet (a center-free `CameraTargetSpec` in `snapshot.rs`; the
+center is resolved from the ephemeris at render time).
 
 ## Backdrop anchoring
 
@@ -139,25 +157,36 @@ a Terra orbit this never triggers.
 
 ## Associated constants (km)
 
-The distance/near/default limits are **ratios of the target body's mean radius**
+The distance/default limits are **ratios of the target body's mean radius**
 (`<radii>` consts on `Camera`, multiplied by `target.mean_radius_km()` in the
-instance methods `min_distance`/`max_distance`/`near_plane`/`default_distance`),
-so the old tuned Terra feel is preserved and Luna gets the same feel at its
-own scale:
-- `FOV_Y = 45 deg`
+instance methods `min_distance`/`max_distance`/`default_distance`), so the old
+tuned Terra feel is preserved and Luna gets the same feel at its own scale:
 - `MIN_DISTANCE_RADII = 0.01` (Terra ~63.7 km, Luna ~17.4 km)
 - `MAX_DISTANCE_RADII = 10.0` (Terra ~63710 km, Luna ~17374 km)
-- `NEAR_PLANE_RADII = 0.01`; `FAR_PLANE = 500_000 km` (a fixed value, NOT a
-  radius multiple) — it must enclose Luna at lunar apogee (~406,700 km) plus
-  the camera distance, and (orbiting Luna) Terra ~384,400 km away; the
-  star shell (222,985 km) is well inside it.
 - `MAX_TILT = 80 deg`
 - `DEFAULT_DISTANCE_RADII = 2.0` (Terra default ~12742 km); lat clamp +/- 89 deg.
   `clamp_distance` is now an **instance** method (limits depend on the target).
 
-`view_proj` uses a **reversed-Z** projection: it post-multiplies a Z-flip
-matrix onto `Mat4::perspective_rh` so the near plane maps to depth 1 and the
-far plane to 0. This is paired with the renderer's `Depth32Float` buffer
+The **projection** constants live in `renderer` (the renderer rebuilds
+`view_proj` from the camera rig via `view_proj_reversed_z`):
+- `renderer::FOV_Y_DEG = 45 deg` (the camera's pan math reads it too)
+- `renderer::NEAR_PLANE_RADII = 0.01`, scaled by the target's mean radius
+- `renderer::FAR_PLANE_KM = 500_000` — the **floor** of the far plane, NOT a
+  fixed far plane. It covers the Terra-Luna system (Luna at apogee ~406,700 km +
+  camera distance; orbiting Luna, Terra ~384,400 km) and the camera-centered
+  star shell (222,985 km). But `prepare` computes the actual far plane as
+  `max(FAR_PLANE_KM, |camera_pos| + 2*radius)` so it always encloses the orbited
+  body even when that body is large: a gas giant at max zoom-out has an
+  eye-to-center of ~770,000 km (Jupiter), well past 500,000 km, and a fixed far
+  plane would z-clip the whole disc away. Terra/Luna stay at exactly 500,000
+  (their `|camera_pos| + 2*radius` is smaller), so their output is unchanged.
+  A non-orbited planet sits beyond even the scaled far plane (billions of km);
+  its impostor depth is clamped (`PLANET_MIN_DEPTH`) so it is not z-clipped,
+  though it is sub-pixel in practice.
+
+`view_proj_reversed_z` uses a **reversed-Z** projection: it post-multiplies a
+Z-flip matrix onto `Mat4::perspective_rh` so the near plane maps to depth 1 and
+the far plane to 0. This is paired with the renderer's `Depth32Float` buffer
 cleared to `0.0` and a `Greater` depth test (see `shader.md`); across the huge
 ~64 km -> 500,000 km near/far span a forward-Z float buffer would have almost
 no precision near Luna, so reversed-Z is load-bearing for the Terra-occludes-

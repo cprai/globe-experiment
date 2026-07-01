@@ -92,42 +92,49 @@ src/planet.rs            the 7 planets' data, hung off the CelestialBody planet
                          free, like terra/luna; references simulation::body for
                          the CelestialBody type
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
-                         (7 pipelines incl. Luna + planet mesh + planet
-                         billboard; reversed-Z
-                         Depth32Float buffer). Planets use a separate group-1
-                         bind group (per-planet uniform + texture)
+                         (6 pipelines incl. Luna + a single planet impostor;
+                         reversed-Z Depth32Float buffer). Derives all body
+                         positions from RenderState.time via CelestialSphere::at
+                         and rebuilds view_proj (view_proj_reversed_z) from the
+                         camera rig. Planets use a separate group-1 bind group
+                         (per-planet impostor uniform + texture)
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
                          (+ matching depth buffer)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
-                         wgs84_ellipsoid + luna_ellipsoid + planet_ellipsoid
+                         wgs84_ellipsoid + luna_ellipsoid (planets are
+                         impostors, not meshes)
 src/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
                          enum (TerraSystem(TerraSystemEntity Terra|Luna), then
                          each planet Mercury..Neptune as its own variant) +
                          total geometry accessors (name/mean_radius/surface/
                          normal; planet data hangs off these variants in
                          src/planet.rs), Placement (pos+rot), BodyState (identity
-                         + placement). The shared vocabulary for RenderState,
-                         CameraTarget, and the selectors
+                         + placement). The shared vocabulary for the celestial
+                         sphere, CameraTarget, and the selectors
 src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          to Terra), SimulationState (core: clock + celestial
                          sphere) + its shared-core impl UIDrawable, RenderState
-                         (render_origin/sol_pos_world + celestial_bodies:
-                         Vec<BodyState>, the flat render list incl. Luna),
-                         SatelliteTelemetry, CameraTarget (struct: body:
-                         CelestialBody + center_world; render_origin(), consumed
-                         by application's Camera), TargetSelector (TERRA/LUNA,
-                         eclipses), BodySelector (one latching key per body, 9
-                         bodies ordered by distance from Sol, solar_system)
+                         (time + camera rig (camera_pos/camera_look_at/camera_up)
+                         + camera_target + markers - the renderer derives the
+                         rest from time), SatelliteTelemetry, CameraTarget (enum:
+                         Body(CelestialBody) | Coordinate(Vec3) - a pure
+                         identity; center_world()/render_origin() resolve the
+                         moving center from the CelestialSphere on demand),
+                         TargetSelector (TERRA/LUNA, eclipses), BodySelector (one
+                         latching key per body, 9 bodies ordered by distance from
+                         Sol, solar_system)
 src/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          + Luna position (DE440) and IAU lunar rotation;
                          sol_pos_world + the 7 planets' position (DE440) and IAU
                          planet rotation, all assembled into bodies:
                          Vec<BodyState> (Terra, Luna, 7 planets in planet::ALL
-                         order); iau_body_to_gcrf helper
+                         order); iau_body_to_gcrf helper. Called by the renderer
+                         each frame (keyed on RenderState.time)
 src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/scene.wgsl       ALL shader code (7 passes in one module: + planet mesh
-                         + distant-planet billboard impostor; analytic
+shaders/scene.wgsl       ALL shader code (6 passes in one module: a single
+                         distance-adaptive planet impostor (perspective/
+                         orthographic ray trace, writes frag_depth); analytic
                          eclipse shadows). Planet uniform/texture are group 1
 OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Terra x4,
                          stars, Luna, 7 planets) + 3 f16 LUT KTX2 + DE440
@@ -138,9 +145,15 @@ OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Terra x
 
 ```
 main        -> application, simulation, renderer, scenarios
-application -> simulation, renderer, ui, terra, (winit, egui, egui_winit, glam)
+application -> simulation (incl. CelestialSphere, to resolve the camera
+                                       # target's center), renderer, ui, terra,
+                                       # (winit, egui, egui_winit, glam)
 ui          -> (egui)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState), terra, luna, planet, (wgpu, egui_wgpu, ktx2, glam)
+renderer    -> simulation (RenderState + CelestialSphere::at), terra, luna,
+                                       # planet, (wgpu, egui_wgpu, ktx2, glam).
+                                       # Derives all body geometry from
+                                       # RenderState.time itself (so it pulls in
+                                       # satkit transitively at runtime).
 simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # impl UIDrawable
                                        # for SimulationState; NO winit/wgpu/Camera
 terra       -> (glam)
@@ -166,21 +179,24 @@ advance(&mut self) -> bool
     Tick the clock + re-evaluate the celestial sphere. Returns whether the
     clock is running (keeps frames coming; paused = app goes idle).
 
-celestial_to_world(&self) -> Mat3
-    Rotation from the inertial (star-fixed) camera rig frame to the
-    Earth-fixed world frame. Called by the application before each frame to
-    resolve the camera into world space.
+celestial(&self) -> &CelestialSphere
+    This frame's celestial sphere (Sol/Luna/planets + star matrices). The
+    application reads it to map the rig into world space (celestial_to_world =
+    star_rot_inv.transpose()) and to resolve the camera target's moving center.
+    (The renderer separately re-derives the sphere from RenderState.time.)
 
 camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::terra()]
-    Which body the orbital camera orbits this frame. The application reads it
-    and calls Camera::retarget before resolving eye/view_proj. Terra-only
+    Which subject the orbital camera orbits this frame. The application reads it
+    and calls Camera::retarget before resolving the camera rig. Terra-only
     scenarios inherit the default; the eclipse scenarios override it from a
     TargetSelector (panel-driven).
 
-frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState
-    Propagate all satellites once, fill RenderState (renderer). Stashes the
-    same-propagation per-satellite readout (Vec<SatelliteTelemetry>) on the
-    scenario for the immediately-following get_drawables call.
+frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState
+    Propagate all satellites once, fill RenderState (the frame's time + the
+    camera rig + camera_target + markers - the renderer derives Sol/Luna/planet
+    geometry from the time). Stashes the same-propagation per-satellite readout
+    (Vec<SatelliteTelemetry>) on the scenario for the immediately-following
+    get_drawables call.
 ```
 
 ## `UIDrawable` trait + `UIDrawablePanel` + `Instrument`
@@ -252,9 +268,10 @@ need not know the `clock` submodule path.
 ## Purity rules (compiler-enforced)
 
 - **`simulation` imports neither winit/wgpu nor the `Camera` type.**
-  The `Simulation` trait takes resolved `Vec3`/`Mat4` values for the camera
-  and returns a `RenderState`. This keeps input scheme changes local to
-  `application` and each scenario's `frame_state` impl independently testable.
+  The `Simulation` trait takes resolved `Vec3` values for the camera rig (eye,
+  look-at point, up) and returns a `RenderState`. This keeps input scheme
+  changes local to `application` and each scenario's `frame_state` impl
+  independently testable.
   `simulation` *does* depend on `ui` (hence egui, transitively) for the
   shared-core `impl UIDrawable for SimulationState`, which lives next to the
   type rather than in `ui`. The `UIDrawable`/`UIDrawablePanel`/`Instrument`
@@ -262,12 +279,25 @@ need not know the `clock` submodule path.
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.
-- **`Camera` type lives in `application` only.** Other modules see only a
-  resolved `eye`/`view_proj`. (`RenderState` is defined in `simulation` but
+- **`Camera` type lives in `application` only.** Other modules see only the
+  resolved rig (eye / look-at / up); the renderer rebuilds the projection from
+  it via `renderer::view_proj_reversed_z` (the FOV/near/far projection consts
+  also live in `renderer`). (`RenderState` is defined in `simulation` but
   consumed by `renderer`, and `CameraTarget` is defined in `simulation` but
   consumed by `application`'s `Camera` — the two allowed edges. `CameraTarget`
-  is plain data: it names no `Camera`/winit/wgpu type, only the orbit body (a
-  `CelestialBody` identity) + its world center, with geometry accessors
-  delegating through the identity to `terra`/`luna`/`planet`. The
-  scenario→application *camera* channel is the `Simulation::camera_target`
-  return value, so the application still owns all camera mechanics.)
+  is plain **identity** data: it names no `Camera`/winit/wgpu type, only the
+  orbit subject (a `CelestialBody` identity, or a free `Coordinate`). It does
+  **not** store the body's moving center; the center is resolved from the
+  `CelestialSphere` on demand via `center_world(&sphere)` / `render_origin(&
+  sphere)`, with the static geometry accessors delegating through the identity
+  to `terra`/`luna`/`planet`. The scenario→application *camera* channel is the
+  `Simulation::camera_target` return value, so the application still owns all
+  camera mechanics.)
+- **Relaxed: `application` may read the `CelestialSphere`.** The camera now
+  resolves its target's center from the sphere (via `Simulation::celestial()`),
+  so `application` touches `simulation`'s ephemeris-backed type and pulls in
+  satkit transitively at runtime. This was a deliberate trade (owner-approved)
+  to make `CameraTarget` a pure identity with a single source of truth for
+  centers, rather than baking a resolved snapshot into the type. `application`
+  still imports no winit-in-`simulation` / wgpu types, and the `Camera` type
+  still lives only in `application`.

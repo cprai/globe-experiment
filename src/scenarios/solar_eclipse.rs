@@ -5,10 +5,11 @@
 //! list; its clock starts directly from the eclipse datetime rather than a TLE
 //! epoch, and it draws no markers.
 
-use glam::{Mat3, Mat4, Vec3};
+use glam::Vec3;
 use satkit::Instant;
 
 use crate::application::{self, ApplicationState, Camera};
+use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{
     self, CameraTarget, RenderState, Simulation, SimulationState, TargetSelector,
 };
@@ -51,29 +52,24 @@ impl Simulation for SolarEclipseSimulation {
         self.simulation.advance()
     }
 
-    fn celestial_to_world(&self) -> Mat3 {
-        self.simulation.celestial_to_world()
+    fn celestial(&self) -> &CelestialSphere {
+        &self.simulation.celestial_sphere
     }
 
     fn camera_target(&self) -> CameraTarget {
-        self.selector
-            .resolve(self.simulation.celestial_sphere.luna().placement.pos_world)
+        self.selector.resolve()
     }
 
-    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
-        // No satellites: an empty marker list, the celestial state straight from
-        // the shared core.
-        let celestial = &self.simulation.celestial_sphere;
+    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+        // No satellites: an empty marker list. The renderer derives the Terra
+        // system from the frame's time; the selector's target (Terra or Luna)
+        // keeps the origin at Terra either way.
         RenderState {
-            view_proj,
-            camera_pos: eye,
-            // Terra/Luna targets keep the origin at Terra (planet-free scene).
-            render_origin: Vec3::ZERO,
-            sol_pos_world: celestial.sol_pos_world,
-            star_rot_inv: celestial.star_tex_rot_inv,
-            // The Terra system (Terra + Luna); no planets, so the planet
-            // pipeline stays off.
-            celestial_bodies: celestial.terra_system_bodies(),
+            time: self.simulation.clock.now(),
+            camera_target: self.camera_target(),
+            camera_pos,
+            camera_look_at: look_at,
+            camera_up: up,
             markers: Vec::new(),
         }
     }

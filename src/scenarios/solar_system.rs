@@ -11,10 +11,11 @@
 //! scene is drawn relative to the orbited planet's center; see
 //! `RenderState::render_origin`). Terra/Luna targets keep the origin at Terra.
 
-use glam::{Mat3, Mat4, Vec3};
+use glam::Vec3;
 use satkit::Instant;
 
 use crate::application::{self, ApplicationState};
+use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{
     self, BodySelector, CameraTarget, RenderState, Simulation, SimulationState,
 };
@@ -48,28 +49,25 @@ impl Simulation for SolarSystemSimulation {
         self.simulation.advance()
     }
 
-    fn celestial_to_world(&self) -> Mat3 {
-        self.simulation.celestial_to_world()
+    fn celestial(&self) -> &CelestialSphere {
+        &self.simulation.celestial_sphere
     }
 
     fn camera_target(&self) -> CameraTarget {
-        self.selector.resolve(&self.simulation.celestial_sphere)
+        self.selector.resolve()
     }
 
-    fn frame_state(&mut self, eye: Vec3, view_proj: Mat4) -> RenderState {
-        // The render origin must match the camera's target this frame (the
-        // camera builds view_proj against the same origin).
-        let target = self.selector.resolve(&self.simulation.celestial_sphere);
-        let celestial = &self.simulation.celestial_sphere;
+    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+        // No satellites: an empty marker list. The renderer derives every
+        // body's position from the frame's time and uses the camera target's
+        // render origin (which must match the one the camera built its rig
+        // against - both come from `camera_target()` this frame).
         RenderState {
-            view_proj,
-            camera_pos: eye,
-            render_origin: target.render_origin(),
-            sol_pos_world: celestial.sol_pos_world,
-            star_rot_inv: celestial.star_tex_rot_inv,
-            // The whole list: the Terra system (Terra + Luna) and all seven
-            // planets, drawn at their true positions.
-            celestial_bodies: celestial.bodies.clone(),
+            time: self.simulation.clock.now(),
+            camera_target: self.camera_target(),
+            camera_pos,
+            camera_look_at: look_at,
+            camera_up: up,
             markers: Vec::new(),
         }
     }

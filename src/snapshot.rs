@@ -186,14 +186,10 @@ pub fn run(params: RenderParams) {
     // is sampled with the galactic-corrected `star_tex_rot_inv` below.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    // Resolve the orbit body: Terra at the origin, or the Luna/a planet at its
-    // live ephemeris center (the celestial sphere carries every body). The
-    // distance clamp then uses the chosen target's radius-scaled limits.
-    let body = scene.camera.target.body();
-    let target = CameraTarget {
-        body,
-        center_world: celestial.center_world(body),
-    };
+    // Resolve the orbit body by identity; its center (and the render origin) is
+    // looked up from the celestial sphere where needed. The distance clamp uses
+    // the chosen target's radius-scaled limits.
+    let target = CameraTarget::Body(scene.camera.target.body());
     let camera = Camera {
         longitude: scene.camera.longitude,
         latitude: scene.camera.latitude,
@@ -203,20 +199,16 @@ pub fn run(params: RenderParams) {
     };
     let distance = camera.clamp_distance(scene.camera.distance);
     let camera = Camera { distance, ..camera };
-    let aspect = params.width as f32 / params.height.max(1) as f32;
-    let eye = camera.eye_relative(celestial_to_world);
+    let (eye, look_at, up) = camera.world_rig(&celestial, celestial_to_world);
 
     let render = RenderState {
-        view_proj: camera.view_proj(aspect, celestial_to_world),
+        time,
+        camera_target: target,
         camera_pos: eye,
-        render_origin: camera.target.render_origin(),
-        sol_pos_world: celestial.sol_pos_world,
-        star_rot_inv: celestial.star_tex_rot_inv,
-        // The whole list (Terra system + all planets) so any body can be the
-        // render target; when Terra/Luna is targeted the planets sit far
-        // off-screen.
-        celestial_bodies: celestial.bodies.clone(),
-        // Bodies only: render mode tracks no satellites, so no markers.
+        camera_look_at: look_at,
+        camera_up: up,
+        // Bodies only: render mode tracks no satellites, so no markers. The
+        // renderer derives Sol/Luna/planets from `time`.
         markers: Vec::new(),
     };
 

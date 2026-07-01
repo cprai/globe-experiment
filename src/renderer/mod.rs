@@ -9,8 +9,11 @@ use winit::dpi::PhysicalSize;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+use glam::{Mat4, Vec3, Vec4};
+
 use crate::luna;
 use crate::planet;
+use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{CelestialBody, RenderState, TerraSystemEntity};
 use crate::terra;
 use mesh::Vertex;
@@ -34,14 +37,81 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// the soft penumbra width of the analytic eclipse shadows in the shader.
 const SOL_ANGULAR_RADIUS_RAD: f32 = 0.004652;
 
-/// Apparent-size cutoff (angular DIAMETER, arcsec) below which a planet is
-/// drawn as a billboard impostor (`vs_planet_billboard`) rather than a full
-/// mesh. A look/efficiency-tuning constant: comfortably above every planet's
-/// apparent size from Terra (Venus peaks ~66", Jupiter ~50"), so the Terra view
-/// billboards all seven; and comfortably below the orbited body's size (even at
-/// max zoom-out a planet subtends tens of thousands of arcsec), so whichever
-/// planet is being orbited always stays a mesh. ~0.5 deg.
-const PLANET_BILLBOARD_MAX_ARCSEC: f32 = 1800.0;
+/// Apparent-size cutoff (angular DIAMETER, arcsec) below which the planet
+/// impostor uses the ORTHOGRAPHIC (parallel-ray) trace and above which it uses
+/// the PERSPECTIVE (eye-ray) trace. The orthographic branch is exact when
+/// distance >> radius and is f32-safe at any distance; the perspective branch
+/// matches the close/orbited planet's foreshortened silhouette but is only
+/// numerically safe when distance/radius is modest (the ray math scales into
+/// unit-sphere space, so its terms stay O(distance/radius)^2). The cutoff sits
+/// comfortably above every planet's apparent size from Terra (Venus peaks ~66",
+/// Jupiter ~50"), so the Terra view traces all seven orthographically; and
+/// comfortably below the orbited body's size (even at max zoom-out a planet
+/// subtends tens of thousands of arcsec), so whichever planet is orbited always
+/// gets the perspective trace. ~0.5 deg.
+const PLANET_PERSPECTIVE_MIN_ARCSEC: f32 = 1800.0;
+
+/// The impostor quad spans the silhouette's angular radius times this margin,
+/// so the full disc (corners included) lands inside the quad; edge fragments
+/// that miss the ellipse discard. Mirrors the old billboard's margin.
+const PLANET_QUAD_MARGIN: f32 = 1.3;
+
+/// Smallest reversed-Z depth (just in front of the far plane) a planet impostor
+/// is placed at. A non-orbited planet is often billions of km out - far beyond
+/// the far plane - so its projected depth would be <= 0 and its quad would be
+/// z-clipped away. Clamping the baseline depth to this tiny positive value
+/// keeps it drawn (behind everything else, which has larger depth) so it shows
+/// if it is ever large enough on screen. Must be > 0 so it passes the
+/// `Greater`-than-0.0-clear depth test. (In practice a non-orbited planet at
+/// true solar-system distance subtends well under a pixel - like the old
+/// billboards - so this is mostly a correctness safety net, not a visible
+/// speck.)
+const PLANET_MIN_DEPTH: f32 = 1e-6;
+
+/// Vertical field of view, degrees. The projection authority for the scene; the
+/// camera's pan math scales by the same value (`renderer::FOV_Y_DEG`).
+pub const FOV_Y_DEG: f32 = 45.0;
+
+/// Near clip plane as a fraction of the orbit target's mean radius. The
+/// renderer scales it by `RenderState::camera_target.mean_radius_km()` when it
+/// rebuilds the projection, so the near plane tracks whichever body is orbited.
+pub const NEAR_PLANE_RADII: f32 = 0.01;
+
+/// Far clip plane, km - a fixed value, NOT a radius multiple. It must enclose
+/// Luna at apogee (~406,700 km) plus the camera distance, and - orbiting Luna -
+/// Terra ~384,400 km away; the star shell (222,985 km) sits well inside it.
+pub const FAR_PLANE_KM: f32 = 500_000.0;
+
+/// Builds the reversed-Z view-projection matrix for an eye at `eye` looking at
+/// `look_at` with up `up` (all in the floating-origin render frame). Reversed-Z
+/// (near -> 1, far -> 0) pairs with the `Depth32Float` buffer cleared to 0 and
+/// a `Greater` test, spreading depth precision across the scene's enormous
+/// near/far span so Terra still occludes the far-off Luna. Lives here, not on
+/// the camera, because the renderer now rebuilds the projection from
+/// `RenderState`'s camera rig (the camera only emits eye / look-at / up).
+/// Taking the look-at point directly (not a forward vector) keeps this
+/// bit-identical to the camera's previous `view_proj`.
+pub fn view_proj_reversed_z(
+    eye: Vec3,
+    look_at: Vec3,
+    up: Vec3,
+    aspect: f32,
+    near: f32,
+    far: f32,
+) -> Mat4 {
+    let view = Mat4::look_at_rh(eye, look_at, up);
+    let proj = Mat4::perspective_rh(FOV_Y_DEG.to_radians(), aspect.max(0.01), near, far);
+
+    // `z_clip' = w_clip - z_clip`: negate the proj Z row and add the W row.
+    let reverse_z = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, -1.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0, 1.0),
+    );
+
+    reverse_z * proj * view
+}
 
 /// Creates a depth texture view sized to the render target. Recreated whenever
 /// the target is resized (the depth attachment must match the color size).
@@ -384,6 +454,10 @@ fn request_adapter_device(
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [f32; 16],
+    /// Inverse of `view_proj`. The planet impostor reconstructs a per-fragment
+    /// eye ray from the fragment's NDC through this (the perspective trace);
+    /// kept f32-safe by only tracing perspective for near planets.
+    inv_view_proj: [f32; 16],
     /// Camera eye in the render frame (km) = relative to the camera target.
     camera_pos: [f32; 3],
     _pad0: f32,
@@ -409,10 +483,10 @@ struct Uniforms {
     _pad4: f32,
 }
 
-/// Per-planet model uniform (group 1). Layout must match `PlanetUniform` in
-/// scene.wgsl: the mat3x3 columns are padded to vec4 stride and the vec3 center
-/// is followed by the equatorial radius (filling its pad slot), then the polar
-/// radius with its own padding.
+/// Per-planet impostor uniform (group 1). Layout must match `PlanetUniform` in
+/// scene.wgsl. The CPU projects the planet's center to screen space and packs
+/// the placement here; the GPU draws a single quad at that NDC and ray-traces
+/// the oblate ellipsoid in its fragment shader.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct PlanetUniform {
@@ -420,25 +494,33 @@ struct PlanetUniform {
     rot: [[f32; 4]; 3],
     /// Planet center in the render frame (km) = relative to the camera target.
     /// For the ORBITED planet this is exactly zero (its center IS the render
-    /// origin), so its mesh is drawn in pure local coordinates - the key to
-    /// killing the far-planet f32 jitter.
+    /// origin) - the key to keeping the perspective trace f32-precise.
     pos: [f32; 3],
-    /// Equatorial semi-axis (+X/+Z) in km; the billboard impostor's ellipsoid.
+    _pad_pos: f32,
+    /// Projected center of the planet in NDC (the impostor quad's center).
+    ndc_center: [f32; 2],
+    /// Half-extent of the impostor quad in NDC (x, y), bounding the silhouette
+    /// with margin.
+    ndc_half_extent: [f32; 2],
+    /// Equatorial semi-axis (+X/+Z) in km; the impostor ellipsoid.
     equatorial_radius_km: f32,
     /// Polar semi-axis (+Y) in km.
     polar_radius_km: f32,
-    /// Pads the trailing `polar_radius_km` out to a vec4 stride (WGSL
-    /// alignment).
-    _pad: [f32; 3],
+    /// Reversed-Z NDC depth of the projected center: the baseline fragment
+    /// depth for the orthographic (distant) trace (the perspective trace
+    /// overrides it per fragment from the hit point).
+    depth: f32,
+    /// 1.0 = perspective (eye-ray) trace for a near/orbited planet; 0.0 =
+    /// orthographic (parallel-ray) trace for a distant one. See
+    /// `PLANET_PERSPECTIVE_MIN_ARCSEC`.
+    perspective: f32,
 }
 
-/// Long-lived GPU resources for one planet: its mesh, its per-frame model
-/// uniform, and the group-1 bind group (uniform + texture + sampler) bound when
-/// it is drawn. One per planet, in `planet::ALL` order.
+/// Long-lived GPU resources for one planet: its per-frame impostor uniform and
+/// the group-1 bind group (uniform + texture + sampler) bound when it is drawn.
+/// One per planet, in `planet::ALL` order. (No mesh: every planet is drawn as a
+/// single shader impostor quad.)
 struct PlanetGpu {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    index_count: u32,
     /// Per-planet `PlanetUniform`, rewritten each frame in `prepare`.
     uniform: wgpu::Buffer,
     /// group-1 bind group: this planet's uniform + texture + the shared
@@ -492,26 +574,19 @@ struct SceneRenderer {
     luna_vertices: wgpu::Buffer,
     luna_indices: wgpu::Buffer,
     luna_index_count: u32,
-    /// Planet pipeline (`vs_planet`/`fs_planet`), shared by all seven planets;
-    /// each draw swaps its group-1 bind group + mesh.
+    /// The single planet impostor pipeline (`vs_planet`/`fs_planet`), shared by
+    /// all seven planets; each draw swaps its group-1 bind group. No vertex
+    /// buffer (the quad is built from the vertex index); writes per-fragment
+    /// depth so planets occlude one another and Terra occludes them.
     planet_pipeline: wgpu::RenderPipeline,
-    /// Billboard-impostor pipeline
-    /// (`vs_planet_billboard`/`fs_planet_billboard`) for distant planets: a
-    /// camera-facing quad (no vertex buffer) that ray-traces the ellipsoid,
-    /// depth-off like the backdrop. Same two-group layout, so it reuses
-    /// each planet's group-1 bind group.
-    planet_billboard_pipeline: wgpu::RenderPipeline,
     /// Per-planet GPU resources, in `planet::ALL` order. Always built (textures
-    /// upload at init), but only drawn when `RenderState::planets` is
-    /// non-empty.
+    /// upload at init), but only drawn for the planets visible this frame.
     planets: Vec<PlanetGpu>,
-    /// Indices into `planets` of the planets large enough to draw as meshes
-    /// this frame (apparent size >= threshold). Rebuilt each `prepare`.
-    mesh_planet_indices: Vec<usize>,
-    /// Indices into `planets` of the planets drawn as billboards this frame,
-    /// sorted far-to-near so the nearest disc paints last (correct overlap with
-    /// the depth-off impostor pass). Rebuilt each `prepare`.
-    billboard_planet_indices: Vec<usize>,
+    /// Indices into `planets` of the planets to draw this frame (those whose
+    /// center projects in front of the camera). Rebuilt each `prepare`. Order
+    /// is irrelevant: the impostor depth-tests, so occlusion is resolved by
+    /// the depth buffer, not draw order.
+    planet_draw_indices: Vec<usize>,
     /// Whether to draw the Terra system this frame: the Terra surface, the
     /// atmosphere, Luna, and any satellite markers. True only when the
     /// camera target is Terra or Luna (render origin at Terra, so their
@@ -926,18 +1001,7 @@ impl SceneRenderer {
         let planets: Vec<PlanetGpu> = planet::ALL
             .iter()
             .zip(planet_views)
-            .map(|(&body, view)| {
-                let planet_mesh = mesh::planet_ellipsoid(STACKS, SLICES, body);
-                let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("planet vertices"),
-                    contents: bytemuck::cast_slice(&planet_mesh.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("planet indices"),
-                    contents: bytemuck::cast_slice(&planet_mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+            .map(|(&_body, view)| {
                 let uniform = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("planet uniform"),
                     size: std::mem::size_of::<PlanetUniform>() as u64,
@@ -965,9 +1029,6 @@ impl SceneRenderer {
                     ],
                 });
                 PlanetGpu {
-                    vertices,
-                    indices,
-                    index_count: planet_mesh.indices.len() as u32,
                     uniform,
                     bind_group,
                 }
@@ -1236,51 +1297,6 @@ impl SceneRenderer {
             })
         };
 
-        // The planet pipeline: same vertex format and reversed-Z solid-body
-        // depth setup as Luna (planets are opaque bodies that the depth
-        // buffer resolves against each other), differing only in entry points
-        // and the two-group layout. Built after the join (it borrows
-        // `planet_layout`); one extra pipeline compile is cheap.
-        let make_planet_pipeline = || {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("planet pipeline"),
-                layout: Some(&planet_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_planet"),
-                    compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,
-                            1 => Float32x3,
-                            2 => Float32x2,
-                        ],
-                    }],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_planet"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-
         let (
             render_pipeline,
             (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, luna_pipeline))),
@@ -1292,42 +1308,41 @@ impl SceneRenderer {
             })
         });
 
-        let planet_pipeline = make_planet_pipeline();
-
-        // The billboard-impostor pipeline for distant planets: the same
-        // two-group layout (so it reuses each planet's group-1 bind group), but
-        // no vertex buffer (the quad comes from the vertex index) and depth-off
-        // like the backdrop/markers - billboards are always the far bodies, so
-        // the later opaque draws paint over them. Drawn just after the stars.
-        let planet_billboard_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("planet billboard pipeline"),
-                layout: Some(&planet_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_planet_billboard"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_planet_billboard"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+        // The single planet impostor pipeline: the two-group layout (so it
+        // reuses each planet's group-1 bind group), no vertex buffer (the quad
+        // is built from the vertex index), and the same reversed-Z solid-body
+        // depth setup as Luna - the impostor writes per-fragment depth, so
+        // planets occlude one another and Terra occludes them, just like a mesh
+        // would. Built after the join (it borrows `planet_layout`). No back-face
+        // cull: the quad's winding is irrelevant (it is camera-facing).
+        let planet_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("planet impostor pipeline"),
+            layout: Some(&planet_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_planet"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_planet"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Self {
             render_pipeline,
@@ -1342,10 +1357,8 @@ impl SceneRenderer {
             luna_indices,
             luna_index_count: luna_mesh.indices.len() as u32,
             planet_pipeline,
-            planet_billboard_pipeline,
             planets,
-            mesh_planet_indices: Vec::new(),
-            billboard_planet_indices: Vec::new(),
+            planet_draw_indices: Vec::new(),
             draw_terra_system: true,
             uniforms,
             bind_group,
@@ -1372,36 +1385,66 @@ impl SceneRenderer {
         viewport: (f32, f32),
     ) {
         let (width, height) = viewport;
+        let aspect = width / height.max(1.0);
+
+        // Derive the whole celestial scene from the frame's time: Sol, Luna, and
+        // the seven planets' positions + orientations, plus the star-texture
+        // matrix. The simulation core evaluates the same `CelestialSphere::at`,
+        // so the two agree exactly - which is what makes the orbited body's
+        // render-frame position a bit-exact zero below.
+        let celestial = CelestialSphere::at(&render.time);
 
         // Everything the GPU sees is in the RENDER FRAME: positions relative to
-        // `render.render_origin` (the camera target's center). The renderer does
-        // the subtraction here on the CPU so the shader only ever handles small,
+        // the camera target's center (its render origin). The renderer does the
+        // subtraction here on the CPU so the shader only ever handles small,
         // target-local coordinates - the orbited body lands exactly at the
-        // origin (its absolute center IS render_origin, so the difference is a
-        // bit-exact zero), which is what keeps far planets from jittering.
-        let origin = render.render_origin;
+        // origin (its absolute center IS the origin, a bit-exact zero), which is
+        // what keeps far planets from jittering.
+        let origin = render.camera_target.render_origin(&celestial);
 
-        // star_rot_inv (world -> celestial) is uploaded as-is; its mat3x3
-        // columns are padded to vec4 stride.
-        let star_cols = render.star_rot_inv.to_cols_array_2d();
+        // Rebuild the view-projection from the camera rig (position + direction).
+        // The near plane scales with the orbited body's radius; the eye is
+        // already in the render frame, so the matrix is target-local. The
+        // inverse lets the planet impostor reconstruct per-fragment eye rays.
+        let radius = render.camera_target.mean_radius_km();
+        let near = NEAR_PLANE_RADII * radius;
+        // The far plane must enclose everything drawn with real depth: the
+        // orbited body's far side (eye-to-center + its radius) and, for
+        // Terra/Luna, the sibling body 384,000+ km away. `camera_pos` is the eye
+        // in the render frame (origin at the orbited body's center for a planet,
+        // at Terra for Terra/Luna), so `|camera_pos| + 2*radius` covers the
+        // orbited body at any zoom; the `FAR_PLANE_KM` floor covers the
+        // Terra-Luna system + the camera-centered star shell. Without this a
+        // large planet at max zoom-out (Jupiter's eye-to-center ~770,000 km) sits
+        // beyond a fixed 500,000 km plane and its whole disc is clipped away.
+        let far = (render.camera_pos.length() + 2.0 * radius).max(FAR_PLANE_KM);
+        let view_proj = view_proj_reversed_z(
+            render.camera_pos,
+            render.camera_look_at,
+            render.camera_up,
+            aspect,
+            near,
+            far,
+        );
+        let inv_view_proj = view_proj.inverse();
 
-        // Luna's placement drives the lunar mesh + the analytic eclipse
-        // shadows; its radius is implied by the identity (`luna::MEAN_RADIUS_KM`).
-        // Pull it from the body list. If the scene carries no Luna (not the case
-        // in any current scenario) it simply isn't drawn, so a zero placement is
-        // harmless here.
-        let luna = render
-            .celestial_bodies
-            .iter()
-            .find(|state| state.body == CelestialBody::TerraSystem(TerraSystemEntity::Luna))
+        // star_tex_rot_inv (world -> galactic texture frame) is uploaded as
+        // `star_rot_inv`; its mat3x3 columns are padded to vec4 stride.
+        let star_cols = celestial.star_tex_rot_inv.to_cols_array_2d();
+
+        // Luna's placement drives the lunar mesh + the analytic eclipse shadows;
+        // its radius is implied by the identity (`luna::MEAN_RADIUS_KM`).
+        let luna = celestial
+            .body(CelestialBody::TerraSystem(TerraSystemEntity::Luna))
             .map(|state| state.placement);
-        let luna_pos_world = luna.map_or(glam::Vec3::ZERO, |placement| placement.pos_world);
+        let luna_pos_world = luna.map_or(Vec3::ZERO, |placement| placement.pos_world);
         let luna_cols = luna
             .map_or(glam::Mat3::IDENTITY, |placement| placement.rot)
             .to_cols_array_2d();
 
         let uniforms = Uniforms {
-            view_proj: render.view_proj.to_cols_array(),
+            view_proj: view_proj.to_cols_array(),
+            inv_view_proj: inv_view_proj.to_cols_array(),
             camera_pos: render.camera_pos.to_array(),
             _pad0: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
@@ -1419,72 +1462,92 @@ impl SceneRenderer {
                 SOL_ANGULAR_RADIUS_RAD,
                 0.0,
             ],
-            sol_pos: (render.sol_pos_world - origin).to_array(),
+            sol_pos: (celestial.sol_pos_world - origin).to_array(),
             _pad4: 0.0,
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         // The Terra system (Terra surface + atmosphere + Luna + markers) renders
-        // only when orbiting Terra or Luna, i.e. the render origin is at
-        // Terra. Orbiting a planet, the Terra/Luna are a far speck and the
-        // atmosphere is Terra-centered physics, so they are skipped.
-        self.draw_terra_system = origin == glam::Vec3::ZERO;
+        // only when orbiting Terra or Luna, i.e. the render origin is at Terra.
+        // Orbiting a planet, the Terra/Luna are a far speck and the atmosphere
+        // is Terra-centered physics, so they are skipped.
+        self.draw_terra_system = origin == Vec3::ZERO;
 
-        // One model uniform per planet to draw this frame, each at its center
-        // RELATIVE to the render origin. `render.celestial_bodies` is a flat
-        // list (Terra, Luna, planets); the `Planet` entries drive this loop. The
-        // GPU resources `self.planets` are in `planet::ALL` order, so each
-        // planet identity maps to its slot by its position in that array. While
-        // here, classify each planet by its apparent size into the mesh vs
-        // billboard draw lists. No planet entry (Terra/Luna scenarios) ->
-        // both lists stay empty and the planet pipeline never runs.
-        self.mesh_planet_indices.clear();
-        self.billboard_planet_indices.clear();
-        // Render-frame center per GPU slot, for the far-to-near billboard sort
-        // below. Only the slots filled this frame (reached via the index lists)
-        // are read.
-        let mut planet_pos_render = [glam::Vec3::ZERO; planet::ALL.len()];
-        for state in &render.celestial_bodies {
-            // Keep only the planets: their identity's position in `planet::ALL`
-            // is also their GPU slot. Terra/Luna are not in that array, so this
-            // filters them out.
+        // One impostor uniform per planet visible this frame. The CPU projects
+        // each planet's center to screen space (NDC center + quad half-extent +
+        // depth) and the GPU draws a single quad there, ray-tracing the oblate
+        // ellipsoid in its fragment shader. `celestial.bodies` is a flat list
+        // (Terra, Luna, planets); the planet entries drive this loop, mapped to
+        // their GPU slot by position in `planet::ALL`. Terra/Luna scenarios
+        // (origin at Terra) still carry the planets here, but they project far
+        // off-screen / behind the camera and are mostly sub-pixel specks.
+        self.planet_draw_indices.clear();
+        let tan_half_fov = (FOV_Y_DEG / 2.0).to_radians().tan();
+        for state in &celestial.bodies {
             let body = state.body;
             let Some(i) = planet::ALL.iter().position(|candidate| *candidate == body) else {
                 continue;
             };
-            let gpu = &self.planets[i];
             let pos_render = state.placement.pos_world - origin;
-            planet_pos_render[i] = pos_render;
+            let rel = pos_render - render.camera_pos;
+            let dist = rel.length();
+            if dist <= f32::EPSILON {
+                continue;
+            }
+            let req = body.equatorial_radius_km();
+
+            // Project the center; skip planets behind the camera (a planet on
+            // the far side of the sky from a Terra orbit).
+            let clip = view_proj * pos_render.extend(1.0);
+            if clip.w <= 0.0 {
+                continue;
+            }
+            let inv_w = 1.0 / clip.w;
+            let ndc_center = [clip.x * inv_w, clip.y * inv_w];
+            // Clamp the baseline (center) depth into (0, 1]: a planet billions of
+            // km out projects beyond the far plane (reversed-Z depth <= 0), which
+            // would z-clip its quad away. Clamping keeps it drawn as a far speck
+            // behind everything (see PLANET_MIN_DEPTH). The orbited body is well
+            // within the frustum, so this is a no-op for it (and its perspective
+            // fragments write their own true depth regardless).
+            let depth = (clip.z * inv_w).clamp(PLANET_MIN_DEPTH, 1.0);
+
+            // Silhouette angular radius (tangent lines): asin(req/dist), grown by
+            // a margin and mapped to NDC. Clamp short of 90 deg so tan stays
+            // finite, and clamp the half-extent so an extreme close-up does not
+            // make a degenerate (off-to-infinity) quad - the fragment discards
+            // any over-covered pixels anyway.
+            let sin_r = (req / dist).min(0.999);
+            let ang_radius = sin_r.asin();
+            let ang = (ang_radius * PLANET_QUAD_MARGIN).min(1.4);
+            let half_y = (ang.tan() / tan_half_fov).min(2.0);
+            let half_x = (half_y / aspect).min(2.0);
+
+            // Perspective (eye-ray) trace for a near/orbited planet - f32-safe
+            // because dist/req is small there; orthographic (parallel-ray) for a
+            // distant one. The cutoff is on apparent angular DIAMETER.
+            let arcsec = 2.0 * ang_radius.to_degrees() * 3600.0;
+            let perspective = arcsec >= PLANET_PERSPECTIVE_MIN_ARCSEC;
+
             let rot_cols = state.placement.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
                 pos: pos_render.to_array(),
-                equatorial_radius_km: body.equatorial_radius_km(),
+                _pad_pos: 0.0,
+                ndc_center,
+                ndc_half_extent: [half_x, half_y],
+                equatorial_radius_km: req,
                 polar_radius_km: body.polar_radius_km(),
-                _pad: [0.0; 3],
+                depth,
+                perspective: if perspective { 1.0 } else { 0.0 },
             };
-            queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&planet_uniform));
-
-            // Apparent angular DIAMETER from the camera (both in the render
-            // frame): 2*atan(req/distance). Below the threshold the planet is a
-            // few pixels at most, so it goes to the billboard impostor.
-            let distance = (pos_render - render.camera_pos).length();
-            let arcsec =
-                2.0 * (body.equatorial_radius_km() / distance).atan().to_degrees() * 3600.0;
-            if arcsec < PLANET_BILLBOARD_MAX_ARCSEC {
-                self.billboard_planet_indices.push(i);
-            } else {
-                self.mesh_planet_indices.push(i);
-            }
+            queue.write_buffer(
+                &self.planets[i].uniform,
+                0,
+                bytemuck::bytes_of(&planet_uniform),
+            );
+            self.planet_draw_indices.push(i);
         }
-        // Paint the impostors far-to-near so the nearest disc wins on overlap
-        // (the impostor pass is depth-off). Cache the distance via the squared
-        // length to avoid a sqrt per comparison.
-        self.billboard_planet_indices.sort_by(|&a, &b| {
-            let da = (planet_pos_render[a] - render.camera_pos).length_squared();
-            let db = (planet_pos_render[b] - render.camera_pos).length_squared();
-            db.total_cmp(&da)
-        });
 
         // One marker instance per tracked satellite. Grow the buffer first if
         // this frame has more markers than it currently holds (only ever
@@ -1516,14 +1579,16 @@ impl SceneRenderer {
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        // Distant planets as billboard impostors, right after the backdrop so
-        // the opaque Terra/Luna/mesh-planets that follow paint over (occlude)
-        // them - billboards are always the far bodies. No vertex/index buffer:
-        // the camera-facing quad is built from the vertex index. group 0 stays
-        // bound; group 1 swaps per planet. Sorted far-to-near in `prepare`.
-        if !self.billboard_planet_indices.is_empty() {
-            render_pass.set_pipeline(&self.planet_billboard_pipeline);
-            for &i in &self.billboard_planet_indices {
+        // Every planet as a shader impostor: one camera-facing quad each (no
+        // vertex buffer - built from the vertex index), placed in screen space
+        // by `prepare` and ray-traced in the fragment shader. The impostor
+        // writes per-fragment depth (reversed-Z, same as the solid bodies), so
+        // the depth buffer resolves planet-vs-planet and Terra-vs-planet
+        // occlusion - draw order does not matter. group 0 stays bound; group 1
+        // swaps per planet.
+        if !self.planet_draw_indices.is_empty() {
+            render_pass.set_pipeline(&self.planet_pipeline);
+            for &i in &self.planet_draw_indices {
                 render_pass.set_bind_group(1, &self.planets[i].bind_group, &[]);
                 render_pass.draw(0..6, 0..1);
             }
@@ -1533,7 +1598,10 @@ impl SceneRenderer {
         // over the disc and limb - drawn only when orbiting the Terra/Luna (the
         // render origin is at Terra). Orbiting a planet they would be a far
         // speck (and the Terra-centered atmosphere physics is meaningless), so
-        // they are skipped, leaving just the planets + backdrop.
+        // they are skipped, leaving just the planets + backdrop. They draw after
+        // the planet impostors; the depth buffer keeps a planet behind Terra
+        // hidden and a planet in front (never the case from a Terra orbit, where
+        // all planets are far) would survive.
         if self.draw_terra_system {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -1542,23 +1610,6 @@ impl SceneRenderer {
             render_pass.set_vertex_buffer(0, self.luna_vertices.slice(..));
             render_pass.set_index_buffer(self.luna_indices.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.luna_index_count, 0, 0..1);
-        }
-
-        // The near/large planets as full meshes: each its own mesh + group-1
-        // bind group (model uniform + texture), the same solid-body depth setup
-        // as Luna. The orbited planet is drawn in local coordinates (its
-        // center is the render origin); any other planet above the apparent-size
-        // threshold also lands here. The far ones were already drawn as
-        // billboards above. group 0 stays bound.
-        if !self.mesh_planet_indices.is_empty() {
-            render_pass.set_pipeline(&self.planet_pipeline);
-            for &i in &self.mesh_planet_indices {
-                let gpu = &self.planets[i];
-                render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, gpu.vertices.slice(..));
-                render_pass.set_index_buffer(gpu.indices.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..gpu.index_count, 0, 0..1);
-            }
         }
 
         if self.draw_terra_system {

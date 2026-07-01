@@ -29,22 +29,25 @@ rotation (correct near side + libration), lit by Sol, with **mutual
 Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
 Luna"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
-sun-lit with simple Lambert. Each is drawn **as a mesh only when it is large
-enough on screen** (apparent angular diameter `>=` a threshold, classified per
-frame in `prepare`); a planet smaller than that — every planet from Terra, and
-the non-orbited planets generally — is drawn as a **billboard impostor**: a
-camera-facing quad whose fragment shader ray-traces the same oblate ellipsoid
-(orthographic / parallel-ray, f32-safe at distance), still textured + Lambert-lit,
-so the silhouette/terminator/texture stay faithful while the mesh draws are
-skipped. Because they sit millions-to-billions of km out
+sun-lit with simple Lambert. Each is drawn **as a single shader impostor** (no
+mesh): the CPU projects the planet center to screen space in `prepare` and the
+GPU draws one camera-facing quad whose fragment shader ray-traces the oblate
+ellipsoid (textured + Lambert-lit, writing per-fragment depth so planets occlude
+each other and Terra occludes them). The trace is **distance-adaptive**:
+perspective (eye-ray, reconstructed via `inv_view_proj`) for a near/orbited
+planet, orthographic (parallel-ray, f32-safe) for a distant one — classified per
+frame by apparent angular size. Because they sit millions-to-billions of km out
 (past f32 precision), **all rendering is done in a camera-target-local "render
-frame"**: every position is uploaded relative to the camera target's center, so
-the orbited body sits at a bit-exact zero and far planets do not jitter. There
-is no Earth-fixed origin or `sol_dir` in the render path — every body is lit from
-Sol *position*. The Terra surface/atmosphere/Luna/markers draw only when
-orbiting Terra/Luna; orbiting a planet, only the planets + backdrop draw. For
-Terra/Luna (render origin at Terra) geometry stays bit-identical. A
-**reversed-Z depth buffer** (Depth32Float) makes Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
+frame"**: positions are expressed relative to the camera target's center, so
+the orbited body sits at a bit-exact zero and far planets do not jitter. The
+renderer derives every body's position/orientation from the frame's **time**
+(`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
+camera target, and satellite markers. There is no Earth-fixed origin or
+`sol_dir` in the render path — every body is lit from Sol *position*. The Terra
+surface/atmosphere/Luna/markers draw only when orbiting Terra/Luna; orbiting a
+planet, only the planets + backdrop draw. For Terra/Luna (render origin at Terra)
+geometry stays bit-identical. A **reversed-Z depth buffer** (Depth32Float) makes
+Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 

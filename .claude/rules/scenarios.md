@@ -43,10 +43,10 @@ Terra-facing side, so Terra is behind the camera — no limb offset needed).
 ### Camera-target selection (Terra or Luna)
 
 A scenario that offers more than Terra holds a `simulation::TargetSelector`
-and overrides `Simulation::camera_target()` to return
-`self.selector.resolve(self.simulation.celestial_sphere.luna().placement.pos_world)`.
-The
-selector's TERRA / LUNA radio panel is appended in `get_drawables` (after the
+and overrides `Simulation::camera_target()` to return `self.selector.resolve()`
+(a `CameraTarget` identity - the center is resolved from the sphere downstream,
+no longer passed in).
+The selector's TERRA / LUNA radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scenario's `advance()` calls
 `self.selector.apply_requests()` *before* the frame's `camera_target` is read, so
@@ -66,11 +66,13 @@ starts on Terra (matching the default whole-Terra camera). The panel shows
 lit), so each key callback needs a **disjoint** `request_*` field — hence nine
 named flags (not an array, whose elements can't be captured disjointly), in
 `SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
-folds into `selected`. Its `resolve(&celestial)` fills the chosen body's center
-via `celestial.center_world(body)`. `frame_state` fills
-`RenderState.celestial_bodies` (`celestial.bodies.clone()` — the whole list) +
-`render_origin` from the resolved target. The panel is appended in
-`get_drawables` like the eclipse selector.
+folds into `selected`. Its `resolve()` returns the chosen body's `CameraTarget`
+identity (the center is resolved from the sphere downstream). `frame_state` just
+fills the reduced
+`RenderState` (the frame's time + camera rig + `camera_target` (= the resolved
+target) + empty markers); the renderer derives every body's geometry from the
+time and takes the render origin from the `camera_target`. The panel is appended
+in `get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, and reads Sol/star values from

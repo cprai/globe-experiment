@@ -193,17 +193,6 @@ impl CelestialSphere {
             .map(|state| state.placement.pos_world)
             .unwrap_or(Vec3::ZERO)
     }
-
-    /// Just the Terra-system bodies (Terra + Luna) - what the
-    /// Terra/Luna scenarios draw, so the planet pipeline stays off (no `Planet`
-    /// entry reaches the renderer).
-    pub fn terra_system_bodies(&self) -> Vec<BodyState> {
-        self.bodies
-            .iter()
-            .filter(|state| matches!(state.body, CelestialBody::TerraSystem(_)))
-            .copied()
-            .collect()
-    }
 }
 
 impl CelestialSphere {

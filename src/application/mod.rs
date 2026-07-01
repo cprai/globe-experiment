@@ -232,24 +232,27 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         // feeds both). All the camera math lives here (with the camera); the
         // simulation only consumes the resolved eye/view and fills in the
         // astronomical positions.
-        let (width, height) = gfx.viewport();
-        let aspect = width / height.max(1.0);
-        let celestial_to_world = self.simulation.celestial_to_world();
+        // The current celestial sphere; the camera reads it to resolve its
+        // target's moving center and to map the inertial rig into world space
+        // (`celestial_to_world = star_rot_inv.transpose()`).
+        let celestial = self.simulation.celestial();
+        let celestial_to_world = celestial.star_rot_inv.transpose();
 
         // Re-aim the orbital camera at this frame's target (the scenario's
         // chosen body, with Luna's center refreshed from the ephemeris). On
         // a genuine body switch the reframe invalidates any in-flight zoom/flick
         // (they target the old body's scale), so cancel them.
         let target = self.simulation.camera_target();
-        if self.camera.retarget(target, celestial_to_world) {
+        if self.camera.retarget(target, celestial, celestial_to_world) {
             self.controller.reset_animation();
         }
 
-        // The eye in the floating-origin (render) frame; the renderer works in
-        // that frame so far planet targets stay f32-precise.
-        let eye = self.camera.eye_relative(celestial_to_world);
-        let view_proj = self.camera.view_proj(aspect, celestial_to_world);
-        let render_state = self.simulation.frame_state(eye, view_proj);
+        // The rig: eye + look-at point + up, all in the floating-origin (render)
+        // frame. The renderer rebuilds the projection from these (and derives
+        // every body's position from the frame's time), so far planet targets
+        // stay f32-precise.
+        let (eye, look_at, up) = self.camera.world_rig(celestial, celestial_to_world);
+        let render_state = self.simulation.frame_state(eye, look_at, up);
 
         // Run the egui UI: the panel pulls the scenario's drawable elements
         // (read from the propagation just done above, so the readout matches the
