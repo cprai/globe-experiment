@@ -50,7 +50,16 @@ paths:
   fragment's NDC via `inv_view_proj`, f32-safe because distance/radius is small
   there) and writes the true hit-point depth; a distant planet uses the
   **orthographic** parallel-ray trace (built from the quad-corner offset,
-  f32-safe at any distance) and the center's baseline depth. The group-1 bind
+  f32-safe at any distance) and the center's baseline depth. **Quad placement
+  also depends on the mode**: a distant planet's quad is anchored at its
+  projected center sized to the angular radius (tight + cheap), but a
+  perspective planet's quad covers the **whole screen** (`[-1,1]^2`) - its
+  projected center can fall far off-screen at high tilt (the center is far off
+  the view axis while the near surface still fills the frame), so a
+  center-anchored quad would follow the center off-screen and the planet would
+  vanish; a full-screen quad + per-pixel ray-trace (misses discard) always
+  covers the visible surface. Only the orbited body is ever perspective, so this
+  is one full-screen pass at most. The group-1 bind
   group is shared; only the solar-system scenario shows the planets prominently
   (the Terra/Luna views carry them too, but far off-screen).
 - **Terra system is gated to Terra/Luna targets.** The Terra surface, atmosphere,

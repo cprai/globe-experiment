@@ -1503,7 +1503,7 @@ impl SceneRenderer {
                 continue;
             }
             let inv_w = 1.0 / clip.w;
-            let ndc_center = [clip.x * inv_w, clip.y * inv_w];
+            let proj_center = [clip.x * inv_w, clip.y * inv_w];
             // Clamp the baseline (center) depth into (0, 1]: a planet billions of
             // km out projects beyond the far plane (reversed-Z depth <= 0), which
             // would z-clip its quad away. Clamping keeps it drawn as a far speck
@@ -1512,16 +1512,9 @@ impl SceneRenderer {
             // fragments write their own true depth regardless).
             let depth = (clip.z * inv_w).clamp(PLANET_MIN_DEPTH, 1.0);
 
-            // Silhouette angular radius (tangent lines): asin(req/dist), grown by
-            // a margin and mapped to NDC. Clamp short of 90 deg so tan stays
-            // finite, and clamp the half-extent so an extreme close-up does not
-            // make a degenerate (off-to-infinity) quad - the fragment discards
-            // any over-covered pixels anyway.
+            // Apparent angular radius (tangent lines): asin(req/dist).
             let sin_r = (req / dist).min(0.999);
             let ang_radius = sin_r.asin();
-            let ang = (ang_radius * PLANET_QUAD_MARGIN).min(1.4);
-            let half_y = (ang.tan() / tan_half_fov).min(2.0);
-            let half_x = (half_y / aspect).min(2.0);
 
             // Perspective (eye-ray) trace for a near/orbited planet - f32-safe
             // because dist/req is small there; orthographic (parallel-ray) for a
@@ -1529,13 +1522,31 @@ impl SceneRenderer {
             let arcsec = 2.0 * ang_radius.to_degrees() * 3600.0;
             let perspective = arcsec >= PLANET_PERSPECTIVE_MIN_ARCSEC;
 
+            // Place the impostor quad. A distant planet is a small disc, so a
+            // quad at the projected center sized to the angular radius (+margin)
+            // is tight and cheap. A near/orbited planet is traced perspectively
+            // per pixel, and its projected center can fall far off-screen at high
+            // tilt (the center is far off the view axis while the near surface
+            // still fills the frame) - a center-anchored quad would follow the
+            // center off-screen and the planet would vanish. So cover the whole
+            // screen ([-1,1]^2) and let the fragment ray-trace decide coverage
+            // (misses discard). Only the orbited body is ever perspective, so
+            // this is one full-screen pass at most.
+            let (ndc_center, ndc_half_extent) = if perspective {
+                ([0.0, 0.0], [1.0, 1.0])
+            } else {
+                let ang = ang_radius * PLANET_QUAD_MARGIN;
+                let half_y = ang.tan() / tan_half_fov;
+                (proj_center, [half_y / aspect, half_y])
+            };
+
             let rot_cols = state.placement.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
                 pos: pos_render.to_array(),
                 _pad_pos: 0.0,
                 ndc_center,
-                ndc_half_extent: [half_x, half_y],
+                ndc_half_extent,
                 equatorial_radius_km: req,
                 polar_radius_km: body.polar_radius_km(),
                 depth,

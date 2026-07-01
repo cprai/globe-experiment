@@ -117,11 +117,17 @@ texture + the shared sampler). `prepare` walks the planet entries of the derived
 `bodies` (identity found in `planet::ALL`), maps each to its GPU slot by its
 position in `planet::ALL`, **projects the center to screen space** (NDC center +
 quad half-extent + reversed-Z depth), and picks the trace mode by apparent
-angular size (`perspective` flag). All draw through one shared pipeline
-(`vs_planet`/`fs_planet`, layout `[group0, group1]`, no vertex buffer, solid-body
-reversed-Z depth write + `Greater`): the fragment shader ray-traces the oblate
-ellipsoid — perspective (eye-ray via `inv_view_proj`) for near planets,
-orthographic (parallel-ray) for far ones — and writes per-fragment depth. The
+angular size (`perspective` flag). The quad is placed per mode: a distant
+(orthographic) planet's quad is anchored at the projected center sized to the
+angular radius; a near/orbited (perspective) planet's quad is **full-screen**
+(`[-1,1]^2`), because its projected center can land far off-screen at high tilt
+while the near surface still fills the frame - a center-anchored quad would
+follow the center off-screen and the planet would vanish. All draw through one
+shared pipeline (`vs_planet`/`fs_planet`, layout `[group0, group1]`, no vertex
+buffer, solid-body reversed-Z depth write + `Greater`): the fragment shader
+ray-traces the oblate ellipsoid — perspective (eye-ray via `inv_view_proj`) for
+near planets, orthographic (parallel-ray) for far ones — and writes per-fragment
+depth. The
 draw list `planet_draw_indices` (planets whose center projects in front of the
 camera) is rebuilt each `prepare`; order is irrelevant (depth-tested). The 7
 planet textures live ONLY in group 1, so group 0 stays at 9 sampled textures —
