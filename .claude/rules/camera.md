@@ -107,7 +107,7 @@ whichever body is orbited.
 
 Each frame `ApplicationState::redraw` calls `Camera::retarget(target, &celestial,
 c2w)` with `Simulation::camera_target()` (defaults to Terra; the eclipse
-scenarios override it from a `TargetSelector` driven by the panel's TERRA / LUNA
+scenarios override it from a `TargetSelector` driven by the panel's Terra / Luna
 keys). On a genuine **body switch** it reframes (distance = body default, tilt 0,
 re-aimed at the target's center resolved from the sphere) and returns `true`, and
 the application calls `Controller::reset_animation()` to cancel any in-flight

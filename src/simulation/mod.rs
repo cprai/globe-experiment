@@ -304,7 +304,7 @@ impl SimulationState {
 }
 
 /// Tracks which body the user has chosen to orbit (Terra or Luna) and builds
-/// the TERRA / LUNA selector panel. Shared by the scenarios that offer a Luna
+/// the Terra / Luna selector panel. Shared by the scenarios that offer a Luna
 /// target (the eclipses); Terra-only scenarios never hold one.
 ///
 /// Two radio toggles can't both `&mut` one selection field - a panel's element
@@ -316,9 +316,9 @@ impl SimulationState {
 /// and identical to the existing clock-edit delay.
 pub struct TargetSelector {
     luna_selected: bool,
-    /// Set by the TERRA key; cleared in `apply_requests`.
+    /// Set by the Terra key; cleared in `apply_requests`.
     request_terra: bool,
-    /// Set by the LUNA key; a field disjoint from `request_terra` so the two
+    /// Set by the Luna key; a field disjoint from `request_terra` so the two
     /// key callbacks can coexist.
     request_luna: bool,
 }
@@ -358,7 +358,7 @@ impl TargetSelector {
         }
     }
 
-    /// The top-right TERRA / LUNA selector panel: a header plus two latching
+    /// The top-right Terra / Luna selector panel: a header plus two latching
     /// keys, the chosen body lit. The keys' callbacks set disjoint request
     /// flags (see the type docs); `luna_selected` is snapshotted up front so no
     /// shared borrow outlives into the callbacks.

@@ -29,7 +29,7 @@ src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (dup
 src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
                          run() frames the Terra day side via Camera::looking_toward;
-                         TargetSelector (default Terra) for the TERRA/LUNA panel
+                         TargetSelector (default Terra) for the Terra/Luna panel
 src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
                          run() launches orbiting Luna (Luna-target
@@ -120,7 +120,7 @@ src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          Body(CelestialBody) | Coordinate(Vec3) - a pure
                          identity; center_world()/render_origin() resolve the
                          moving center from the CelestialSphere on demand),
-                         TargetSelector (TERRA/LUNA, eclipses), BodySelector (one
+                         TargetSelector (Terra/Luna, eclipses), BodySelector (one
                          latching key per body, 9 bodies ordered by distance from
                          Sol, solar_system)
 src/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation

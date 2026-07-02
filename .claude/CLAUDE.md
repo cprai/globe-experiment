@@ -20,7 +20,7 @@ Terra in world-space km, Hillaire-2020 atmosphere, star/Sol/**Luna** from JPL
 DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector
-panel (one key per body); Luna in the eclipse scenarios via a TERRA/LUNA
+panel (one key per body); Luna in the eclipse scenarios via a Terra/Luna
 panel; headless
 `render` picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
 simulation clock (1x-100x, plays from launch). Luna is

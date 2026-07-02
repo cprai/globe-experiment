@@ -46,7 +46,7 @@ A scenario that offers more than Terra holds a `simulation::TargetSelector`
 and overrides `Simulation::camera_target()` to return `self.selector.resolve()`
 (a `CameraTarget` identity - the center is resolved from the sphere downstream,
 no longer passed in).
-The selector's TERRA / LUNA radio panel is appended in `get_drawables` (after the
+The selector's Terra / Luna radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scenario's `advance()` calls
 `self.selector.apply_requests()` *before* the frame's `camera_target` is read, so

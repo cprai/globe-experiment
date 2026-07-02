@@ -77,7 +77,7 @@ impl Simulation for LunarEclipseSimulation {
 
 impl UIDrawable for LunarEclipseSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The shared-core panel plus the TERRA / LUNA camera-target selector.
+        // The shared-core panel plus the Terra / Luna camera-target selector.
         // The two panels borrow disjoint fields (`simulation` vs `selector`).
         let mut panels = self.simulation.get_drawables();
         panels.push(self.selector.panel());

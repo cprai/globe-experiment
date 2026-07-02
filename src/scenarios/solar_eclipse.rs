@@ -78,7 +78,7 @@ impl Simulation for SolarEclipseSimulation {
 impl UIDrawable for SolarEclipseSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
         // The shared-core panel (datetime + run/speed) plus the
-        // TERRA / LUNA camera-target selector. The two panels borrow disjoint
+        // Terra / Luna camera-target selector. The two panels borrow disjoint
         // fields (`simulation` vs `selector`), so both can be live at once.
         let mut panels = self.simulation.get_drawables();
         panels.push(self.selector.panel());

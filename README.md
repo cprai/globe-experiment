@@ -105,7 +105,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 - Smooth, Google-Terra-style navigation: panning follows the cursor at
   any zoom level, from whole-Terra spins down to country level. The camera orbits
   a chosen body - always Terra for satellite scenarios, either Terra
-  or Luna in the eclipse scenarios (a TERRA / LUNA selector in the panel),
+  or Luna in the eclipse scenarios (a Terra / Luna selector in the panel),
   and any of nine bodies in the solar-system scenario (a key per body in the
   panel), with pan/tilt/zoom scaled to whichever body is targeted.
 - Real-world geometry: Terra is the WGS84 reference ellipsoid and the
