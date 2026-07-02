@@ -37,7 +37,7 @@ paths:
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
   top) so it is compatible with the depth attachment.
 - **Draw order: stars -> planet impostors -> Terra surface -> Luna ->
-  atmosphere -> markers**, one render pass. Every planet is a **single shader
+  atmosphere -> orbit paths -> markers**, one render pass. Every planet is a **single shader
   impostor** (`vs_planet`/`fs_planet`): a camera-facing quad (no vertex buffer)
   placed in screen space by the CPU (in `prepare`, projecting the planet center
   to NDC) that ray-traces the oblate ellipsoid, textured + Lambert-lit, and
@@ -63,7 +63,8 @@ paths:
   group is shared; only the solar-system scenario shows the planets prominently
   (the Terra/Luna views carry them too, but far off-screen).
 - **Terra system is gated to Terra/Luna targets.** The Terra surface, atmosphere,
-  Luna, and satellite markers draw only when `render_origin == 0` (orbiting the
+  Luna, orbit paths, and satellite markers draw only when `render_origin == 0`
+  (orbiting the
   Terra or Luna); the renderer sets a `draw_terra_system` flag. Orbiting a
   planet they would be a far speck and the Terra-centered atmosphere physics is
   meaningless, so they are skipped — only the planets + backdrop draw.
@@ -80,6 +81,14 @@ paths:
   surfaces, `normalize(sol_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
   per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
+- **Orbit paths are instanced mitered line segments** (`vs_path`/`fs_path`),
+  drawn just before the markers: constant pixel width via the marker `clip.w`
+  trick, watertight miter joints from per-instance neighbor samples (any
+  alpha-blended quad overlap - even AA fringes - beads at every joint), and the
+  scene's only depth **test-without-write** pass (`Greater`, no write) so
+  solids occlude the path's far side. Vertices keep the centerline endpoint's
+  clip z/w, so the fat quad depth-tests as the thin 3D line. Fade alpha is a
+  per-endpoint instance value computed on the CPU.
 - **Mutual eclipse shadows are analytic** (`sol_visibility` in `scene.wgsl`):
   the soft two-disk overlap of Sol and an occluding sphere. Luna
   shadows Terra in `fs_main` (solar-eclipse spot); Terra shadows the
@@ -151,6 +160,9 @@ STARS_RADIUS_KM 222985.0   STARS_BRIGHTNESS 0.8
 SOL_ANGULAR_RADIUS 0.012   SOL_GLOW_RADIUS 0.12
 SOL_GLOW_STRENGTH 0.5      SOL_COLOR (1.0, 0.96, 0.9)
 MARKER_FILL (1.0, 0.25, 0.2)  MARKER_RING (1.0, 1.0, 1.0)
+PATH_WIDTH_PX 3.0          PATH_AA_PAD_PX 1.5
+PATH_MITER_LIMIT 4.0       PATH_OPACITY 0.85
+PATH_COLOR (0.35, 0.65, 1.0)
 LUNA_AMBIENT 0.02          LUNA_ECLIPSE_GLOW (0.06, 0.012, 0.004)
 terminator: smoothstep(-0.12, 0.18, cos_sol)
 ```

@@ -90,6 +90,8 @@ impl Simulation for IssAndHubbleSimulation {
                 position_km: state.position_km,
                 // Terra target, so the render-frame eye is the absolute eye.
                 visible: !marker_occluded(camera_pos, state.position_km),
+                // The renderer propagates this ahead for the orbit path.
+                tle: sat.tle().clone(),
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),

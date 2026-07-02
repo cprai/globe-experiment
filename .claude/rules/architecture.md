@@ -111,11 +111,15 @@ src/planet.rs            the 7 planets' data, hung off the CelestialBody planet
                          free, like terra/luna; references simulation::body for
                          the CelestialBody type
 src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
-                         (6 pipelines incl. Luna + a single planet impostor;
+                         (7 pipelines incl. Luna, a single planet impostor, and
+                         the predicted orbit path (mitered screen-space line
+                         strip, depth test-no-write);
                          reversed-Z Depth32Float buffer). Derives all body
                          positions from RenderState.time via CelestialSphere::at
                          and rebuilds view_proj (view_proj_reversed_z) from the
-                         camera rig. Planets use a separate group-1 bind group
+                         camera rig; SGP4-propagates each marker's TLE one
+                         period ahead (satellite::orbit_path_inertial) for the
+                         path. Planets use a separate group-1 bind group
                          (per-planet impostor uniform + texture)
 src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
                          (+ matching depth buffer)
@@ -134,7 +138,9 @@ src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          to Terra), SimulationState (core: clock + celestial
                          sphere) + its shared-core impl UIDrawable, RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
-                         + camera_target + markers - the renderer derives the
+                         + camera_target + markers (each SatelliteMarker carries
+                         its TLE for the renderer's orbit-path propagation) -
+                         the renderer derives the
                          rest from time), SatelliteTelemetry, CameraTarget (enum:
                          Body(CelestialBody) | Coordinate(Vec3) - a pure
                          identity; center_world()/render_origin() resolve the
@@ -149,11 +155,16 @@ src/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          Vec<BodyState> (Terra, Luna, 7 planets in planet::ALL
                          order); iau_body_to_gcrf helper. Called by the renderer
                          each frame (keyed on RenderState.time)
-src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
+src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion;
+                         orbit_path_inertial batch-propagates a TLE one period
+                         ahead (single-rotation inertial-ellipse frame, direct
+                         P-permutation to world km) for the renderer's path
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/scene.wgsl       ALL shader code (6 passes in one module: a single
+shaders/scene.wgsl       ALL shader code (7 passes in one module: a single
                          distance-adaptive planet impostor (perspective/
-                         orthographic ray trace, writes frag_depth); analytic
+                         orthographic ray trace, writes frag_depth); the orbit
+                         path (vs_path/fs_path, mitered constant-pixel-width
+                         line); analytic
                          eclipse shadows). Planet uniform/texture are group 1
 OUT_DIR/                 gitignored; include_bytes!'d: 13 textures (11 JPEG +
                          2 TIFF: Terra x4, stars, Luna, 7 planets) + 3 f16 LUT

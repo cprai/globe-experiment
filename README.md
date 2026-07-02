@@ -112,7 +112,10 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   scene is modeled in kilometers, so it can host real-scale orbital
   simulation.
 - Satellite tracking: each tracked object's TLE (the ISS and Hubble) is
-  propagated with SGP4 and shown as a marker on Terra. A simulation clock
+  propagated with SGP4 and shown as a marker on Terra, together with its
+  predicted orbit path - the orbit one full period ahead, drawn as a smooth
+  star-fixed line that hides behind Terra and fades out as it closes on the
+  satellite. A simulation clock
   advances time (play/pause and an exponential real-time to 100x speed slider),
   so Sol, stars, and every satellite all move live; the panel shows the
   current datetime, the subsolar point, and each object's ground position.

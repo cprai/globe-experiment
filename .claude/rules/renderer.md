@@ -45,9 +45,10 @@ surface lost/timeout recovery.
 
 `create_shader_module` runs on one rayon task while 9 group-0 texture inputs
 load in parallel via `into_par_iter` (the 7 planet textures decode in a separate
-`par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 5
+`par_iter` into group-1 bind groups). A nested `rayon::join` compiles the 6
 group-0 render pipelines concurrently (Terra surface, atmosphere, stars, markers,
-Luna); the single **planet impostor pipeline** (a 6th) is built after the join
+Luna, orbit path); the single **planet impostor pipeline** (a 7th) is built
+after the join
 (it borrows `planet_layout`). This is the **sanctioned** parallel decode — do
 not confuse it with the phase-1 reverted `thread::scope` approach.
 
@@ -134,10 +135,36 @@ planet textures live ONLY in group 1, so group 0 stays at 9 sampled textures —
 clear of the portable 16-per-stage limit.
 
 **Terra-system gate.** `prepare` sets `draw_terra_system = (origin == ZERO)`;
-`render` draws the Terra surface, atmosphere, Luna, and markers only when true
+`render` draws the Terra surface, atmosphere, Luna, orbit paths, and markers
+only when true
 (orbiting Terra/Luna). Orbiting a planet they are skipped. **Draw order: stars
--> planet impostors -> Terra surface -> Luna -> atmosphere -> markers** (the
-Terra-system ones gated; the depth buffer keeps a planet behind Terra hidden).
+-> planet impostors -> Terra surface -> Luna -> atmosphere -> orbit paths ->
+markers** (the
+Terra-system ones gated; the depth buffer keeps a planet behind Terra hidden;
+the paths draw before the markers so each dot sits on its own line).
+
+**Predicted orbit paths (`path_pipeline`, `vs_path`/`fs_path`).** For every
+`RenderState.markers` entry, `prepare` SGP4-propagates the marker's TLE one
+orbital period ahead (`satellite::orbit_path_inertial`, one batch `sgp4` call,
+`PATH_SEGMENTS` segments) and writes per-segment instances (`PathInstance`:
+prev / p0+alpha / p1+alpha / next, four vec4s) into a grow-on-demand instance
+buffer (`paths`, marker pattern). The vertex shader expands each segment to a
+constant-pixel-width screen-space quad (the marker `clip.w` trick) with
+**mitered joints** — each instance carries its neighbor samples so both quads
+at a joint offset the shared endpoint identically: watertight, zero overlap
+(any alpha-blended overlap, even just the AA fringes, reads as a brighter bead
+at every joint). Vertices keep the CENTERLINE endpoint's clip z/w, so the quad
+depth-tests as the thin 3D line. The pipeline is the one depth
+**test-without-write** pass (`Greater`, no write): solids occlude the path's
+far side, the translucent line occludes nothing. Sample points are radially
+lifted by `sec(pi/PATH_SEGMENTS)` in `prepare` so chord midpoints sit ON the
+true arc — inscribed chords dip ~0.5 km inside it and render as depth-test
+dashes where the path grazes Terra's limb. The fade tail (`path_fade`,
+CPU-side per-endpoint alpha) holds full opacity until `PATH_FADE_START` of the
+period, then smoothsteps to zero at one full period. Recomputed every frame
+(a paused app renders zero frames, so idle stays free). Empty markers
+(eclipse/solar_system scenarios, headless render mode) mean `path_count == 0`
+and the draw is skipped.
 
 ## Bind group 0 layout
 
@@ -178,14 +205,17 @@ draw.
 `Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
 `depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
 target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
-`0.0`) build both. All six scene pipelines declare `depth_stencil` (the planet
-impostor writes `@builtin(frag_depth)`); egui's overlay pipeline is built with
+`0.0`) build both. All seven scene pipelines declare `depth_stencil` (the
+planet impostor writes `@builtin(frag_depth)`; the orbit path is the only
+test-without-write pass); egui's overlay pipeline is built with
 `depth_stencil_format: Some(DEPTH_FORMAT)`.
 
 ## Renderer constants
 
 `STACKS 64`, `SLICES 128` (mesh resolution; Terra + Luna only — planets are
-impostors), `MARKER_RADIUS_PX 6`, `DEPTH_FORMAT Depth32Float`,
+impostors), `MARKER_RADIUS_PX 6`, orbit path `PATH_SEGMENTS 256` /
+`INITIAL_PATH_CAPACITY 512` / `PATH_FADE_START 0.85`,
+`DEPTH_FORMAT Depth32Float`,
 `SOL_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra width), projection consts
 `FOV_Y_DEG 45` / `NEAR_PLANE_RADII 0.01` / `FAR_PLANE_KM 500000` (far-plane
 *floor*; `prepare` grows the actual far plane to `max(FAR_PLANE_KM,
@@ -204,7 +234,8 @@ z-clipped).
 - **No EOP range check** in render mode. Out-of-range datetimes render and
   silently degrade. This is deliberate — documented in `snapshot.rs` and
   `scenarios.md`.
-- **No markers** in render mode (`RenderState.markers` is empty). The renderer
+- **No markers** in render mode (`RenderState.markers` is empty — so no
+  predicted orbit paths either). The renderer
   derives every body from `RenderState.time`, so `camera.target` can be any of
   `"terra"`, `"luna"`, or a planet (`"mars"`, ..., `"neptune"`); the render
   origin is taken from the resolved `camera_target`.

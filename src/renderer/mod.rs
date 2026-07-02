@@ -14,6 +14,7 @@ use glam::{Mat4, Vec3, Vec4};
 use crate::luna;
 use crate::planet;
 use crate::simulation::celestial_sphere::CelestialSphere;
+use crate::simulation::satellite;
 use crate::simulation::{CelestialBody, RenderState, TerraSystemEntity};
 use crate::terra;
 use mesh::Vertex;
@@ -25,6 +26,21 @@ const SLICES: u32 = 128;
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
+
+/// Segments per predicted orbit path (one full period ahead per satellite).
+/// 1.4 deg of orbit per segment; the chord sagitta at ISS orbital radius
+/// (~6800 km) is ~0.5 km - sub-pixel at any whole-Terra zoom, so the polyline
+/// reads as a smooth curve.
+const PATH_SEGMENTS: usize = 256;
+
+/// Initial path-instance buffer capacity (segments): two satellites' worth,
+/// covering both shipping satellite scenarios with no first-frame realloc.
+const INITIAL_PATH_CAPACITY: u32 = 2 * PATH_SEGMENTS as u32;
+
+/// Fraction of the orbital period at which the path alpha starts its
+/// smoothstep fade: full opacity before it, zero at 1.0 (one full period), so
+/// the line vanishes sharply just before closing on the satellite.
+const PATH_FADE_START: f32 = 0.85;
 
 /// Depth buffer format. A 32-bit float depth, paired with the reversed-Z
 /// projection (near -> 1, far -> 0), cleared to 0.0 and tested
@@ -556,16 +572,64 @@ fn make_marker_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     })
 }
 
+/// One predicted-orbit-path segment, as instance data for the path pipeline.
+/// Layout must match `PathInstance` in `vs_path` (scene.wgsl): four vec4s.
+/// Besides its two endpoints, each segment carries the neighboring sample on
+/// each side so the vertex shader can miter the joints (both quads at a joint
+/// offset the shared endpoint identically - watertight, no overlap; see the
+/// shader comment for why overlap is visible).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PathInstance {
+    /// The sample before the segment (render frame, km); equals `p0` at the
+    /// path start, degenerating that joint to a butt end.
+    prev: [f32; 3],
+    _pad0: f32,
+    /// Segment start (render frame, km).
+    p0: [f32; 3],
+    /// Fade alpha at the start (1 at the satellite, 0 one period ahead).
+    alpha0: f32,
+    /// Segment end (render frame, km).
+    p1: [f32; 3],
+    /// Fade alpha at the end.
+    alpha1: f32,
+    /// The sample after the segment; equals `p1` at the path end.
+    next: [f32; 3],
+    _pad1: f32,
+}
+
+/// Allocates a path-instance vertex buffer sized for `capacity` segments.
+fn make_path_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("path instances"),
+        size: u64::from(capacity) * std::mem::size_of::<PathInstance>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The predicted path's fade profile at `t` = fraction of the orbital period:
+/// full opacity until [`PATH_FADE_START`], then one smoothstep down to zero at
+/// a full period, so the line ends sharply rather than tapering forever.
+fn path_fade(t: f32) -> f32 {
+    let s = ((t - PATH_FADE_START) / (1.0 - PATH_FADE_START)).clamp(0.0, 1.0);
+    1.0 - s * s * (3.0 - 2.0 * s)
+}
+
 /// Owns every long-lived wgpu object for the scene: textures, LUTs,
-/// mesh buffers, and the six render pipelines (terra surface, atmosphere,
-/// stars, markers, luna, planet impostor). A private scene helper owned
-/// by [`Gfx`].
+/// mesh buffers, and the seven render pipelines (terra surface, atmosphere,
+/// stars, markers, orbit paths, luna, planet impostor). A private scene helper
+/// owned by [`Gfx`].
 struct SceneRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
     luna_pipeline: wgpu::RenderPipeline,
     marker_pipeline: wgpu::RenderPipeline,
+    /// The predicted-orbit-path pipeline (`vs_path`/`fs_path`): thick
+    /// screen-space-expanded segments, alpha-blended, depth-TESTED (`Greater`,
+    /// no write) so solid bodies occlude the path's far side.
+    path_pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -606,6 +670,15 @@ struct SceneRenderer {
     marker_capacity: u32,
     /// Number of markers written for the current frame (instances to draw).
     marker_count: u32,
+    /// Per-segment predicted-orbit-path instance data (one segment per
+    /// instance, `PATH_SEGMENTS` per satellite), rebuilt each `prepare` by
+    /// SGP4-propagating every marker's TLE one period ahead. Same
+    /// grow-on-demand, bind-group-free pattern as `markers`.
+    paths: wgpu::Buffer,
+    /// Number of segments `paths` can hold without reallocation.
+    path_capacity: u32,
+    /// Number of path segments written for the current frame.
+    path_count: u32,
 }
 
 impl SceneRenderer {
@@ -644,6 +717,7 @@ impl SceneRenderer {
         });
 
         let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
+        let paths = make_path_buffer(device, INITIAL_PATH_CAPACITY);
 
         // The six Terra/star/Luna textures are downloaded verbatim by the build
         // script (original JPEG/TIFF) and embedded; they are decoded with the
@@ -1055,7 +1129,9 @@ impl SceneRenderer {
         // depth) so Terra occludes the far-off Luna. The backdrop, the
         // additive atmosphere, and the screen-space markers neither write nor
         // test depth (`Always`, no write) - they keep their exact draw-order
-        // behavior, layered by the order in `render`.
+        // behavior, layered by the order in `render`. The orbit paths are the
+        // in-between: they test `Greater` without writing, so the solids
+        // occlude them but the translucent line occludes nothing.
         let depth_state =
             |write_enabled: bool, compare: wgpu::CompareFunction| wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
@@ -1254,6 +1330,57 @@ impl SceneRenderer {
             })
         };
 
+        // The predicted orbit paths: one screen-space-expanded quad per orbit
+        // segment (corners from the vertex index, endpoints + fade alphas from
+        // the instance buffer), alpha-blended. Unlike the markers this pass
+        // depth-TESTS (`Greater`, no write): the solid bodies drawn earlier
+        // occlude the path's far side, while the translucent line neither
+        // occludes anything nor self-occludes.
+        let make_path_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("orbit path pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_path"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<PathInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        // 0 => prev, 1 => seg0 (endpoint + alpha), 2 => seg1,
+                        // 3 => next.
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x4,
+                            1 => Float32x4,
+                            2 => Float32x4,
+                            3 => Float32x4,
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_path"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // Standard alpha blend for the antialiased edge + fade.
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // A screen-facing quad; no culling.
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Greater)),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
         // Luna: same vertex format as the Terra mesh, lit by Sol with its
         // own eclipse shadow. A solid body, so it writes depth and tests
         // `Greater` like the Terra surface (the depth buffer is what makes the
@@ -1300,11 +1427,16 @@ impl SceneRenderer {
 
         let (
             render_pipeline,
-            (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, luna_pipeline))),
+            (
+                atmosphere_pipeline,
+                (stars_pipeline, (marker_pipeline, (luna_pipeline, path_pipeline))),
+            ),
         ) = rayon::join(make_render_pipeline, || {
             rayon::join(make_atmosphere_pipeline, || {
                 rayon::join(make_stars_pipeline, || {
-                    rayon::join(make_marker_pipeline, make_luna_pipeline)
+                    rayon::join(make_marker_pipeline, || {
+                        rayon::join(make_luna_pipeline, make_path_pipeline)
+                    })
                 })
             })
         });
@@ -1351,6 +1483,7 @@ impl SceneRenderer {
             stars_pipeline,
             luna_pipeline,
             marker_pipeline,
+            path_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
@@ -1366,18 +1499,23 @@ impl SceneRenderer {
             markers,
             marker_capacity: INITIAL_MARKER_CAPACITY,
             marker_count: 0,
+            paths,
+            path_capacity: INITIAL_PATH_CAPACITY,
+            path_count: 0,
         }
     }
 
-    /// Writes the per-frame uniforms and marker instances from the simulation's
-    /// `RenderState`. Call before submitting the frame's command buffer;
-    /// `queue.write_buffer` is ordered before it. `viewport` is the surface
-    /// size in pixels (width, height), used only for the screen-space
-    /// markers. Takes `&mut self` (and `&Device`) because the marker
-    /// instance buffer grows on demand when more satellites are tracked
-    /// than it currently holds. All camera/astronomical math is done by the
-    /// simulation (see `simulation::SimulationState`); this just packs the
-    /// finished values into the GPU layout.
+    /// Writes the per-frame uniforms, marker instances, and predicted
+    /// orbit-path instances from the simulation's `RenderState`. Call before
+    /// submitting the frame's command buffer; `queue.write_buffer` is ordered
+    /// before it. `viewport` is the surface size in pixels (width, height),
+    /// used only for the screen-space markers and path widths. Takes
+    /// `&mut self` (and `&Device`) because the marker and path instance
+    /// buffers grow on demand when more satellites are tracked than they
+    /// currently hold. All camera/astronomical math is done by the simulation
+    /// (see `simulation::SimulationState`), except the orbit-path propagation
+    /// (`satellite::orbit_path_inertial`), which runs here from each marker's
+    /// TLE; otherwise this just packs finished values into the GPU layout.
     fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1580,6 +1718,53 @@ impl SceneRenderer {
         if !instances.is_empty() {
             queue.write_buffer(&self.markers, 0, bytemuck::cast_slice(&instances));
         }
+
+        // The predicted orbit path: SGP4-propagate each marker's TLE one full
+        // period ahead (a single batch call per satellite) and turn the sample
+        // points into per-segment instances with a fading tail. Recomputed
+        // every frame - a paused app renders zero frames, so idle stays free.
+        // Gated like the markers (Terra-system only); the origin subtraction
+        // is a bit-exact no-op there (origin == 0) but keeps the render-frame
+        // convention that the GPU never sees absolute positions.
+        self.path_count = 0;
+        if self.draw_terra_system && !render.markers.is_empty() {
+            // Circumscribe the orbit instead of inscribing it: a chord between
+            // samples sags up to r*(1 - cos(pi/N)) (~0.5 km) inside the true
+            // arc, and where the path grazes Terra's limb that dip fails the
+            // depth test at chord midpoints only - the line renders as dashes.
+            // Radially lifting every sample by sec(pi/N) puts the chord
+            // MIDPOINTS on the true curve (endpoints half a sagitta out,
+            // sub-pixel), so the polyline never falsely dips behind the limb.
+            let lift = 1.0 / (std::f32::consts::PI / PATH_SEGMENTS as f32).cos();
+            let mut segments = Vec::with_capacity(render.markers.len() * PATH_SEGMENTS);
+            for marker in &render.markers {
+                let points: Vec<Vec3> =
+                    satellite::orbit_path_inertial(&marker.tle, &render.time, PATH_SEGMENTS)
+                        .into_iter()
+                        .map(|p| p * lift - origin)
+                        .collect();
+                for i in 0..PATH_SEGMENTS {
+                    segments.push(PathInstance {
+                        // Clamped neighbors: the first/last joint duplicates
+                        // its endpoint, which the shader treats as a butt end.
+                        prev: points[i.saturating_sub(1)].to_array(),
+                        _pad0: 0.0,
+                        p0: points[i].to_array(),
+                        alpha0: path_fade(i as f32 / PATH_SEGMENTS as f32),
+                        p1: points[i + 1].to_array(),
+                        alpha1: path_fade((i + 1) as f32 / PATH_SEGMENTS as f32),
+                        next: points[(i + 2).min(PATH_SEGMENTS)].to_array(),
+                        _pad1: 0.0,
+                    });
+                }
+            }
+            self.path_count = segments.len() as u32;
+            if self.path_count > self.path_capacity {
+                self.path_capacity = self.path_count.next_power_of_two();
+                self.paths = make_path_buffer(device, self.path_capacity);
+            }
+            queue.write_buffer(&self.paths, 0, bytemuck::cast_slice(&segments));
+        }
     }
 
     fn render(&self, render_pass: &mut wgpu::RenderPass<'_>) {
@@ -1630,6 +1815,15 @@ impl SceneRenderer {
             render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.set_pipeline(&self.atmosphere_pipeline);
             render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+
+            // The predicted orbit paths, before the markers so each marker dot
+            // sits on top of its own line. Depth-tested against the solids
+            // drawn above (the far side of an orbit hides behind Terra).
+            if self.path_count > 0 {
+                render_pass.set_pipeline(&self.path_pipeline);
+                render_pass.set_vertex_buffer(0, self.paths.slice(..));
+                render_pass.draw(0..6, 0..self.path_count);
+            }
 
             // The satellite markers last, as screen overlays: one instanced
             // draw, one instance per tracked object. Skipped when none tracked.

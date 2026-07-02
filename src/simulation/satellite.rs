@@ -13,6 +13,11 @@
 //! world-space point via the project's WGS84 helpers (`terra`), so the marker
 //! lands on exactly the same ellipsoid the Terra mesh is built from.
 //!
+//! Besides the single-time marker state, [`orbit_path_inertial`] batch-
+//! propagates a TLE one full period ahead for the renderer's predicted orbit
+//! path - see its docs for the deliberately different (inertial, single-
+//! rotation) frame treatment.
+//!
 //! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
 //! EOP table (real polar motion + UT1-UTC), which
 //! `celestial_sphere::init_satkit` pre-seeds
@@ -25,7 +30,7 @@ use satkit::frametransform::qteme2itrf;
 use satkit::itrfcoord::ITRFCoord;
 use satkit::sgp4::sgp4;
 use satkit::tle::TLE;
-use satkit::{Instant, Vector3};
+use satkit::{Duration, Instant, Vector3};
 
 use crate::terra;
 
@@ -65,6 +70,13 @@ impl Satellite {
     /// The TLE's epoch - the simulation clock's natural starting time.
     pub fn epoch(&self) -> Instant {
         self.tle.epoch
+    }
+
+    /// The parsed element set, for callers that carry it elsewhere (the
+    /// scenario clones it into each frame's `SatelliteMarker` so the renderer
+    /// can propagate the predicted orbit path itself).
+    pub fn tle(&self) -> &TLE {
+        &self.tle
     }
 
     /// Propagates the orbit to `time` and returns the resulting state in the
@@ -122,4 +134,48 @@ fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
         longitude_deg: longitude.to_degrees(),
         altitude_km,
     }
+}
+
+/// SGP4-propagates `tle` one full orbital period ahead of `time` and returns
+/// `segments + 1` world-frame sample points (km), the first at the satellite's
+/// current position. One batch `sgp4` call covers the whole path.
+///
+/// Frame treatment differs from the marker on purpose: every TEME sample is
+/// rotated into the Earth-fixed frame with the SINGLE rotation at `time`
+/// (`qteme2itrf(time)`), not each sample's own future rotation. That renders
+/// the orbit as the star-fixed inertial ellipse - a closed curve that Terra
+/// rotates under - rather than the open ground-track-like curve the per-sample
+/// rotation would give. The path floats at orbital altitude, so no geodetic
+/// round trip through the WGS84 helpers is needed (that exists on the marker
+/// only to land it on the exact mesh ellipsoid); ITRF meters map to world km
+/// by the axis permutation P alone (world (x,y,z) = ITRF (y,z,x), see
+/// `coordinates.md`).
+pub fn orbit_path_inertial(tle: &TLE, time: &Instant, segments: usize) -> Vec<Vec3> {
+    // `sgp4` needs `&mut` (it caches its propagator init in the TLE), but the
+    // caller's TLE sits behind a shared `RenderState` borrow - clone locally.
+    let mut tle = tle.clone();
+
+    // TLE mean motion is revolutions per day, so one period in seconds:
+    let period_s = 86_400.0 / tle.mean_motion;
+    let times: Vec<Instant> = (0..=segments)
+        .map(|i| *time + Duration::from_seconds(period_s * i as f64 / segments as f64))
+        .collect();
+    let state = sgp4(&mut tle, &times).expect("sgp4 orbit path propagation");
+
+    let q = qteme2itrf(time);
+    (0..=segments)
+        .map(|i| {
+            let teme = Vector3::new([
+                [state.pos[(0, i)]],
+                [state.pos[(1, i)]],
+                [state.pos[(2, i)]],
+            ]);
+            let itrf = q * teme;
+            Vec3::new(
+                (itrf[1] / 1000.0) as f32,
+                (itrf[2] / 1000.0) as f32,
+                (itrf[0] / 1000.0) as f32,
+            )
+        })
+        .collect()
 }

@@ -142,6 +142,18 @@ Pipeline per frame (in `state_at`):
    -> world-space km. (Goes through WGS84 helpers to guarantee the marker
    lands on the exact same ellipsoid the mesh uses.)
 
+**Predicted orbit path (`orbit_path_inertial`)** — the renderer's batch twin,
+called from `SceneRenderer::prepare` with each marker's TLE (cloned into
+`SatelliteMarker.tle` by the scenario; cloned again inside because `sgp4`
+needs `&mut`). One batch `sgp4(&mut tle, &times)` call propagates
+`segments + 1` samples across one period (`86400 / tle.mean_motion` seconds,
+mean motion is rev/day). Frame treatment deliberately differs from the marker:
+ALL TEME samples rotate through the SINGLE `qteme2itrf(now)` (the star-fixed
+inertial ellipse, not the per-sample-rotation ground-track curve), then map
+ITRF -> world by the plain P permutation (`world (x,y,z) = ITRF (y,z,x)`) —
+no geodetic round trip, which exists on the marker only to land it on the
+exact mesh ellipsoid.
+
 ## satkit API quick reference (verified against v0.18.1)
 
 **Types**: `satkit::Instant` (µs since Unix epoch, UTC, `Copy`),

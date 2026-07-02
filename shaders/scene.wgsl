@@ -679,6 +679,175 @@ fn fs_marker(in: MarkerOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, alpha);
 }
 
+// Predicted orbit path: each satellite's future orbit (~one period, propagated
+// on the CPU) drawn as a thick constant-pixel-width antialiased polyline. One
+// instance per segment; the vertex shader expands a screen-space quad around
+// the segment (the same clip.w pre-divide trick as the markers) while keeping
+// each vertex's clip z/w at its CENTERLINE endpoint's values - the lateral
+// offset touches only clip.xy - so fixed-function interpolation carries the
+// exact thin-line depth across the fat quad. The pipeline depth-TESTS
+// (`Greater`, no write), so solid bodies occlude the path's far side while the
+// translucent line never occludes anything.
+//
+// Joints are MITERED, not capped: each instance also carries its neighbor
+// points, and both quads at a joint offset the shared endpoint along the same
+// averaged normal - so consecutive quads share their edge exactly, with zero
+// overlap and zero gap. Alpha-blended overlap is what this kills: any
+// double-blended region (even just the AA fringe) reads as a brighter "bead"
+// at every joint, a visible periodic stitch along the whole line.
+
+const PATH_WIDTH_PX: f32 = 3.0;
+// Extra quad slack beyond the half width so the AA fringe is not clipped.
+const PATH_AA_PAD_PX: f32 = 1.5;
+// Cap on the miter offset length (in pad units) at sharp screen-space turns,
+// where the exact miter (1/cos(half turn)) diverges; a clamped joint can
+// notch, but only at close-flyby foreshortening.
+const PATH_MITER_LIMIT: f32 = 4.0;
+const PATH_OPACITY: f32 = 0.85;
+// Dim cyan-blue, distinct from the red MARKER_FILL riding on top of the line.
+const PATH_COLOR: vec3<f32> = vec3<f32>(0.35, 0.65, 1.0);
+
+struct PathInstance {
+    // The neighboring sample BEFORE this segment (xyz, render-frame km); at
+    // the path start it duplicates seg0, degenerating the joint to a butt end.
+    @location(0) prev: vec4<f32>,
+    // Segment endpoints (xyz, render-frame km); w carries each end's fade
+    // alpha (1 at the satellite, 0 at one full period ahead).
+    @location(1) seg0: vec4<f32>,
+    @location(2) seg1: vec4<f32>,
+    // The neighboring sample AFTER this segment; duplicates seg1 at the end.
+    @location(3) next: vec4<f32>,
+};
+
+struct PathOutput {
+    @builtin(position) position: vec4<f32>,
+    // Segment endpoints in framebuffer pixels, for the fragment's distance-
+    // to-line. Flat: they are per-segment values, not interpolants.
+    @location(0) @interpolate(flat) p0_px: vec2<f32>,
+    @location(1) @interpolate(flat) p1_px: vec2<f32>,
+    @location(2) alpha: f32,
+};
+
+// `v` normalized, or `fallback` when `v` is too short to have a direction.
+fn dir_or(v: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
+    let len = length(v);
+    if len > 1e-4 {
+        return v / len;
+    }
+    return fallback;
+}
+
+@vertex
+fn vs_path(@builtin(vertex_index) vertex_index: u32, inst: PathInstance) -> PathOutput {
+    // Quad corners as (endpoint selector t, lateral side): two triangles
+    // spanning the segment, half a width (+ AA pad) to each side.
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0),
+    );
+    let corner = corners[vertex_index];
+
+    var out: PathOutput;
+
+    // A segment endpoint behind the camera cannot be screen-space expanded
+    // (its projection is meaningless); emit an off-screen clipped vertex and
+    // drop the whole segment - at most a 1-segment gap where the path crosses
+    // the near plane, the marker idiom.
+    let clip0 = uniforms.view_proj * vec4<f32>(inst.seg0.xyz, 1.0);
+    let clip1 = uniforms.view_proj * vec4<f32>(inst.seg1.xyz, 1.0);
+    if clip0.w <= 0.0 || clip1.w <= 0.0 {
+        out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        out.p0_px = vec2<f32>(0.0);
+        out.p1_px = vec2<f32>(0.0);
+        out.alpha = 0.0;
+        return out;
+    }
+
+    // Project the endpoints and both neighbors to framebuffer pixels (y down,
+    // matching @builtin(position) in the fragment stage).
+    let viewport = uniforms.marker.xy;
+    let clip_prev = uniforms.view_proj * vec4<f32>(inst.prev.xyz, 1.0);
+    let clip_next = uniforms.view_proj * vec4<f32>(inst.next.xyz, 1.0);
+    let ndc0 = clip0.xy / clip0.w;
+    let ndc1 = clip1.xy / clip1.w;
+    let px0 = vec2<f32>((ndc0.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc0.y) * 0.5 * viewport.y);
+    let px1 = vec2<f32>((ndc1.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc1.y) * 0.5 * viewport.y);
+
+    // This segment's direction, and the neighbor directions for the miters. A
+    // degenerate (same-pixel) or behind-camera neighbor falls back to the
+    // segment's own direction, which degenerates that joint to a butt end.
+    let dir = dir_or(px1 - px0, vec2<f32>(1.0, 0.0));
+    var dir_in = dir;
+    if clip_prev.w > 0.0 {
+        let ndc = clip_prev.xy / clip_prev.w;
+        let px = vec2<f32>((ndc.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc.y) * 0.5 * viewport.y);
+        dir_in = dir_or(px0 - px, dir);
+    }
+    var dir_out = dir;
+    if clip_next.w > 0.0 {
+        let ndc = clip_next.xy / clip_next.w;
+        let px = vec2<f32>((ndc.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc.y) * 0.5 * viewport.y);
+        dir_out = dir_or(px - px1, dir);
+    }
+
+    // Miter normal at each end: the average of the two adjoining segments'
+    // normals, scaled so its projection onto this segment's normal is the pad
+    // (that is what makes the two quads at a joint meet edge-to-edge). Both
+    // segments at a joint compute the identical offset point, so the strip is
+    // watertight. Clamped at sharp turns (and at a 180-degree fold, where the
+    // average vanishes and the miter is meaningless - fall back to the plain
+    // normal).
+    let n = vec2<f32>(-dir.y, dir.x);
+    let pad = PATH_WIDTH_PX * 0.5 + PATH_AA_PAD_PX;
+    var m0 = dir_or(vec2<f32>(-dir_in.y, dir_in.x) + n, n);
+    var m1 = dir_or(n + vec2<f32>(-dir_out.y, dir_out.x), n);
+    let len0 = pad / max(dot(m0, n), 1.0 / PATH_MITER_LIMIT);
+    let len1 = pad / max(dot(m1, n), 1.0 / PATH_MITER_LIMIT);
+
+    let t = corner.x;
+    let vert_px = mix(px0 + m0 * corner.y * len0, px1 + m1 * corner.y * len1, t);
+
+    // Back to NDC, pre-multiplied by the chosen endpoint's clip w (the marker
+    // trick: constant pixel width at any depth). z/w stay the centerline
+    // endpoint's, so the quad carries exact thin-line depth for the test.
+    let zw = mix(vec2<f32>(clip0.z, clip0.w), vec2<f32>(clip1.z, clip1.w), t);
+    let vert_ndc = vec2<f32>(
+        vert_px.x / viewport.x * 2.0 - 1.0,
+        1.0 - vert_px.y / viewport.y * 2.0,
+    );
+    out.position = vec4<f32>(vert_ndc * zw.y, zw.x, zw.y);
+    out.p0_px = px0;
+    out.p1_px = px1;
+    out.alpha = mix(inst.seg0.w, inst.seg1.w, t);
+    return out;
+}
+
+@fragment
+fn fs_path(in: PathOutput) -> @location(0) vec4<f32> {
+    // Pixel distance to the segment's INFINITE line: joints are mitered, so
+    // the neighboring quad continues the stroke past the endpoint and no end
+    // rounding is wanted (a finite-segment distance would fade the shared
+    // joint edge from both sides). Adjacent lines differ by the tiny per-
+    // segment turn, so the value is continuous across the shared edge.
+    let ba = in.p1_px - in.p0_px;
+    let pa = in.position.xy - in.p0_px;
+    let dist = abs(pa.x * ba.y - pa.y * ba.x) / max(length(ba), 1e-4);
+
+    // Antialias the edge over roughly one pixel.
+    let aa = fwidth(dist);
+    let half_w = PATH_WIDTH_PX * 0.5;
+    let edge = 1.0 - smoothstep(half_w - aa, half_w + aa, dist);
+    let alpha = edge * in.alpha * PATH_OPACITY;
+    if alpha <= 0.002 {
+        discard;
+    }
+    return vec4<f32>(PATH_COLOR, alpha);
+}
+
 // Luna: the triaxial lunar mesh, oriented into world space by the
 // ephemeris + IAU lunar rotation (`uniforms.luna_rot`) and placed at its true
 // world position. Lit by the same Sol as Terra, but with no atmosphere

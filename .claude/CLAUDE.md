@@ -17,7 +17,11 @@ currently uncommitted changes — as an example only. Do NOT make any commits.**
 
 Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
 Terra in world-space km, Hillaire-2020 atmosphere, star/Sol/**Luna** from JPL
-DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4, inertial
+DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4 (each
+tracked satellite also draws its **predicted orbit path**: the renderer
+SGP4-propagates the marker's TLE one period ahead and renders the star-fixed
+inertial ellipse as a thick depth-tested line whose tail fades out sharply
+near one full orbit), inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector
 panel (one key per body); Luna in the eclipse scenarios via a Terra/Luna

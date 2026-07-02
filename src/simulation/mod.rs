@@ -14,6 +14,7 @@ pub mod satellite;
 
 use glam::Vec3;
 use satkit::Instant;
+use satkit::tle::TLE;
 
 pub use body::{CelestialBody, TerraSystemEntity};
 pub use clock::Clock;
@@ -221,20 +222,28 @@ pub struct RenderState {
     /// Camera up direction in the world frame (unit).
     pub camera_up: Vec3,
     /// One marker per tracked satellite, in the same order as the scenario's
-    /// satellite list. The renderer draws them instanced. This is the one piece
-    /// of frame state not derivable from `time` (it depends on the scenario's
-    /// TLEs).
+    /// satellite list. The renderer draws them instanced, and propagates each
+    /// marker's TLE ahead to draw its predicted orbit path. This is the one
+    /// piece of frame state not derivable from `time` (it depends on the
+    /// scenario's TLEs).
     pub markers: Vec<SatelliteMarker>,
 }
 
-/// A single satellite's on-screen marker for one frame: where to draw it and
-/// whether it is visible. Element of [`RenderState::markers`].
-#[derive(Clone, Copy, Debug)]
+/// A single satellite's on-screen marker for one frame: where to draw it,
+/// whether it is visible, and the element set behind it. Element of
+/// [`RenderState::markers`].
+#[derive(Clone, Debug)]
 pub struct SatelliteMarker {
     /// Marker position in the world frame (km).
     pub position_km: Vec3,
     /// Whether the marker is visible (false when the solid Terra occludes it).
     pub visible: bool,
+    /// The satellite's element set, cloned from the scenario's `Satellite`
+    /// each frame. The renderer SGP4-propagates it about one orbit ahead
+    /// (`satellite::orbit_path_inertial`) to draw the predicted orbit path -
+    /// the path, like the marker position, is the render input that is not
+    /// derivable from `time` alone.
+    pub tle: TLE,
 }
 
 /// One tracked satellite's readout for the UI panel. A scenario stashes a
