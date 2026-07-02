@@ -141,13 +141,17 @@ pub fn init_satkit() {
 /// Sol direction and star-map orientation for one instant, in the renderer's
 /// world frame.
 pub struct CelestialSphere {
-    /// Unit vector toward Sol in the Earth-fixed (ECEF) world frame.
+    /// Unit vector toward Sol in the Earth-fixed (ECEF) world frame. Not part
+    /// of the render path (every lit pass derives its Sol direction from
+    /// `sol_pos_world` instead); kept for scenario-side uses such as the solar
+    /// eclipse's day-side launch framing.
     pub sol_dir: Vec3,
     /// Sol position in the Earth-fixed (ECEF) world frame, km (true
-    /// geocentric). Used to light the planets, which sit far enough from
-    /// Terra that the Sol direction *at the planet*
-    /// (`normalize(sol_pos_world - planet_center)`) differs from Terra's
-    /// `sol_dir`; the Terra/Luna keep using `sol_dir`.
+    /// geocentric). The renderer uploads it (shifted into the render frame) as
+    /// `sol_pos`, and every lit pass derives its Sol direction from it -
+    /// `normalize(sol_pos - surface)` for surfaces, `normalize(sol_pos)` for
+    /// the backdrop disc - so a far planet is lit by the Sol direction *at the
+    /// planet*, which differs from Terra's.
     pub sol_pos_world: Vec3,
     /// Rotation taking world (ECEF) view directions into the *equatorial*
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
@@ -210,10 +214,10 @@ impl CelestialSphere {
         // ITRF (Earth-fixed) and permute into the world frame.
         let sol_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sol ephemeris lookup");
         let sol_itrf = qgcrf2itrf(time) * sol_gcrf;
-        // Keep `sol_dir` as the exact pre-planet expression (so Terra/Luna
-        // renders stay bit-identical); `sol_pos_world` is the same vector scaled
-        // to km, computed separately for the planets' lighting. Normalizing the
-        // unscaled vs /1000 vector would differ by ~1 ULP - hence not folded.
+        // `sol_dir` keeps the exact pre-planet expression; `sol_pos_world` is
+        // the same vector scaled to km - the position every render pass lights
+        // from. Normalizing the unscaled vs /1000 vector would differ by
+        // ~1 ULP - hence not folded.
         let sol_dir = (p * nvec(sol_itrf)).normalize();
         let sol_pos_world = p * (nvec(sol_itrf) / 1000.0);
 
@@ -430,12 +434,12 @@ fn body_basis(alpha0: f64, delta0: f64, w: f64) -> Mat3 {
     Mat3::from_cols(x, y, z)
 }
 
-/// numeris column vector -> glam Vec3.
+/// satkit column vector -> glam Vec3.
 fn nvec(v: Vector3) -> Vec3 {
     Vec3::new(v[(0, 0)] as f32, v[(1, 0)] as f32, v[(2, 0)] as f32)
 }
 
-/// A numeris 3-vector from components (the ctor takes a column-major array).
+/// A satkit 3-vector from components (the ctor takes a column-major array).
 fn unit(x: f64, y: f64, z: f64) -> Vector3 {
     Vector3::new([[x], [y], [z]])
 }
@@ -449,6 +453,9 @@ mod tests {
     /// the north galactic pole (0,0,1) back to their catalogued equatorial
     /// RA/Dec. This validates the embedded matrix independently of any
     /// render or time.
+    // The full catalogued digits are kept verbatim for provenance, same as
+    // `R_EQU2GAL` above (the trailing zero of 266.40500 trips the lint).
+    #[allow(clippy::excessive_precision)]
     #[test]
     fn galactic_axes_map_to_catalogued_radec() {
         let equ_of = |gal: Vec3| {

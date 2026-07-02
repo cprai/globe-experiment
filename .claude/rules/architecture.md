@@ -12,9 +12,10 @@ Crate name: `globe-experiment`.
 ## File map
 
 ```
-build.rs                 downloads 5 textures (JPEG/TIFF verbatim) + JPL
-                         DE440 ephemeris + EOP-All.csv into OUT_DIR; bakes
-                         3 atmosphere LUTs as f16 KTX2. Contains mod atmosphere.
+build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
+                         DE440 ephemeris + EOP-All.csv + 3 IERS tables into
+                         OUT_DIR; bakes 3 atmosphere LUTs as f16 KTX2.
+                         Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
                          (render takes one --scene JSON + --output/width/height)
@@ -136,9 +137,9 @@ shaders/scene.wgsl       ALL shader code (6 passes in one module: a single
                          distance-adaptive planet impostor (perspective/
                          orthographic ray trace, writes frag_depth); analytic
                          eclipse shadows). Planet uniform/texture are group 1
-OUT_DIR/                 gitignored; include_bytes!'d: 13 JPEG textures (Terra x4,
-                         stars, Luna, 7 planets) + 3 f16 LUT KTX2 + DE440
-                         ephemeris + EOP-All.csv
+OUT_DIR/                 gitignored; include_bytes!'d: 13 textures (11 JPEG +
+                         2 TIFF: Terra x4, stars, Luna, 7 planets) + 3 f16 LUT
+                         KTX2 + DE440 ephemeris + EOP-All.csv + 3 IERS tables
 ```
 
 ## Module dependency graph

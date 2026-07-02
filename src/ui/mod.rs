@@ -92,8 +92,8 @@ fn anchor_to_egui(anchor: &PanelAnchor, offset: [f32; 2]) -> (egui::Align2, egui
 }
 
 /// The control/readout panel(s) over the scene: one panel holds the simulation
-/// clock (play/pause and speed); another holds each tracked station's datetime
-/// and position.
+/// clock (datetime, play/pause, and speed); a scenario may add its own (e.g.
+/// per-satellite position readouts, or a camera-target selector).
 ///
 /// This function is deliberately *decoupled from interactivity*: it knows
 /// nothing about the `Clock` or any scenario. It asks the `drawable` for a list

@@ -1,7 +1,7 @@
 # Solar System
 
-An astronomically-accurate, interactive 3D solar-system renderer with
-satellite tracking, in the spirit of Google Terra, written
+An astronomically-accurate, interactive 3D solar-system simulation with
+satellite tracking, written
 in Rust with [wgpu](https://wgpu.rs) for rendering, [winit](https://github.com/rust-windowing/winit)
 for windowing and input, and [egui](https://github.com/emilk/egui) for
 the control overlay. It simulates **past** scenarios (events before the
@@ -102,7 +102,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP
   record (1962 onward); the tool simulates past scenarios only.
-- Smooth, Google-Terra-style navigation: panning follows the cursor at
+- Smooth map-style navigation: panning follows the cursor at
   any zoom level, from whole-Terra spins down to country level. The camera orbits
   a chosen body - always Terra for satellite scenarios, either Terra
   or Luna in the eclipse scenarios (a Terra / Luna selector in the panel),

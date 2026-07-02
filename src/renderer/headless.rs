@@ -7,8 +7,8 @@
 //! differences are the presentation target (an owned color texture + a readback
 //! buffer instead of a swapchain surface) and that the UI is optional. The
 //! scene draw sequence is identical: clear to black (and the reversed-Z depth
-//! to 0.0), then stars -> surface -> luna -> atmosphere (markers are skipped
-//! because render mode tracks none). When the
+//! to 0.0), then stars -> planet impostors -> terra surface -> luna ->
+//! atmosphere (markers are skipped because render mode tracks none). When the
 //! caller supplies a [`UiFrame`] (from the `render --scene` `ui` mock layouts),
 //! an egui overlay is composited on top, exactly as in the windowed path.
 

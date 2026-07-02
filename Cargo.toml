@@ -19,9 +19,12 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 ktx2 = "0.5"
 pollster = "0.4"
 rayon = "1.10"
-# SGP4 propagation of the space-station TLE. default-features off drops the
-# `download` feature (runtime data fetch via ureq); SGP4 + the TEME->ITRF
-# rotation we use need no downloaded EOP/data files.
+# SGP4 satellite propagation, the JPL DE440 ephemeris reader, and the
+# IERS-2010 frame transforms behind the celestial sphere. default-features off
+# drops the `download` feature (satkit's own runtime data fetch via ureq): the
+# ephemeris, EOP table, and IERS tables are instead downloaded by build.rs,
+# embedded, and seeded via the `init_from_bytes` APIs (see
+# `simulation::celestial_sphere::init_satkit`).
 satkit = { version = "0.18", default-features = false }
 # Deserializes the `render --scene` JSON (simulation + camera + mock-panel ui)
 # into the egui-free spec types (pure-Rust, portable across all six targets).

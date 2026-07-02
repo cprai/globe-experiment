@@ -1,7 +1,8 @@
 //! Solar-system scenario: a free tour of the whole solar system with no tracked
 //! objects - the celestial sphere wound to a fixed past date, and a body
-//! selector (PREV / NEXT) that flies the camera to and orbits any of Terra, the
-//! Luna, or the seven planets (CLI: `globe-experiment scenario solar_system`).
+//! selector (one latching key per body) that flies the camera to and orbits any
+//! of Terra, Luna, or the seven planets (CLI: `globe-experiment scenario
+//! solar_system`).
 //! Like the eclipse scenarios it carries no `Satellite` list and draws no
 //! markers; unlike them it draws all seven planets, each at its true
 //! geocentric position and scale.
@@ -9,7 +10,7 @@
 //! Because the outer planets sit billions of km from Terra - far past f32
 //! precision in world-km - a planet target renders with a floating origin (the
 //! scene is drawn relative to the orbited planet's center; see
-//! `RenderState::render_origin`). Terra/Luna targets keep the origin at Terra.
+//! `CameraTarget::render_origin`). Terra/Luna targets keep the origin at Terra.
 
 use glam::Vec3;
 use satkit::Instant;
@@ -44,7 +45,7 @@ impl SolarSystemSimulation {
 
 impl Simulation for SolarSystemSimulation {
     fn advance(&mut self) -> bool {
-        // Fold in any pending PREV/NEXT press before the camera target is read.
+        // Fold in any pending body-key press before the camera target is read.
         self.selector.apply_requests();
         self.simulation.advance()
     }
@@ -75,7 +76,7 @@ impl Simulation for SolarSystemSimulation {
 
 impl UIDrawable for SolarSystemSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The shared-core panel plus the PREV / NEXT body selector. The two
+        // The shared-core panel plus the one-key-per-body selector. The two
         // panels borrow disjoint fields (`simulation` vs `selector`).
         let mut panels = self.simulation.get_drawables();
         panels.push(self.selector.panel());
@@ -84,7 +85,8 @@ impl UIDrawable for SolarSystemSimulation {
 }
 
 /// Builds the solar-system scene and hands off to the winit event loop. Starts
-/// on the default whole-Terra view; PREV/NEXT then tour the system.
+/// on the default whole-Terra view; the body-selector keys then tour the
+/// system.
 pub fn run() {
     simulation::init();
     application::run(ApplicationState::new(SolarSystemSimulation::new()));

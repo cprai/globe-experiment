@@ -30,8 +30,8 @@ paths:
   layering. Because the atmosphere does not depth-test, `fs_atmosphere` does an
   explicit ray-sphere **Luna occlusion** check (drops the fragment where the ray
   hits Luna in front of the atmosphere) so the additive glow does not bleed
-  over a nearer Luna from a Luna-orbit view. The camera projection is reversed-Z
-  (`Camera::view_proj` post-
+  over a nearer Luna from a Luna-orbit view. The projection is reversed-Z
+  (`renderer::view_proj_reversed_z` post-
   multiplies a Z-flip onto `perspective_rh`); the clear value, compare op, and
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on

@@ -79,9 +79,9 @@ cargo run --release -- render --output mock.png --scene \
 ```
 
 First build: slow (~1.5 min extra), needs network. `build.rs` downloads 13
-textures (JPEG verbatim: Terra x4, stars, Luna, + 7 planets — five 8K, two 2K),
-the JPL ephemeris (~98 MB), and `EOP-All.csv` into `OUT_DIR`; bakes 3 atmosphere
-LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
+textures (JPEG/TIFF verbatim: Terra x4, stars, Luna, + 7 planets — five 8K,
+two 2K), the JPL ephemeris (~98 MB), `EOP-All.csv`, and the three IERS-2010
+tables into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
 `OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the seven native-res
 planet textures add ~686 MB; see `constraints.md`).
 

@@ -26,11 +26,11 @@ const SLICES: u32 = 128;
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
 
-/// Depth buffer format. A 32-bit float depth, paired with the camera's
-/// reversed-Z projection (near -> 1, far -> 0), cleared to 0.0 and tested
+/// Depth buffer format. A 32-bit float depth, paired with the reversed-Z
+/// projection (near -> 1, far -> 0), cleared to 0.0 and tested
 /// `Greater`. This is what lets Terra correctly occlude the much more
 /// distant Luna across the scene's enormous near/far span (see
-/// `Camera::view_proj`).
+/// [`view_proj_reversed_z`]).
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Sol's angular radius seen from Terra/Luna (~0.266 deg), in radians. Sets
@@ -283,11 +283,11 @@ impl Gfx {
     }
 
     /// Renders one frame: applies egui's texture-set deltas, writes the
-    /// uniforms from `render`, then draws the scene (stars -> surface -> luna
-    /// -> atmosphere -> marker, depth-buffered) and the egui overlay in a
-    /// single pass, and presents. `window` is borrowed only for the
-    /// pre-present hint. Returns a [`FrameOutcome`] so the caller can
-    /// reveal the window / reschedule a redraw.
+    /// uniforms from `render`, then draws the scene (stars -> planet impostors
+    /// -> terra surface -> luna -> atmosphere -> markers, depth-buffered) and
+    /// the egui overlay in a single pass, and presents. `window` is borrowed
+    /// only for the pre-present hint. Returns a [`FrameOutcome`] so the
+    /// caller can reveal the window / reschedule a redraw.
     ///
     /// The egui texture-set deltas are applied **first, before the surface
     /// acquire**, so they survive a frame that never presents - see the comment
@@ -557,7 +557,8 @@ fn make_marker_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
 }
 
 /// Owns every long-lived wgpu object for the scene: textures, LUTs,
-/// mesh buffers, and the three render pipelines. A private scene helper owned
+/// mesh buffers, and the six render pipelines (terra surface, atmosphere,
+/// stars, markers, luna, planet impostor). A private scene helper owned
 /// by [`Gfx`].
 struct SceneRenderer {
     render_pipeline: wgpu::RenderPipeline,
@@ -644,7 +645,7 @@ impl SceneRenderer {
 
         let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
 
-        // The five Terra/star textures are downloaded verbatim by the build
+        // The six Terra/star/Luna textures are downloaded verbatim by the build
         // script (original JPEG/TIFF) and embedded; they are decoded with the
         // `image` crate and uploaded as uncompressed RGBA8 here - no GPU
         // compression feature required (see request_adapter_device). The three
@@ -652,7 +653,7 @@ impl SceneRenderer {
         // uploaded as-is. Each entry's `TexKind` tells the parallel loader which
         // path to take: an sRGB color image, a linear data image, or an f16 LUT.
         //
-        // The eight loads are mutually independent, and shader-module
+        // The nine loads are mutually independent, and shader-module
         // compilation (naga parse + validation) is independent of all of them,
         // so the module is compiled on one rayon task while the textures decode
         // and upload in parallel across the rest of the pool. Device, Queue, and

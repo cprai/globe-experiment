@@ -1,7 +1,11 @@
 # Testing & verification
 
-- **No test suite, no CI.** Verification is the smoke test + manual
+- **No full test suite, no CI.** Verification is the smoke test + manual
   interaction on native Windows. Do not add a CI gate without owner sign-off.
+  There are a few render-free unit tests (`cargo test`) in
+  `celestial_sphere.rs` covering the galactic star-frame matrix and the IAU
+  lunar rotation (`luna_near_side_faces_terra`) — run them after touching
+  that module.
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
 - **After every shader edit**: `naga --compact --capabilities none
   shaders/scene.wgsl`. This is the same naga the app links through wgpu —
