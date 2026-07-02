@@ -15,7 +15,7 @@ file so deleting one triggers a re-download or re-bake on the next build.
 ## EMBEDS table — verbatim downloads
 
 `embed_verbatim(embed, out_dir)` downloads to `OUT_DIR` unless already
-present. Currently eighteen entries:
+present. Currently nineteen entries:
 - **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) — embedded into
   the binary; loaded via `jplephem::init_from_bytes`.
 - **CelesTrak `EOP-All.csv`** (~2-3 MiB) — embedded; loaded via
@@ -24,6 +24,10 @@ present. Currently eighteen entries:
   from satkit's astrokit-astro-data bucket) — embedded; loaded via
   `frametransform::init_iers_table_from_bytes` for the full celestial-sphere
   GCRF<->ITRF transforms.
+- **ICGEM EGM96 gravity coefficients** `EGM96.gfc` (~5.4 MiB text, same
+  bucket) — embedded; loaded via `earthgravity::init_from_bytes` for the
+  numerical orbit propagator (`orbitprop`) behind the predicted satellite
+  path's `Propagation::Numerical` arm.
 - **Six 8K Terra/star/Luna textures** (JPEG/TIFF verbatim): `8k_earth_daymap.jpg`,
   `8k_earth_nightmap.jpg`, `8k_earth_normal_map.tif`, `8k_earth_specular_map.tif`,
   `8k_stars_milky_way.jpg`, `8k_moon.jpg` (lunar albedo). Decoded at **runtime**

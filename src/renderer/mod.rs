@@ -672,8 +672,9 @@ struct SceneRenderer {
     marker_count: u32,
     /// Per-segment predicted-orbit-path instance data (one segment per
     /// instance, `PATH_SEGMENTS` per satellite), rebuilt each `prepare` by
-    /// SGP4-propagating every marker's TLE one period ahead. Same
-    /// grow-on-demand, bind-group-free pattern as `markers`.
+    /// propagating every marker's `Propagation` (analytic SGP4 or numerical
+    /// orbitprop) one period ahead. Same grow-on-demand, bind-group-free
+    /// pattern as `markers`.
     paths: wgpu::Buffer,
     /// Number of segments `paths` can hold without reallocation.
     path_capacity: u32,
@@ -1515,7 +1516,8 @@ impl SceneRenderer {
     /// currently hold. All camera/astronomical math is done by the simulation
     /// (see `simulation::SimulationState`), except the orbit-path propagation
     /// (`satellite::orbit_path_inertial`), which runs here from each marker's
-    /// TLE; otherwise this just packs finished values into the GPU layout.
+    /// `Propagation` (analytic SGP4 or numerical orbitprop); otherwise this
+    /// just packs finished values into the GPU layout.
     fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1719,8 +1721,9 @@ impl SceneRenderer {
             queue.write_buffer(&self.markers, 0, bytemuck::cast_slice(&instances));
         }
 
-        // The predicted orbit path: SGP4-propagate each marker's TLE one full
-        // period ahead (a single batch call per satellite) and turn the sample
+        // The predicted orbit path: propagate each marker's `Propagation`
+        // (analytic SGP4 or numerical orbitprop, per object) one full period
+        // ahead and turn the sample
         // points into per-segment instances with a fading tail. Recomputed
         // every frame - a paused app renders zero frames, so idle stays free.
         // Gated like the markers (Terra-system only); the origin subtraction
@@ -1738,11 +1741,14 @@ impl SceneRenderer {
             let lift = 1.0 / (std::f32::consts::PI / PATH_SEGMENTS as f32).cos();
             let mut segments = Vec::with_capacity(render.markers.len() * PATH_SEGMENTS);
             for marker in &render.markers {
-                let points: Vec<Vec3> =
-                    satellite::orbit_path_inertial(&marker.tle, &render.time, PATH_SEGMENTS)
-                        .into_iter()
-                        .map(|p| p * lift - origin)
-                        .collect();
+                let points: Vec<Vec3> = satellite::orbit_path_inertial(
+                    &marker.propagation,
+                    &render.time,
+                    PATH_SEGMENTS,
+                )
+                .into_iter()
+                .map(|p| p * lift - origin)
+                .collect();
                 for i in 0..PATH_SEGMENTS {
                     segments.push(PathInstance {
                         // Clamped neighbors: the first/last joint duplicates

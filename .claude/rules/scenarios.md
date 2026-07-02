@@ -75,9 +75,12 @@ time and takes the render origin from the `camera_target`. The panel is appended
 in `get_drawables` like the eclipse selector.
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
-  `crate::simulation` for visibility, clones each satellite's TLE into its
-  `SatelliteMarker` (the renderer propagates it ahead for the predicted orbit
-  path), and reads Sol/star values from
+  `crate::simulation` for visibility, fills each `SatelliteMarker`'s
+  `propagation` (the renderer propagates it ahead for the predicted orbit
+  path) — `Propagation::Sgp4` with a cloned TLE, or `Propagation::Numerical`
+  with the `SatelliteState.orbit` GCRF state vector from the same propagation
+  (`iss_and_hubble` deliberately mixes both, ISS SGP4 + Hubble numerical, to
+  exercise the mixed-scene capability) — and reads Sol/star values from
   `self.simulation.celestial_sphere`. The near-identical propagation loop
   across scenarios is **intentional** — each may diverge (marker style,
   visibility logic, non-satellite objects); premature factoring adds

@@ -7,7 +7,7 @@ use glam::Vec3;
 
 use crate::application::{self, ApplicationState};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::satellite::Satellite;
+use crate::simulation::satellite::{Propagation, Satellite};
 use crate::simulation::{
     self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
     marker_occluded,
@@ -84,14 +84,23 @@ impl Simulation for IssAndHubbleSimulation {
 
         let mut markers = Vec::with_capacity(self.satellites.len());
         let mut sat_telemetry = Vec::with_capacity(self.satellites.len());
-        for sat in &mut self.satellites {
+        for (i, sat) in self.satellites.iter_mut().enumerate() {
             let state = sat.state_at(&now);
+            // The renderer propagates this ahead for the orbit path. The two
+            // objects deliberately use different backends - ISS the analytic
+            // SGP4 element set, Hubble numerical integration from its current
+            // GCRF state vector - demonstrating (and continuously exercising)
+            // the mixed-propagation capability in one scene.
+            let propagation = if i == 0 {
+                Propagation::Sgp4(Box::new(sat.tle().clone()))
+            } else {
+                Propagation::Numerical(state.orbit)
+            };
             markers.push(SatelliteMarker {
                 position_km: state.position_km,
                 // Terra target, so the render-frame eye is the absolute eye.
                 visible: !marker_occluded(camera_pos, state.position_km),
-                // The renderer propagates this ahead for the orbit path.
-                tle: sat.tle().clone(),
+                propagation,
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),

@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use crate::application::{self, ApplicationState};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::satellite::Satellite;
+use crate::simulation::satellite::{Propagation, Satellite};
 use crate::simulation::{
     self, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, SimulationState,
     marker_occluded,
@@ -78,7 +78,7 @@ impl Simulation for IssSimulation {
                 // Terra target, so the render-frame eye is the absolute eye.
                 visible: !marker_occluded(camera_pos, state.position_km),
                 // The renderer propagates this ahead for the orbit path.
-                tle: sat.tle().clone(),
+                propagation: Propagation::Sgp4(Box::new(sat.tle().clone())),
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),

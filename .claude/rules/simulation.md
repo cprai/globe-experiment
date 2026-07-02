@@ -19,11 +19,11 @@ paths:
 The **world** frame is ITRF with axes permuted: `world (X,Y,Z) = ITRF (Y,Z,X)`.
 See `P` in `coordinates.md`.
 
-## init_satkit — must seed all three (do not drop any seed)
+## init_satkit — must seed all four (do not drop any seed)
 
-**`init_satkit()` must seed the ephemeris, the EOP table, and the three IERS
-nutation/CIO tables** before any satkit use. Call it once at the start of each
-scenario's `run()`.
+**`init_satkit()` must seed the ephemeris, the EOP table, the three IERS
+nutation/CIO tables, and the EGM96 gravity model** before any satkit use.
+Call it once at the start of each scenario's `run()`.
 
 ```rust
 satkit::jplephem::init_from_bytes(EPHEMERIS)        // DE440 OnceLock
@@ -32,10 +32,11 @@ satkit::earth_orientation_params::disable_eop_time_warning()
 init_iers_table_from_bytes(IersTableId::Tab5A, TAB5A)   // CIP X series
 init_iers_table_from_bytes(IersTableId::Tab5B, TAB5B)   // CIP Y series
 init_iers_table_from_bytes(IersTableId::Tab5D, TAB5D)   // CIO locator s
+satkit::earthgravity::init_from_bytes(GravityModel::EGM96, EGM96)
 ```
 
-Where `EPHEMERIS`, `EOP`, and `TAB5A`/`TAB5B`/`TAB5D` are embedded via
-`include_bytes!` from `OUT_DIR`.
+Where `EPHEMERIS`, `EOP`, `TAB5A`/`TAB5B`/`TAB5D`, and `EGM96` are embedded
+via `include_bytes!` from `OUT_DIR`.
 
 **Why every seed is required:**
 1. **Accuracy**: real EOP (polar motion + UT1-UTC) makes the satellite's
@@ -48,6 +49,13 @@ Where `EPHEMERIS`, `EOP`, and `TAB5A`/`TAB5B`/`TAB5D` are embedded via
    and the IERS resolver also `from_file(..).unwrap()`s, panicking if absent.
    Seeding all of them up front consumes the one-shot loads so that dir is
    never created.
+3. **EGM96 has the same stray-dir failure mode**: the numerical orbit
+   propagator (`orbitprop`, the `Propagation::Numerical` path arm) resolves
+   the gravity model via `settings.gravity_model.get()` on every propagation,
+   and satkit's lazy default runs `Gravity::from_file("EGM96.gfc")` out of
+   the data dir (creating it; panicking/downloading if absent). A late seed
+   fails with `AlreadyInitialized`. Seeded unconditionally — whether a scene
+   contains numerically-propagated satellites is not knowable at init.
 
 The IERS tables are needed because the celestial sphere now uses the **full
 IERS-2010** GCRF<->ITRF transforms (`qgcrf2itrf`/`qitrf2gcrf`), not the
@@ -142,17 +150,35 @@ Pipeline per frame (in `state_at`):
    -> world-space km. (Goes through WGS84 helpers to guarantee the marker
    lands on the exact same ellipsoid the mesh uses.)
 
-**Predicted orbit path (`orbit_path_inertial`)** — the renderer's batch twin,
-called from `SceneRenderer::prepare` with each marker's TLE (cloned into
-`SatelliteMarker.tle` by the scenario; cloned again inside because `sgp4`
-needs `&mut`). One batch `sgp4(&mut tle, &times)` call propagates
-`segments + 1` samples across one period (`86400 / tle.mean_motion` seconds,
-mean motion is rev/day). Frame treatment deliberately differs from the marker:
-ALL TEME samples rotate through the SINGLE `qteme2itrf(now)` (the star-fixed
-inertial ellipse, not the per-sample-rotation ground-track curve), then map
-ITRF -> world by the plain P permutation (`world (x,y,z) = ITRF (y,z,x)`) —
-no geodetic round trip, which exists on the marker only to land it on the
-exact mesh ellipsoid.
+**Predicted orbit path (`orbit_path_inertial`)** — the renderer's one-period
+twin, called from `SceneRenderer::prepare` with each marker's
+`satellite::Propagation` and dispatching on it (a scene may mix both kinds;
+`iss_and_hubble` deliberately does — ISS SGP4, Hubble numerical):
+- **`Sgp4(Box<TLE>)`** (~65 us): one batch `sgp4(&mut tle, &times)` call for
+  `segments + 1` samples across one period (`86400 / tle.mean_motion`
+  seconds, mean motion is rev/day); TLE cloned inside because `sgp4` needs
+  `&mut`. Samples rotate through the single `qteme2itrf(now)`.
+- **`Numerical(OrbitState)`** (~0.4 ms): satkit `orbitprop` from GCRF initial
+  conditions (`OrbitState { pos_gcrf_m, vel_gcrf_m_s }`, plain data, no TLE —
+  the arm for future manually-controlled satellites; today filled from the
+  marker's own SGP4 sample rotated by `qteme2gcrf`). Period from
+  `Kepler::from_pv(..).period()` (semi-major axis only, so circular/
+  equatorial singularities cannot bite; e >= 1 errs). One
+  `orbitprop::propagate` over `[now, now + period]` with
+  `PropSettings { use_spaceweather: false, ..default }` and `satprops: None`
+  — drag/SRP only run with a `Some` satprops, so satkit's space-weather
+  loader (not embedded) stays unreachable; EGM96 4x4 gravity + Sun/Moon
+  third-body (embedded DE440) + tides + relativity stay on. All samples from
+  the dense output in one `interp_batch`, rotated by the single
+  `qgcrf2itrf(now)`.
+
+Both arms share the frame treatment, which deliberately differs from the
+marker: ALL inertial samples rotate through ONE current-time rotation (the
+star-fixed inertial ellipse, not the per-sample-rotation ground-track curve),
+then map ITRF -> world by the plain P permutation
+(`world (x,y,z) = ITRF (y,z,x)`) — no geodetic round trip, which exists on
+the marker only to land it on the exact mesh ellipsoid. Fast enough to
+recompute every frame (no caching).
 
 ## satkit API quick reference (verified against v0.18.1)
 
@@ -182,10 +208,25 @@ in `celestial_sphere.rs`.
   the three IERS nutation/CIO tables. Used by the celestial sphere. The tables
   are seeded in `init_satkit` via
   `init_iers_table_from_bytes(IersTableId::{Tab5A,Tab5B,Tab5D}, ..)`.
+- `qteme2gcrf(tm)` — `qitrf2gcrf_approx * qteme2itrf` (~arcsec, ~30 m at LEO);
+  bootstraps the marker's GCRF `OrbitState` from the SGP4 TEME sample.
+  Rotating the TEME *velocity* by the same quaternion is correct (both frames
+  quasi-inertial, no omega-cross term).
 - `qgcrf2itrf_approx(tm)` / `qitrf2gcrf_approx(tm)` — IAU-76/FK5, ~1 arcsec;
   read UT1-UTC via `gmst` but neglect polar motion + use approximate nutation.
-  No longer used in this project.
+  Not used directly (only inside `qteme2gcrf` / orbitprop internals).
 - Apply quaternion to vector: `q * v`; `Quaternion` is `Copy`.
+
+**Numerical propagation (orbitprop module)**: `orbitprop::propagate(&SimpleState
+/* Matrix<6,1>: GCRF x,y,z m + vx,vy,vz m/s */, &begin, &end, &PropSettings,
+satprops)` -> `PropagationResult` with dense output; sample arbitrary times
+with `result.interp_batch(&[Instant])` (one propagate + one batch, never a
+per-sample loop). `SimpleState::zeros()` then index `s[0..=5]`. Drag + solar
+radiation pressure run ONLY when `satprops` is `Some` with nonzero
+coefficients — `None` keeps NRLMSISE/space-weather unreachable. **Gravity
+model gotcha**: `propagate` resolves `settings.gravity_model.get()` on every
+call — EGM96 must be pre-seeded (see init_satkit above). `Kepler::from_pv(r,
+v)` (GCRF m, m/s) -> osculating elements; `.period()` seconds.
 
 **EOP valid range**: 1962-01-01 to last `EOP-All.csv` entry (~build date).
 Out-of-range returns `None` -> zeros. Pre-seeding the EOP is what stops

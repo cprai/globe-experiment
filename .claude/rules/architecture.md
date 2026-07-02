@@ -14,7 +14,8 @@ Crate name: `globe-experiment`.
 
 ```
 build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
-                         DE440 ephemeris + EOP-All.csv + 3 IERS tables into
+                         DE440 ephemeris + EOP-All.csv + 3 IERS tables +
+                         EGM96.gfc gravity coefficients into
                          OUT_DIR; bakes 3 atmosphere LUTs as f16 KTX2.
                          Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
@@ -139,7 +140,8 @@ src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
                          sphere) + its shared-core impl UIDrawable, RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
                          + camera_target + markers (each SatelliteMarker carries
-                         its TLE for the renderer's orbit-path propagation) -
+                         a satellite::Propagation - cloned TLE or GCRF state
+                         vector - for the renderer's orbit-path propagation) -
                          the renderer derives the
                          rest from time), SatelliteTelemetry, CameraTarget (enum:
                          Body(CelestialBody) | Coordinate(Vec3) - a pure
@@ -155,9 +157,14 @@ src/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          Vec<BodyState> (Terra, Luna, 7 planets in planet::ALL
                          order); iau_body_to_gcrf helper. Called by the renderer
                          each frame (keyed on RenderState.time)
-src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion;
-                         orbit_path_inertial batch-propagates a TLE one period
-                         ahead (single-rotation inertial-ellipse frame, direct
+src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
+                         (marker state also carries the GCRF pos/vel as
+                         OrbitState); Propagation enum (Sgp4(Box<TLE>) |
+                         Numerical(OrbitState)) + orbit_path_inertial, which
+                         propagates one period ahead per arm - batch SGP4, or
+                         numerical satkit orbitprop (EGM96 4x4 + Sun/Moon, no
+                         drag/SRP, dense-output interp_batch) - in the shared
+                         single-rotation inertial-ellipse frame (direct
                          P-permutation to world km) for the renderer's path
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/scene.wgsl       ALL shader code (7 passes in one module: a single
@@ -168,7 +175,8 @@ shaders/scene.wgsl       ALL shader code (7 passes in one module: a single
                          eclipse shadows). Planet uniform/texture are group 1
 OUT_DIR/                 gitignored; include_bytes!'d: 13 textures (11 JPEG +
                          2 TIFF: Terra x4, stars, Luna, 7 planets) + 3 f16 LUT
-                         KTX2 + DE440 ephemeris + EOP-All.csv + 3 IERS tables
+                         KTX2 + DE440 ephemeris + EOP-All.csv + 3 IERS tables +
+                         EGM96.gfc gravity coefficients
 ```
 
 ## Module dependency graph

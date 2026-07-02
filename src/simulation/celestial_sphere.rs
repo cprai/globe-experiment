@@ -72,6 +72,12 @@ const TAB5A: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2a.txt"));
 const TAB5B: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2b.txt"));
 const TAB5D: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2d.txt"));
 
+/// The ICGEM EGM96 gravity coefficients, embedded the same way. The numerical
+/// orbit propagator (`satkit::orbitprop`, behind the predicted satellite path)
+/// evaluates the EGM96 spherical harmonics on every force call. Seeded in
+/// `init_satkit`.
+const EGM96: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EGM96.gfc"));
+
 /// Standard J2000 equatorial(ICRS)->galactic rotation `g = R * e`, in standard
 /// (non-permuted) axes, from the IAU galactic-pole definition: north galactic
 /// pole at RA 192.85948 deg / Dec +27.12825 deg, galactic center (l=0, b=0) at
@@ -99,7 +105,7 @@ const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
 /// Initializes satkit's global state for fully offline, data-dir-free use.
 /// Must be called once at startup, before any ephemeris/frame-transform use.
 ///
-/// Three kinds of satkit global state are seeded here, all from embedded bytes:
+/// Four kinds of satkit global state are seeded here, all from embedded bytes:
 ///
 /// 1. The JPL ephemeris singleton (`EPHEMERIS`). satkit lazily loads it from
 ///    disk on the first position query otherwise, after which this would fail
@@ -126,6 +132,16 @@ const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
 ///    front consumes that one-shot load, and must happen before the first
 ///    transform - which it does, since this runs at the top of each scenario.
 ///
+/// 4. The EGM96 gravity-model singleton (`EGM96`). The numerical orbit
+///    propagator (`satkit::orbitprop`, the `Propagation::Numerical` arm of the
+///    predicted satellite path) resolves the model via
+///    `settings.gravity_model.get()` on every propagation, and satkit's lazy
+///    default loader has the same stray-dir failure mode as the ephemeris:
+///    `Gravity::from_file(..)` out of `satkit-data` (creating the dir,
+///    panicking if the file is absent), after which a seed here would fail with
+///    `AlreadyInitialized`. Seeded unconditionally - whether a scene contains
+///    numerically-propagated satellites is not knowable at init.
+///
 /// Panics if any embedded blob fails to parse (a broken build).
 pub fn init_satkit() {
     satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
@@ -136,6 +152,9 @@ pub fn init_satkit() {
     init_iers_table_from_bytes(IersTableId::Tab5A, TAB5A).expect("init IERS Tab5A from bytes");
     init_iers_table_from_bytes(IersTableId::Tab5B, TAB5B).expect("init IERS Tab5B from bytes");
     init_iers_table_from_bytes(IersTableId::Tab5D, TAB5D).expect("init IERS Tab5D from bytes");
+
+    satkit::earthgravity::init_from_bytes(satkit::earthgravity::GravityModel::EGM96, EGM96)
+        .expect("init EGM96 gravity from embedded bytes");
 }
 
 /// Sol direction and star-map orientation for one instant, in the renderer's

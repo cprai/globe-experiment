@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 ///   each): CIP X/Y series + CIO locator s series, loaded via
 ///   `frametransform::init_iers_table_from_bytes`. Required by the full
 ///   (non-approx) GCRF<->ITRF transforms the celestial sphere uses.
+/// - The ICGEM EGM96 gravity coefficients `EGM96.gfc` (~5.4 MiB text), loaded
+///   via `earthgravity::init_from_bytes`. Required by the numerical orbit
+///   propagator (satkit `orbitprop`) behind the predicted satellite path.
 ///
 /// Terra/star textures (original JPEG/TIFF, embedded as-is):
 /// - The runtime decodes these with the `image` crate and uploads them as
@@ -53,6 +56,15 @@ const EMBEDS: &[Embed] = &[
     Embed {
         url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2d.txt",
         limit: 1024 * 1024,
+    },
+    // ICGEM EGM96 gravity coefficients (~5.4 MiB text), from satkit's own data
+    // bucket so the format matches `earthgravity::Gravity::from_bytes`. Seeded
+    // into satkit's gravity-model singleton; required by the numerical orbit
+    // propagator (orbitprop) behind the predicted orbit path - its lazy
+    // default loader would otherwise resolve a data dir at first propagation.
+    Embed {
+        url: "https://storage.googleapis.com/astrokit-astro-data/EGM96.gfc",
+        limit: 64 * 1024 * 1024,
     },
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg",

@@ -144,9 +144,13 @@ Terra-system ones gated; the depth buffer keeps a planet behind Terra hidden;
 the paths draw before the markers so each dot sits on its own line).
 
 **Predicted orbit paths (`path_pipeline`, `vs_path`/`fs_path`).** For every
-`RenderState.markers` entry, `prepare` SGP4-propagates the marker's TLE one
-orbital period ahead (`satellite::orbit_path_inertial`, one batch `sgp4` call,
-`PATH_SEGMENTS` segments) and writes per-segment instances (`PathInstance`:
+`RenderState.markers` entry, `prepare` propagates the marker's
+`satellite::Propagation` one orbital period ahead
+(`satellite::orbit_path_inertial`, dispatching per object: `Sgp4` = one batch
+`sgp4` call ~65 us, `Numerical` = one satkit `orbitprop` integration + one
+dense-output `interp_batch` ~0.4 ms — cheap enough to recompute every frame,
+no caching; a scene may mix kinds) over `PATH_SEGMENTS` segments and writes
+per-segment instances (`PathInstance`:
 prev / p0+alpha / p1+alpha / next, four vec4s) into a grow-on-demand instance
 buffer (`paths`, marker pattern). The vertex shader expands each segment to a
 constant-pixel-width screen-space quad (the marker `clip.w` trick) with

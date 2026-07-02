@@ -115,7 +115,10 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   propagated with SGP4 and shown as a marker on Terra, together with its
   predicted orbit path - the orbit one full period ahead, drawn as a smooth
   star-fixed line that hides behind Terra and fades out as it closes on the
-  satellite. A simulation clock
+  satellite. The path is predicted per object by either analytic SGP4 or
+  numerical propagation of the object's current position and velocity (the
+  latter needs no TLE, ready for future manually-controlled satellites); the
+  ISS + Hubble scene deliberately mixes both. A simulation clock
   advances time (play/pause and an exponential real-time to 100x speed slider),
   so Sol, stars, and every satellite all move live; the panel shows the
   current datetime, the subsolar point, and each object's ground position.
