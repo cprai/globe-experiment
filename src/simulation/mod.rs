@@ -583,7 +583,10 @@ impl UIDrawable for SimulationState {
         // so no shared borrow of the clock outlives into the mutable callback
         // captures below.
         let datetime = self.clock.datetime_label();
-        let speed = format!("{:.1}x", self.clock.multiplier);
+        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
+        // font is monospace, so a fixed-width value keeps the digit window
+        // from resizing as the speed changes.
+        let speed = format!("{:>5.1}", self.clock.multiplier);
         let running = !self.clock.paused;
 
         // Exponential (base e) speed: the slider edits the exponent, so
@@ -604,23 +607,26 @@ impl UIDrawable for SimulationState {
                 position: [0.0, 26.0],
                 label: "UTC".to_string(),
                 value: datetime,
+                unit: String::new(),
+            }),
+            Box::new(Readout {
+                position: [0.0, 74.0],
+                label: "Speed".to_string(),
+                value: speed,
+                unit: "x".to_string(),
             }),
             Box::new(InteractiveToggle {
                 toggle: Toggle {
-                    position: [0.0, 52.0],
+                    // Baseline-aligned with the speed digit window beside it.
+                    position: [110.0, 89.0],
                     label: "Run".to_string(),
                     active: running,
                 },
                 on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
             }),
-            Box::new(Readout {
-                position: [104.0, 54.0],
-                label: "Speed".to_string(),
-                value: speed,
-            }),
             Box::new(InteractiveSlider {
                 slider: Slider {
-                    position: [0.0, 82.0],
+                    position: [0.0, 126.0],
                     value: speed_exp,
                     range: exp_range,
                 },
@@ -631,7 +637,7 @@ impl UIDrawable for SimulationState {
         vec![UIDrawablePanel {
             anchor: PanelAnchor::TopLeft,
             offset: [10.0, 10.0],
-            size: [340.0, 116.0],
+            size: [340.0, 158.0],
             elements,
         }]
     }

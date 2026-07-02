@@ -1,7 +1,7 @@
 use egui::Stroke;
 
 use super::Instrument;
-use crate::ui::theme::{ACCENT_GREEN, KEY_ACTIVE};
+use crate::ui::theme::{ACCENT_GREEN, KEY_LIT, KEY_LIT_TEXT};
 
 /// A latching key that lights green while `active` - the inert render data
 /// only. Drawing lives in [`Toggle::draw`], shared by this struct's read-only
@@ -60,10 +60,11 @@ impl Instrument for InteractiveToggle<'_> {
     }
 }
 
-/// Renders a latching key that lights green while `active`. When lit, every
-/// pointer state (rest/hover/press) is forced to the green look so the key
-/// reads as an engaged lamp, not a momentary button. The style override is
-/// local to this element's child `Ui`.
+/// Renders a latching key that lights solid green (dark engraved text) while
+/// `active` - the latched-key look from the game-UI reference. When lit, every
+/// pointer state (rest/hover/press) is forced to the lit look so the key reads
+/// as an engaged lamp, not a momentary button. The style override is local to
+/// this element's child `Ui`.
 fn toggle_key(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let text = egui::RichText::new(label.to_uppercase());
     if !active {
@@ -76,11 +77,11 @@ fn toggle_key(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
             &mut widgets.hovered,
             &mut widgets.active,
         ] {
-            state.bg_fill = KEY_ACTIVE;
-            state.weak_bg_fill = KEY_ACTIVE;
+            state.bg_fill = KEY_LIT;
+            state.weak_bg_fill = KEY_LIT;
             state.bg_stroke = Stroke::new(1.0, ACCENT_GREEN);
-            state.fg_stroke = Stroke::new(1.0, ACCENT_GREEN);
+            state.fg_stroke = Stroke::new(1.0, KEY_LIT_TEXT);
         }
     }
-    ui.button(text.color(ACCENT_GREEN))
+    ui.button(text.color(KEY_LIT_TEXT).strong())
 }

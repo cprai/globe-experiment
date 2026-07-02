@@ -59,7 +59,9 @@ src/ui/instruments/mod.rs  the Instrument trait (position + render); one
                          picks which instrument + content, never style)
 src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          one instrument each (header.rs amber title+rule;
-                         readout.rs label/value window + shared readout_pair;
+                         readout.rs digit-window readout (dim label above a
+                         large cream value in an outlined recessed window +
+                         optional inverted unit block) + shared readout_block;
                          dual_readout.rs two readouts; button.rs momentary key;
                          toggle.rs latching green key + toggle_key; lamp.rs
                          status dot + LampStatus; slider.rs value track). Each
@@ -227,9 +229,13 @@ trait Instrument { position(&self) -> [f32;2];
     lives in each `render`, pulling palette consts from `theme`). control_panel
     scopes a child Ui per instrument (position + wrap setup) then calls render;
     only Header uses child_rect/panel_size (its full-width rule).
-    Header=amber title+rule. Readout/DualReadout=dim label(s) + cream value(s)
-    in recessed windows (the label/value split; readout_pair shared by both).
-    Button=momentary key, Toggle=latching key (lit green while `active`),
+    Header=amber title+rule. Readout/DualReadout=digit-window readout(s): dim
+    label above a large cream value in an outlined recessed window, with an
+    optional `unit` (serde-defaulted, e.g. "km") stamped as an inverted cream
+    block at the window's end - the game-UI reference look (readout_block
+    shared by both; a readout is ~45pt tall, so producers pitch rows ~46-50pt).
+    Button=momentary key, Toggle=latching key (lit solid green w/ dark text
+    while `active`),
     Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
     track. Each control is two types: a bare struct (inert; derives Deserialize)
     and an Interactive* wrapper that owns the bare struct + a moved
@@ -241,8 +247,8 @@ PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 ```
 
 - `impl UIDrawable for SimulationState` (in `src/simulation/mod.rs`) emits
-  **one** panel (top-left) from live state: subsolar + datetime readouts, and
-  the Run toggle + speed slider
+  **one** panel (top-left) from live state: the UTC datetime + speed readouts,
+  and the Run toggle + speed slider
   whose callbacks mutate the live clock (each captures a *disjoint* clock field -
   `paused` vs `multiplier` - via direct field assignment, so both coexist with
   no interior mutability; do not call a `Clock` method in those closures, it

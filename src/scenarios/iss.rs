@@ -114,28 +114,35 @@ impl UIDrawable for IssSimulation {
         let mut elements: Vec<Box<dyn Instrument>> =
             Vec::with_capacity(self.last_telemetry.len() * 3);
         for (index, sat) in self.last_telemetry.iter().enumerate() {
-            let top = index as f32 * 74.0;
+            let top = index as f32 * 128.0;
             elements.push(Box::new(Header {
                 position: [0.0, top],
                 title: sat.name.clone(),
             }));
+            // Values are padded to their widest form ("-179.99" / "9999.9"):
+            // the font is monospace, so fixed-width values keep the digit
+            // windows from resizing (and the Lon window from shifting) as the
+            // satellite moves.
             elements.push(Box::new(DualReadout {
-                position: [0.0, top + 24.0],
+                position: [0.0, top + 26.0],
                 left_label: "Lat".to_string(),
-                left_value: format!("{:.2} deg", sat.latitude_deg),
+                left_value: format!("{:>7.2}", sat.latitude_deg),
+                left_unit: "deg".to_string(),
                 right_label: "Lon".to_string(),
-                right_value: format!("{:.2} deg", sat.longitude_deg),
+                right_value: format!("{:>7.2}", sat.longitude_deg),
+                right_unit: "deg".to_string(),
             }));
             elements.push(Box::new(Readout {
-                position: [0.0, top + 48.0],
+                position: [0.0, top + 76.0],
                 label: "Alt".to_string(),
-                value: format!("{:.0} km", sat.altitude_km),
+                value: format!("{:>6.1}", sat.altitude_km),
+                unit: "km".to_string(),
             }));
         }
         panels.push(UIDrawablePanel {
             anchor: PanelAnchor::TopRight,
             offset: [10.0, 10.0],
-            size: [300.0, self.last_telemetry.len() as f32 * 74.0 + 16.0],
+            size: [300.0, self.last_telemetry.len() as f32 * 128.0 - 4.0],
             elements,
         });
         panels

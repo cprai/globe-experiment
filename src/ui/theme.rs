@@ -44,9 +44,15 @@ const KEY_FILL: Color32 = Color32::from_rgb(46, 52, 57);
 const KEY_EDGE: Color32 = Color32::from_rgb(80, 90, 98);
 /// Key under the pointer.
 const KEY_HOVER: Color32 = Color32::from_rgb(58, 66, 72);
-/// Key while pressed/engaged: green-tinted, echoing the lit lamp accents.
-pub(crate) const KEY_ACTIVE: Color32 = Color32::from_rgb(40, 66, 46);
-/// Lamp-green accent for engaged keys and the slider grab/trail.
+/// A lit (engaged/pressed) key: solid lamp-green fill, dark engraved text -
+/// the latched-key look from the game-UI reference (and Apollo's lit
+/// pushbutton indicators), unmistakable against the gunmetal keys at rest.
+pub(crate) const KEY_LIT: Color32 = Color32::from_rgb(74, 186, 78);
+/// Engraved-dark text on a lit key (light text would wash out on the bright
+/// green fill).
+pub(crate) const KEY_LIT_TEXT: Color32 = Color32::from_rgb(10, 16, 10);
+/// Lamp-green accent for hover strokes, the status lamp, and the slider
+/// grab/trail.
 pub(crate) const ACCENT_GREEN: Color32 = Color32::from_rgb(122, 214, 130);
 /// Screw-head metal for the corner rivets.
 const RIVET_BODY: Color32 = Color32::from_rgb(96, 104, 110);
@@ -110,10 +116,10 @@ pub fn install_theme(ctx: &egui::Context) {
     w.hovered.corner_radius = key_radius;
     w.hovered.expansion = 1.0;
 
-    w.active.bg_fill = KEY_ACTIVE;
-    w.active.weak_bg_fill = KEY_ACTIVE;
+    w.active.bg_fill = KEY_LIT;
+    w.active.weak_bg_fill = KEY_LIT;
     w.active.bg_stroke = Stroke::new(1.0, ACCENT_GREEN);
-    w.active.fg_stroke = Stroke::new(1.0, ACCENT_GREEN);
+    w.active.fg_stroke = Stroke::new(1.0, KEY_LIT_TEXT);
     w.active.corner_radius = key_radius;
     w.active.expansion = 1.0;
 
