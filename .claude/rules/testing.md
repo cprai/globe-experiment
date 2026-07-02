@@ -2,10 +2,14 @@
 
 - **No full test suite, no CI.** Verification is the smoke test + manual
   interaction on native Windows. Do not add a CI gate without owner sign-off.
-  There are a few render-free unit tests (`cargo test`) in
+  There are a few render-free unit tests (`cargo test`): in
   `celestial_sphere.rs` covering the galactic star-frame matrix and the IAU
-  lunar rotation (`luna_near_side_faces_terra`) — run them after touching
-  that module.
+  lunar rotation (`luna_near_side_faces_terra`), and in `satellite.rs`
+  covering the TLE-free numerical pipeline
+  (`numerical_pipeline_holds_circular_leo`) — run them after touching those
+  modules. Any test needing satkit globals must seed via the `Once`-guarded
+  `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is set-once
+  per process; a second bare `init_satkit` panics in the shared test binary).
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
 - **After every shader edit**: `naga --compact --capabilities none
   shaders/scene.wgsl`. This is the same naga the app links through wgpu —

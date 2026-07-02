@@ -73,6 +73,31 @@ fills the reduced
 target) + empty markers); the renderer derives every body's geometry from the
 time and takes the render origin from the `camera_target`. The panel is appended
 in `get_drawables` like the eclipse selector.
+
+### Manually-controlled satellite (manual_control)
+
+The `manual_control` scenario tracks **one** satellite the user can thrust.
+The ISS TLE (deliberately duplicated, epoch 2024-001.5) is used **once**, in
+`new()`, to bootstrap a GCRF state vector (`Satellite::state_at(epoch).orbit`);
+after that there is no TLE — the scenario owns `orbit: OrbitState` +
+`orbit_epoch: Instant` and every frame's `advance()` **re-anchors** the state
+to the clock with `satellite::propagate_numerical` (one `orbitprop` step over
+the frame's simulation dt), so a burn's velocity change compounds forward.
+Burns: six **hold-to-fire** keys in a **bottom-center** "Burns" panel
+(`PanelAnchor::BottomCenter`), one `ui::InteractiveHoldButton` per orbital-
+frame direction (prograde/retrograde, normal/anti-normal, radial out/in).
+A held key sets a disjoint `burn_*` request flag every egui pass (the selector
+request-flag pattern, six named bools); `advance()` folds the flags into a
+unit GCRF direction (prograde = v-hat, radial = r-hat, normal = (r x v)-hat,
+opposing keys cancel) and applies `dv = BURN_ACCEL_M_S2 * dt * dir`
+(10 m/s^2, deliberately game-like ~1 g; dt-scaled so a paused clock burns
+nothing), then clears them. `frame_state` resolves the marker with
+`satellite::resolve_orbit` (pure frame change — the state is already at
+`now`), fills `Propagation::Numerical(self.orbit)` so the predicted path
+reshapes live, and stashes lat/lon/alt + `satellite::orbit_shape`
+(apo/peri/speed; `None` on an escape orbit, shown as dashes — the path
+renderer likewise draws nothing for e >= 1).
+
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
   `self.simulation.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, fills each `SatelliteMarker`'s

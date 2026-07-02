@@ -157,6 +157,19 @@ pub fn init_satkit() {
         .expect("init EGM96 gravity from embedded bytes");
 }
 
+/// Test-only idempotent twin of [`init_satkit`]: the ephemeris seed is a
+/// set-once (`AlreadyInitialized` on a second call), and the test binary runs
+/// every `#[test]` in one process, so any two tests that both need satkit
+/// globals must share one guarded seeding. Production keeps the bare
+/// [`init_satkit`] (one scenario per process; a double init there is a bug
+/// worth the panic).
+#[cfg(test)]
+pub(crate) fn init_satkit_for_tests() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(init_satkit);
+}
+
 /// Sol direction and star-map orientation for one instant, in the renderer's
 /// world frame.
 pub struct CelestialSphere {
@@ -533,8 +546,9 @@ mod tests {
     #[test]
     fn luna_near_side_faces_terra() {
         // The celestial sphere reads satkit globals (ephemeris + EOP + IERS),
-        // so seed them once for this test.
-        super::init_satkit();
+        // so seed them once for this test (shared guard: the satellite tests
+        // seed the same process-wide globals).
+        super::init_satkit_for_tests();
 
         let time = Instant::from_datetime(2024, 6, 15, 0, 0, 0.0).expect("valid datetime");
         let sphere = CelestialSphere::at(&time);

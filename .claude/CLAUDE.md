@@ -21,8 +21,13 @@ DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4 (each
 tracked satellite also draws its **predicted orbit path**: the marker carries
 a `Propagation` - a cloned TLE element set or a GCRF state vector - and the
 renderer propagates it one period ahead with the matching backend (analytic
-SGP4, or numerical satkit `orbitprop` needing no TLE - for future
-manually-controlled satellites; a scene may mix both, and `iss_and_hubble`
+SGP4, or numerical satkit `orbitprop` needing no TLE - what the
+**manually-controlled satellite** flies on: the `manual_control` scenario
+seeds one object from the ISS TLE, re-anchors its GCRF state vector to the
+clock each frame, and its bottom-center **Burns panel** of six hold-to-fire
+keys (prograde/retrograde, normal/anti-normal, radial out/in) integrates a
+game-strength thrust into the velocity while held, with apo/peri/speed
+readouts; a scene may mix both backends, and `iss_and_hubble`
 does), rendering the star-fixed
 inertial ellipse as a thick depth-tested line whose tail fades out sharply
 near one full orbit), inertial

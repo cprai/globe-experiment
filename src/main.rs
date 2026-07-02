@@ -86,6 +86,10 @@ enum ScenarioName {
     /// The 2025-03-14 total lunar eclipse (no satellites; framed on Luna).
     #[value(name = "lunar_eclipse")]
     LunarEclipse,
+    /// A manually-controlled satellite starting from the ISS orbit: hold the
+    /// Burns panel keys to thrust and reshape the orbit.
+    #[value(name = "manual_control")]
+    ManualControl,
     /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
     /// side).
     #[value(name = "solar_eclipse")]
@@ -102,6 +106,7 @@ fn main() {
             ScenarioName::Iss => scenarios::iss::run(),
             ScenarioName::IssAndHubble => scenarios::iss_and_hubble::run(),
             ScenarioName::LunarEclipse => scenarios::lunar_eclipse::run(),
+            ScenarioName::ManualControl => scenarios::manual_control::run(),
             ScenarioName::SolarEclipse => scenarios::solar_eclipse::run(),
             ScenarioName::SolarSystem => scenarios::solar_system::run(),
         },

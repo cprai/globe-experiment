@@ -1749,6 +1749,11 @@ impl SceneRenderer {
                 .into_iter()
                 .map(|p| p * lift - origin)
                 .collect();
+                // A manually-controlled satellite burned to escape (e >= 1)
+                // has no period, so its path comes back empty - no line.
+                if points.is_empty() {
+                    continue;
+                }
                 for i in 0..PATH_SEGMENTS {
                     segments.push(PathInstance {
                         // Clamped neighbors: the first/last joint duplicates

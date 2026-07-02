@@ -37,6 +37,17 @@ src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
                          run() launches orbiting Luna (Luna-target
                          looking_toward); TargetSelector (default Luna)
+src/scenarios/manual_control.rs  ManualControlSimulation: ONE user-thrustable
+                         satellite; own ISS_TLE const (duplicated on purpose),
+                         used once to seed a GCRF OrbitState (no TLE after) that
+                         advance() re-anchors to the clock each frame via
+                         satellite::propagate_numerical; six disjoint burn_*
+                         request flags fed by the bottom-center Burns panel's
+                         hold-to-fire keys (prograde/retrograde, normal/
+                         anti-normal, radial out/in), folded into dv = 10 m/s^2
+                         * dt; marker via satellite::resolve_orbit +
+                         Propagation::Numerical; apo/peri/speed readouts from
+                         satellite::orbit_shape (dashes on escape)
 src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
                          pos/scale; BodySelector (one key per body: Terra, Luna,
@@ -71,7 +82,8 @@ src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          (dim label above a large cream value in an outlined
                          recessed window + optional inverted unit block) + shared
                          readout_block; dual_readout.rs two readouts; button.rs
-                         momentary key; toggle.rs latching green key + shared
+                         momentary key (wrap disabled - a long label widens its
+                         panel, not folds); toggle.rs latching green key + shared
                          key_style (keys flex-grow: a lone key fills its row,
                          paired keys split it); lamp.rs status dot + LampStatus;
                          slider.rs value track (percent-width node - the track
@@ -79,10 +91,13 @@ src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          control is split in two: a bare data struct (inert,
                          derives Deserialize) + an Interactive* wrapper holding
                          the bare struct + a moved Box<dyn FnMut> callback
-                         (InteractiveButton/InteractiveToggle/InteractiveSlider).
-                         Shared draw lives on the bare struct. InteractiveButton
-                         has no live producer yet (allow(dead_code)) - the full
-                         set ships as a reusable instrument library
+                         (InteractiveButton/InteractiveHoldButton/
+                         InteractiveToggle/InteractiveSlider; the Hold variant
+                         fires every frame the key is held - the burn keys'
+                         producer). Shared draw lives on the bare struct.
+                         Click-fired InteractiveButton has no live producer yet
+                         (allow(dead_code)) - the full set ships as a reusable
+                         instrument library
 src/ui/theme.rs          install_theme: the Apollo-panel egui look (gunmetal
                          frame, monospace UPPERCASE cream readouts, green-active
                          keys, corner rivets/bevel; sets egui max_passes=2 so
@@ -163,9 +178,16 @@ src/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
                          Numerical(OrbitState)) + orbit_path_inertial, which
                          propagates one period ahead per arm - batch SGP4, or
                          numerical satkit orbitprop (EGM96 4x4 + Sun/Moon, no
-                         drag/SRP, dense-output interp_batch) - in the shared
+                         drag/SRP, dense-output interp_batch; empty path for a
+                         non-elliptic escape state) - in the shared
                          single-rotation inertial-ellipse frame (direct
-                         P-permutation to world km) for the renderer's path
+                         P-permutation to world km) for the renderer's path.
+                         Also the TLE-free manual-control pipeline:
+                         propagate_numerical (one orbitprop step, the per-frame
+                         re-anchor), resolve_orbit (GCRF state -> the same
+                         SatelliteState as the SGP4 arm), orbit_shape
+                         (osculating apo/peri/speed, None for e >= 1); plus a
+                         render-free circular-LEO unit test of that pipeline
 src/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/scene.wgsl       ALL shader code (7 passes in one module: a single
                          distance-adaptive planet impostor (perspective/
@@ -282,11 +304,13 @@ trait Instrument { render(&mut self, tui: &mut Tui) }
     Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
     track. Each control is two types: a bare struct (inert; derives Deserialize)
     and an Interactive* wrapper that owns the bare struct + a moved
-    Box<dyn FnMut(..)> callback (InteractiveButton/InteractiveToggle/
-    InteractiveSlider). A bare control renders inert (e.g. a deserialized mock);
-    the wrapper fires its callback. Shared draw lives on the bare struct.
+    Box<dyn FnMut(..)> callback (InteractiveButton/InteractiveHoldButton/
+    InteractiveToggle/InteractiveSlider; the Hold variant fires its callback
+    every frame the key is held down - the burn keys). A bare control renders
+    inert (e.g. a deserialized mock); the wrapper fires its callback. Shared
+    draw lives on the bare struct.
 
-PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
+PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
 ```
 
 - `impl UIDrawable for SimulationState` (in `src/simulation/mod.rs`) emits

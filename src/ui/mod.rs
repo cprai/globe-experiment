@@ -32,27 +32,28 @@ mod theme;
 // the complete library API exported without a warning until a producer uses it.
 #[allow(unused_imports)]
 pub use instruments::{
-    Button, DualReadout, Header, Instrument, InteractiveButton, InteractiveSlider,
-    InteractiveToggle, Lamp, LampStatus, Readout, Slider, Toggle,
+    Button, DualReadout, Header, Instrument, InteractiveButton, InteractiveHoldButton,
+    InteractiveSlider, InteractiveToggle, Lamp, LampStatus, Readout, Slider, Toggle,
 };
 #[allow(unused_imports)]
 pub use spec::{PanelSet, UiElement, UiPanel};
 pub use theme::install_theme;
 use theme::{paint_bevel, paint_rivets, panel_frame};
 
-/// Which screen corner a [`UIDrawablePanel`] anchors to. egui-free (mapped to
-/// an `egui::Align2` in [`control_panel`]); anchoring keeps a panel pinned to
-/// its corner as the window resizes. Only the corners currently in use are
+/// Which screen edge point a [`UIDrawablePanel`] anchors to. egui-free (mapped
+/// to an `egui::Align2` in [`control_panel`]); anchoring keeps a panel pinned
+/// to its spot as the window resizes. Only the anchors currently in use are
 /// listed - add the bottom corners when a panel needs one.
 ///
 /// `Copy` so a [`PanelSet`] can hand it out of a borrowing `get_drawables` by
-/// value; `Deserialize` so the `render --scene` `ui` JSON can name a corner
-/// (`"top_left"` / `"top_right"`).
+/// value; `Deserialize` so the `render --scene` `ui` JSON can name an anchor
+/// (`"top_left"` / `"top_right"` / `"bottom_center"`).
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PanelAnchor {
     TopLeft,
     TopRight,
+    BottomCenter,
 }
 
 /// One anchored group of UI instruments for a frame. The panel owns only its
@@ -88,6 +89,7 @@ fn anchor_to_egui(anchor: &PanelAnchor) -> (egui::Align2, egui::Vec2) {
     match anchor {
         PanelAnchor::TopLeft => (egui::Align2::LEFT_TOP, egui::vec2(inset, inset)),
         PanelAnchor::TopRight => (egui::Align2::RIGHT_TOP, egui::vec2(-inset, inset)),
+        PanelAnchor::BottomCenter => (egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -inset)),
     }
 }
 

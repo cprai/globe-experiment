@@ -160,10 +160,12 @@ twin, called from `SceneRenderer::prepare` with each marker's
   `&mut`. Samples rotate through the single `qteme2itrf(now)`.
 - **`Numerical(OrbitState)`** (~0.4 ms): satkit `orbitprop` from GCRF initial
   conditions (`OrbitState { pos_gcrf_m, vel_gcrf_m_s }`, plain data, no TLE —
-  the arm for future manually-controlled satellites; today filled from the
-  marker's own SGP4 sample rotated by `qteme2gcrf`). Period from
+  the arm manually-controlled satellites fly on (`manual_control` feeds its
+  live post-burn state; `iss_and_hubble`'s Hubble fills it from the marker's
+  own SGP4 sample rotated by `qteme2gcrf`)). Period from
   `Kepler::from_pv(..).period()` (semi-major axis only, so circular/
-  equatorial singularities cannot bite; e >= 1 errs). One
+  equatorial singularities cannot bite; e >= 1 — reachable by burning to
+  escape — returns the **empty path**, which the renderer skips). One
   `orbitprop::propagate` over `[now, now + period]` with
   `PropSettings { use_spaceweather: false, ..default }` and `satprops: None`
   — drag/SRP only run with a `Some` satprops, so satkit's space-weather
@@ -179,6 +181,25 @@ then map ITRF -> world by the plain P permutation
 (`world (x,y,z) = ITRF (y,z,x)`) — no geodetic round trip, which exists on
 the marker only to land it on the exact mesh ellipsoid. Fast enough to
 recompute every frame (no caching).
+
+**TLE-free manual-control pipeline** (`satellite.rs`, all sharing the
+`numerical_settings()` force model above):
+- `propagate_numerical(state, from, to)` — one `orbitprop` step reading
+  `PropagationResult.state_end`; the `manual_control` scenario's per-frame
+  re-anchor of its stored `OrbitState` to the clock (burn delta-v is then
+  added to the velocity, so it compounds into every later frame).
+- `resolve_orbit(state, time)` — GCRF -> ITRF via `qgcrf2itrf(time)`, then
+  the same geodetic round trip as the SGP4 marker (shared `state_from_itrf`
+  tail), producing an identical `SatelliteState`. Pure frame change: the
+  state must already be propagated to `time`.
+- `orbit_shape(state)` — osculating apo/peri altitudes (above the *mean*
+  radius, a spherical readout convenience) + speed from `Kepler::from_pv`;
+  `None` for e >= 1 (panel shows dashes).
+- Validated render-free by `numerical_pipeline_holds_circular_leo`
+  (`cargo test`), which drives all three on a constructed circular LEO with
+  no TLE. Tests seed satkit through the `Once`-guarded
+  `init_satkit_for_tests` (the ephemeris seed is set-once per process and
+  the test binary runs every test in one process).
 
 ## satkit API quick reference (verified against v0.18.1)
 

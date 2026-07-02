@@ -117,8 +117,16 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   star-fixed line that hides behind Terra and fades out as it closes on the
   satellite. The path is predicted per object by either analytic SGP4 or
   numerical propagation of the object's current position and velocity (the
-  latter needs no TLE, ready for future manually-controlled satellites); the
-  ISS + Hubble scene deliberately mixes both. A simulation clock
+  latter needs no TLE - it is what the manually-controlled satellite flies
+  on); the ISS + Hubble scene deliberately mixes both. A simulation clock
   advances time (play/pause and an exponential real-time to 100x speed slider),
   so Sol, stars, and every satellite all move live; the panel shows the
   current datetime, the subsolar point, and each object's ground position.
+- Manual orbit control: the `manual_control` scenario starts one satellite
+  from the ISS orbit and hands you the thrusters. Hold a key in the Burns
+  panel - prograde / retrograde, normal / anti-normal, radial out / radial
+  in - and a (deliberately game-strength) thrust integrates into the
+  numerically-propagated orbit for as long as you hold it, while the
+  predicted orbit path and the apoapsis / periapsis / speed readouts respond
+  live. Burn hard enough and you escape (the closed path disappears) or
+  come back down.

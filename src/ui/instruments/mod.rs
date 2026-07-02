@@ -30,7 +30,7 @@ mod readout;
 mod slider;
 mod toggle;
 
-pub use button::{Button, InteractiveButton};
+pub use button::{Button, InteractiveButton, InteractiveHoldButton};
 pub use dual_readout::DualReadout;
 pub use header::Header;
 pub use lamp::{Lamp, LampStatus};
