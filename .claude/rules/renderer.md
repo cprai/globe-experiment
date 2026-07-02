@@ -227,7 +227,10 @@ z-clipped).
   passes are required** (a throwaway warmup, then the real pass): egui lays out
   text + builds its font atlas lazily, so a single pass tessellates to nothing
   and the font-atlas texture delta lands on the warmup output — `build_ui_frame`
-  merges the warmup's texture deltas into the second pass's. ppp = 1.0, so mock
-  positions are in output pixels.
+  merges the warmup's texture deltas into the second pass's. (The warmup also
+  seeds egui_taffy's layout cache, and egui runs its own discard pass within
+  `run_ui` - `install_theme` sets `max_passes = 2` - so the taffy layout is
+  settled by the real pass.) ppp = 1.0, so mock panel sizes are in output
+  pixels.
 - Readback: `copy_texture_to_buffer` with 256-byte row alignment -> strip
   padding -> `image::RgbaImage::from_raw`.

@@ -2,20 +2,22 @@
 //! scene JSON and run through the exact same [`crate::ui::control_panel`] path
 //! as the live app, so a mock layout is faithful to real output.
 //!
-//! Because the interactive instruments now split their callback into an
+//! Because the interactive instruments split their callback into an
 //! `Interactive*` wrapper, the bare instrument structs are pure render data and
 //! derive `Deserialize` themselves - so this module is just a tagged enum over
 //! them ([`UiElement`]) plus a panel ([`UiPanel`]); there is no field-
 //! duplicating mirror type. The deserialized controls are inert (no callback),
-//! which is exactly a mock panel.
+//! which is exactly a mock panel. Like the live model, a panel is `rows` of
+//! elements - taffy computes every position and the panel size, so the JSON
+//! carries no pixel coordinates.
 
 use super::instruments::{Button, DualReadout, Header, Instrument, Lamp, Readout, Slider, Toggle};
 use super::{PanelAnchor, UIDrawable, UIDrawablePanel};
 
 /// One deserialized instrument, tagged by instrument name in snake_case, e.g.
-/// `{"readout": {"position": [0, 0], "label": "ALT", "value": "417 km"}}`. Each
-/// variant wraps the real (bare, callback-free) instrument struct, so the JSON
-/// shape is just that struct's fields - no separate mock type to keep in sync.
+/// `{"readout": {"label": "ALT", "value": "417", "unit": "km"}}`. Each variant
+/// wraps the real (bare, callback-free) instrument struct, so the JSON shape is
+/// just that struct's fields - no separate mock type to keep in sync.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiElement {
@@ -46,15 +48,14 @@ impl UiElement {
 }
 
 /// One deserialized panel from the `render --scene` `ui` JSON: a corner
-/// `anchor`, an inset `offset`, a fixed box `size`, and panel-relative
-/// `elements`. The owned, callback-free mirror of one [`UIDrawablePanel`].
+/// `anchor` and `rows` of elements (outer array = top-to-bottom rows, inner =
+/// left-to-right instruments). The owned, callback-free mirror of one
+/// [`UIDrawablePanel`].
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UiPanel {
     pub anchor: PanelAnchor,
-    pub offset: [f32; 2],
-    pub size: [f32; 2],
-    pub elements: Vec<UiElement>,
+    pub rows: Vec<Vec<UiElement>>,
 }
 
 /// The set of deserialized `ui` panels, rendered through the exact same
@@ -74,12 +75,10 @@ impl UIDrawable for PanelSet {
             .iter()
             .map(|panel| UIDrawablePanel {
                 anchor: panel.anchor,
-                offset: panel.offset,
-                size: panel.size,
-                elements: panel
-                    .elements
+                rows: panel
+                    .rows
                     .iter()
-                    .map(UiElement::to_instrument)
+                    .map(|row| row.iter().map(UiElement::to_instrument).collect())
                     .collect(),
             })
             .collect()

@@ -3,7 +3,8 @@
 ## Stack
 
 Rust edition 2024. `wgpu 29` (GPU), `winit 0.30` (window), `egui 0.34`
-(overlay), `satkit 0.18` (SGP4 + ephemeris + EOP), `glam 0.33` (math),
+(overlay), `egui_taffy 0.12` (taffy flexbox layout for the panels),
+`satkit 0.18` (SGP4 + ephemeris + EOP), `glam 0.33` (math),
 `rayon 1.10` (parallel init), `image 0.25` (texture decode + PNG encode),
 `ktx2 0.5` (LUT parse/write), `humantime 2` (render-mode datetime parse).
 Build-only: `ureq 3.3` (asset download), `half 2.7` (f16 LUT bake).
@@ -47,24 +48,33 @@ src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed
 src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          + PanelAnchor (egui-free data), and the egui
                          control_panel that frames each panel at its anchored
-                         position and renders its boxed Instrument trait objects
-                         at panel-relative positions (interactivity via
-                         callbacks). The shared-core impl UIDrawable for
-                         SimulationState lives in src/simulation/mod.rs. Re-exports
-                         the instrument structs (bare + Interactive*) + theme
-                         install_theme + the spec types (PanelSet/UiPanel).
-src/ui/instruments/mod.rs  the Instrument trait (position + render); one
-                         self-contained instrument STRUCT per sibling file, each
-                         impl Instrument with its own baked-in look (a producer
-                         picks which instrument + content, never style)
+                         corner (theme::PANEL_INSET) and lays out its rows with
+                         taffy (egui_taffy): panel = flex column of rows, row =
+                         flex row of instrument nodes, all content-sized (+ the
+                         shared min width) - no pixel positions or fixed panel
+                         boxes (interactivity via callbacks). The shared-core
+                         impl UIDrawable for SimulationState lives in
+                         src/simulation/mod.rs. Re-exports the instrument structs
+                         (bare + Interactive*) + theme install_theme + the spec
+                         types (PanelSet/UiPanel).
+src/ui/instruments/mod.rs  the Instrument trait (render(&mut Tui): each
+                         instrument adds its own flex node into its row, owning
+                         its node style - e.g. keys grow to share the row) + the
+                         shared `leaf` helper (top-down layout, wrap disabled);
+                         one self-contained instrument STRUCT per sibling file,
+                         each impl Instrument with its own baked-in look (a
+                         producer picks which instrument + content, never style)
 src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
-                         one instrument each (header.rs amber title+rule;
-                         readout.rs digit-window readout (dim label above a
-                         large cream value in an outlined recessed window +
-                         optional inverted unit block) + shared readout_block;
-                         dual_readout.rs two readouts; button.rs momentary key;
-                         toggle.rs latching green key + toggle_key; lamp.rs
-                         status dot + LampStatus; slider.rs value track). Each
+                         one instrument each (header.rs amber title + rule spanning
+                         the panel (grown node); readout.rs digit-window readout
+                         (dim label above a large cream value in an outlined
+                         recessed window + optional inverted unit block) + shared
+                         readout_block; dual_readout.rs two readouts; button.rs
+                         momentary key; toggle.rs latching green key + shared
+                         key_style (keys flex-grow: a lone key fills its row,
+                         paired keys split it); lamp.rs status dot + LampStatus;
+                         slider.rs value track (percent-width node - the track
+                         follows the panel width without driving it)). Each
                          control is split in two: a bare data struct (inert,
                          derives Deserialize) + an Interactive* wrapper holding
                          the bare struct + a moved Box<dyn FnMut> callback
@@ -74,13 +84,19 @@ src/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          set ships as a reusable instrument library
 src/ui/theme.rs          install_theme: the Apollo-panel egui look (gunmetal
                          frame, monospace UPPERCASE cream readouts, green-active
-                         keys, corner rivets/bevel), the palette consts shared by
-                         the instruments, and panel chrome (panel_frame/bevel/
-                         rivets). Stamped onto the egui Context by both the
-                         windowed app and the headless render path
+                         keys, corner rivets/bevel; sets egui max_passes=2 so
+                         egui_taffy's relayout discard pass settles same-frame),
+                         the palette consts AND the metric tokens (SPACE_*/
+                         FONT_*/RADIUS_*/HAIRLINE/PANEL_INSET/PANEL_MIN_WIDTH)
+                         shared by the instruments, the taffy styles
+                         (panel_layout/row_layout), and panel chrome
+                         (panel_frame/bevel/rivets). Stamped onto the egui
+                         Context by both the windowed app and the headless
+                         render path
 src/ui/spec.rs           the serde-deserialized render --scene `ui` overlay: a
                          tagged enum (UiElement) over the bare instrument structs
-                         themselves + a UiPanel + PanelSet (UIDrawable). No mirror
+                         themselves + a UiPanel (anchor + rows of elements; no
+                         pixel coordinates) + PanelSet (UIDrawable). No mirror
                          type - the bare structs derive Deserialize, so each
                          element clones into an inert boxed Instrument
 src/terra.rs             WGS84 constants + surface_position / geodetic_normal helpers
@@ -151,7 +167,7 @@ main        -> application, simulation, renderer, scenarios
 application -> simulation (incl. CelestialSphere, to resolve the camera
                                        # target's center), renderer, ui, terra,
                                        # (winit, egui, egui_winit, glam)
-ui          -> (egui)   # defines UIDrawable trait + control_panel
+ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
 renderer    -> simulation (RenderState + CelestialSphere::at), terra, luna,
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
                                        # Derives all body geometry from
@@ -213,27 +229,35 @@ the shared-core `impl UIDrawable for SimulationState` lives next to the type in
 
 ```
 UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
-    The positioned panels for one frame.
+    The anchored panels for one frame.
 
-UIDrawablePanel { anchor: PanelAnchor, offset: [f32;2], size: [f32;2],
-                  elements: Vec<Box<dyn Instrument + 'a>> }
-    A panel owns its on-screen place (corner anchor + inset, resolved against
-    the live window) and a fixed box `size` (fixes the frame and pins the egui
-    Area so it can't auto-shrink). Its elements are positioned RELATIVE to it.
+UIDrawablePanel { anchor: PanelAnchor,
+                  rows: Vec<Vec<Box<dyn Instrument + 'a>>> }
+    A panel owns only its corner anchor (inset by theme::PANEL_INSET). Its
+    size and every instrument's place are computed by taffy from `rows`
+    (outer = top-to-bottom rows, inner = left-to-right instruments): a flex
+    column (theme::panel_layout - stretch, MD row gap, PANEL_MIN_WIDTH) of
+    flex rows (theme::row_layout - bottom-aligned, LG gap). Content-driven
+    sizing; there are NO pixel positions or fixed panel boxes.
 
-trait Instrument { position(&self) -> [f32;2];
-                   render(&mut self, ui, child_rect, panel_size) }
+trait Instrument { render(&mut self, tui: &mut Tui) }
     One struct per file impls it: Header, Readout, DualReadout, Button, Toggle,
     Lamp, Slider. Pre-styled INSTRUMENTS, not logical primitives: a producer
-    picks which instrument + its content, never its color/font/emphasis (style
-    lives in each `render`, pulling palette consts from `theme`). control_panel
-    scopes a child Ui per instrument (position + wrap setup) then calls render;
-    only Header uses child_rect/panel_size (its full-width rule).
+    picks which instrument + its content, never its color/font/emphasis/metrics
+    (style lives in each `render`, pulling the palette + SPACE_*/FONT_*/RADIUS_*
+    tokens from `theme`). Each instrument adds its own flex node(s) into its
+    row's tui and owns that node's flex style: Header grows across the row (its
+    rule spans the panel), keys flex-grow (a lone key fills its row, paired keys
+    split it), the Slider is percent-width (track follows the panel width
+    without driving it), readouts stay content-sized (their fixed-width
+    monospace values set the panel width). The shared `leaf` helper (in
+    instruments/mod.rs) scopes plain-egui instruments (top-down layout, wrap
+    disabled - a wrapping label would ratchet).
     Header=amber title+rule. Readout/DualReadout=digit-window readout(s): dim
     label above a large cream value in an outlined recessed window, with an
     optional `unit` (serde-defaulted, e.g. "km") stamped as an inverted cream
     block at the window's end - the game-UI reference look (readout_block
-    shared by both; a readout is ~45pt tall, so producers pitch rows ~46-50pt).
+    shared by both).
     Button=momentary key, Toggle=latching key (lit solid green w/ dark text
     while `active`),
     Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
@@ -256,16 +280,21 @@ PanelAnchor::{ TopLeft, TopRight }   # add bottom corners when needed
 - Each scenario's `impl UIDrawable` returns `self.simulation.get_drawables()`
   (the core panel) plus **one** scenario panel (top-right) built from the stashed
   `last_telemetry` (a disjoint field). The two panels are independently
-  positioned - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
-  frames each panel and renders its instruments, firing callbacks on
+  anchored - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
+  frames each panel and lays out its rows with taffy, firing callbacks on
   interaction.
 - **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
   `Context` and must be called once per context (both `ApplicationState::new`
-  and `snapshot::build_ui_frame` do). **All color lives in `ui::theme` (the
-  palette consts) + each instrument's `render`** - producers pick instruments,
-  never colors. Each instrument's `render` uppercases its text; `control_panel`
-  frames each panel with the gunmetal `panel_frame` and paints the bevel
-  highlight + corner rivets per panel.
+  and `snapshot::build_ui_frame` do). It also sets egui `max_passes = 2`:
+  egui_taffy measures content immediate-mode and requests a discard pass when
+  the layout it drew from is stale, so the settled layout needs the second
+  pass to land same-frame. **All color and every metric live in `ui::theme`
+  (the palette consts + the SPACE_*/FONT_*/RADIUS_*/HAIRLINE/PANEL_INSET/
+  PANEL_MIN_WIDTH tokens) + each instrument's `render`** - producers pick
+  instruments and group them into rows, never colors or pixels. Each
+  instrument's `render` uppercases its text; `control_panel` frames each panel
+  with the gunmetal `panel_frame` and paints the bevel highlight + corner
+  rivets per panel.
 
 `SimulationState` (clock + celestial sphere) is the shared core that every
 scenario struct holds by composition. Satellites belong to the scenario struct,

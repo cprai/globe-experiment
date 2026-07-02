@@ -2,9 +2,12 @@
 //! display with a baked-in look.
 //!
 //! A producer (a scenario / `SimulationState`) picks *which* instrument and
-//! supplies its content, but **never** its color, font, or emphasis - that all
-//! lives in each instrument's [`Instrument::render`], which pulls from
-//! [`crate::ui::theme`].
+//! supplies its content, but **never** its color, font, emphasis, or metrics -
+//! that all lives in each instrument's [`Instrument::render`], which pulls
+//! from [`crate::ui::theme`] (palette + the spacing/type/radius tokens).
+//! Layout is taffy flexbox: each instrument adds its own node (with its own
+//! flex style - e.g. keys grow to share a row, readouts stay content-sized)
+//! into the row the panel scoped for it; there are no pixel positions.
 //!
 //! Each control is **two types**: a bare struct holding only the render data
 //! ([`Button`], [`Toggle`], [`Slider`]) and an `Interactive*` wrapper that owns
@@ -35,24 +38,34 @@ pub use readout::Readout;
 pub use slider::{InteractiveSlider, Slider};
 pub use toggle::{InteractiveToggle, Toggle};
 
-/// One pre-styled instrument for a frame. Implemented per instrument type;
-/// [`crate::ui::control_panel`] places each instrument at its panel-relative
-/// [`position`](Instrument::position) and then calls
-/// [`render`](Instrument::render) into the already-scoped child `Ui`.
+use egui_taffy::{Tui, TuiBuilderLogic, taffy};
+
+/// One pre-styled instrument for a frame. [`crate::ui::control_panel`] scopes a
+/// taffy row per panel row and calls [`render`](Instrument::render) for each
+/// instrument in it; the instrument adds its own flex node(s) into that row.
 ///
 /// `render` takes `&mut self` so a control can fire its `FnMut` callback;
-/// instruments are consumed for the frame (the panel's element vector is
-/// drained each frame).
+/// instruments are consumed for the frame (the panel's rows are drained each
+/// frame).
 pub trait Instrument {
-    /// This instrument's top-left, **relative to its containing panel's content
-    /// origin** (egui points). Resolved against the panel's on-screen origin by
-    /// [`crate::ui::control_panel`].
-    fn position(&self) -> [f32; 2];
+    /// Adds this instrument into its row's `tui`. The instrument owns its
+    /// node's flex style (grow/size) as part of its baked-in look; the row and
+    /// panel styles come from [`crate::ui::theme`].
+    fn render(&mut self, tui: &mut Tui);
+}
 
-    /// Renders this instrument into its already-scoped child `Ui` (anchored at
-    /// the instrument's position, extending to the panel's bottom-right, with
-    /// wrapping disabled). `child_rect` is that allocated box and `panel_size`
-    /// the containing panel's box - only [`Header`] uses them (for its
-    /// full-width rule); every other instrument ignores them.
-    fn render(&mut self, ui: &mut egui::Ui, child_rect: egui::Rect, panel_size: egui::Vec2);
+/// Adds one egui leaf node with the given taffy `style` and runs `content`
+/// inside it. Shared scope setup for every instrument that draws plain egui
+/// widgets: top-down layout and wrapping disabled (an auto-wrapping label
+/// can't grow its node back after a shorter label shrank it, so a Play/Pause
+/// key would ratchet smaller).
+pub(super) fn leaf<T>(
+    tui: &mut Tui,
+    style: taffy::Style,
+    content: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    tui.style(style)
+        .egui_layout(egui::Layout::top_down(egui::Align::Min))
+        .wrap_mode(egui::TextWrapMode::Extend)
+        .ui(content)
 }

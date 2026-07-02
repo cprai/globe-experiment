@@ -1,7 +1,8 @@
 use egui::Stroke;
+use egui_taffy::{Tui, taffy};
 
-use super::Instrument;
-use crate::ui::theme::{BEVEL_LIGHT, HEADER_AMBER};
+use super::{Instrument, leaf};
+use crate::ui::theme::{BEVEL_LIGHT, FONT_TITLE, HAIRLINE, HEADER_AMBER, SPACE_SM, SPACE_XS};
 
 /// A section header: a bold amber title with a rule ruled across the panel
 /// width beneath it - the labelled divider that tops each cluster on the Apollo
@@ -13,29 +14,32 @@ use crate::ui::theme::{BEVEL_LIGHT, HEADER_AMBER};
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {
-    pub position: [f32; 2],
     pub title: String,
 }
 
 impl Instrument for Header {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, child_rect: egui::Rect, panel_size: egui::Vec2) {
-        // The rule spans the full panel width (hence `panel_size`), under the
-        // title baseline.
-        let rule_y = child_rect.top() + 19.0;
-        ui.painter().hline(
-            child_rect.left()..=child_rect.left() + panel_size.x,
-            rule_y,
-            Stroke::new(1.0, BEVEL_LIGHT),
-        );
-        ui.label(
-            egui::RichText::new(self.title.to_uppercase())
-                .color(HEADER_AMBER)
-                .strong()
-                .size(15.0),
-        );
+    fn render(&mut self, tui: &mut Tui) {
+        // Grow across the row so the rule spans the full panel width.
+        let style = taffy::Style {
+            flex_grow: 1.0,
+            ..Default::default()
+        };
+        leaf(tui, style, |ui| {
+            let title = ui.label(
+                egui::RichText::new(self.title.to_uppercase())
+                    .color(HEADER_AMBER)
+                    .strong()
+                    .size(FONT_TITLE),
+            );
+            // Reserve the rule's strip below the title so the node's height
+            // includes it; the rule itself spans the node's full (row-grown)
+            // width, not just the title's.
+            ui.add_space(SPACE_SM);
+            ui.painter().hline(
+                ui.max_rect().x_range(),
+                title.rect.bottom() + SPACE_XS,
+                Stroke::new(HAIRLINE, BEVEL_LIGHT),
+            );
+        });
     }
 }

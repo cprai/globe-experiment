@@ -1,4 +1,7 @@
+use egui_taffy::{Tui, TuiBuilderLogic};
+
 use super::Instrument;
+use super::toggle::key_style;
 
 /// A momentary key - the inert render data only. Drawing lives in
 /// [`Button::draw`], shared by this struct's read-only [`Instrument`] impl and
@@ -10,27 +13,25 @@ use super::Instrument;
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Button {
-    pub position: [f32; 2],
     pub label: String,
 }
 
 impl Button {
-    /// Draws the key into `ui`; returns whether it was clicked this frame.
-    /// Holds the widget look so the inert and interactive paths render
-    /// identically.
-    fn draw(&self, ui: &mut egui::Ui) -> bool {
-        ui.button(self.label.to_uppercase()).clicked()
+    /// Adds the key as its own grown flex node (see
+    /// [`key_style`](super::toggle::key_style)); returns whether it was
+    /// clicked this frame. Holds the widget look so the inert and interactive
+    /// paths render identically.
+    fn draw(&self, tui: &mut Tui) -> bool {
+        tui.style(key_style())
+            .ui_add(egui::Button::new(self.label.to_uppercase()))
+            .clicked()
     }
 }
 
 impl Instrument for Button {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
+    fn render(&mut self, tui: &mut Tui) {
         // Inert: still clickable, but the click does nothing (e.g. a mock panel).
-        let _ = self.draw(ui);
+        let _ = self.draw(tui);
     }
 }
 
@@ -49,12 +50,8 @@ pub struct InteractiveButton<'a> {
 }
 
 impl Instrument for InteractiveButton<'_> {
-    fn position(&self) -> [f32; 2] {
-        self.button.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
-        if self.button.draw(ui) {
+    fn render(&mut self, tui: &mut Tui) {
+        if self.button.draw(tui) {
             (self.on_press)();
         }
     }

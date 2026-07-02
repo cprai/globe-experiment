@@ -27,12 +27,14 @@ Six top-level modules + `terra`:
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
 - **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
   `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
-  `control_panel` that frames each panel at its anchored position and renders
-  its boxed `Instrument`s at panel-relative positions (no `Clock`/scenario
-  knowledge). The shared-core `impl UIDrawable for SimulationState` lives in
-  `simulation`, not here. `ui/instruments/*.rs` is one `Instrument`-impl struct
-  per file; `ui/theme.rs` the Apollo look + palette; `ui/spec.rs` the serde
-  `ui`-overlay spec (deserialized straight into the bare instrument structs).
+  `control_panel` that frames each panel at its anchored corner and lays out
+  its rows of boxed `Instrument`s with taffy (`egui_taffy`; content-sized, no
+  pixel positions; no `Clock`/scenario knowledge). The shared-core `impl
+  UIDrawable for SimulationState` lives in `simulation`, not here.
+  `ui/instruments/*.rs` is one `Instrument`-impl struct per file;
+  `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
+  panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
+  straight into the bare instrument structs).
 - **`terra`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per

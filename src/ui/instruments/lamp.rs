@@ -1,8 +1,10 @@
 use egui::Stroke;
+use egui_taffy::{Tui, taffy};
 
-use super::Instrument;
+use super::{Instrument, leaf};
 use crate::ui::theme::{
-    ACCENT_GREEN, ACCENT_RED, BEVEL_DARK, HEADER_AMBER, LABEL_DIM, RECESS_FILL,
+    ACCENT_GREEN, ACCENT_RED, BEVEL_DARK, HAIRLINE, HEADER_AMBER, LABEL_DIM, RECESS_FILL, SPACE_LG,
+    SPACE_MD, SPACE_SM,
 };
 
 /// The *semantic* condition a producer selects for a [`Lamp`], mapped to a lamp
@@ -30,17 +32,12 @@ pub enum LampStatus {
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lamp {
-    pub position: [f32; 2],
     pub label: String,
     pub status: LampStatus,
 }
 
 impl Instrument for Lamp {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
+    fn render(&mut self, tui: &mut Tui) {
         // The `status` picks the lamp color here - the producer only names the
         // condition.
         let color = match self.status {
@@ -49,16 +46,26 @@ impl Instrument for Lamp {
             LampStatus::Fault => ACCENT_RED,
             LampStatus::Off => LABEL_DIM,
         };
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-            let center = rect.center();
-            let painter = ui.painter();
-            painter.circle_filled(center, 6.0, RECESS_FILL);
-            // A soft halo, then the lit disc.
-            painter.circle_filled(center, 5.0, color.gamma_multiply(0.35));
-            painter.circle_filled(center, 3.2, color);
-            painter.circle_stroke(center, 6.0, Stroke::new(1.0, BEVEL_DARK));
-            ui.label(egui::RichText::new(self.label.to_uppercase()).color(LABEL_DIM));
+        // Lamp geometry off the spacing scale: LG-radius socket box, MD socket,
+        // SM lit disc, with the halo splitting socket and disc.
+        let socket_radius = SPACE_MD;
+        let halo_radius = SPACE_MD - HAIRLINE;
+        let disc_radius = SPACE_SM;
+        leaf(tui, taffy::Style::default(), |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(SPACE_LG * 2.0, SPACE_LG * 2.0),
+                    egui::Sense::hover(),
+                );
+                let center = rect.center();
+                let painter = ui.painter();
+                painter.circle_filled(center, socket_radius, RECESS_FILL);
+                // A soft halo, then the lit disc.
+                painter.circle_filled(center, halo_radius, color.gamma_multiply(0.35));
+                painter.circle_filled(center, disc_radius, color);
+                painter.circle_stroke(center, socket_radius, Stroke::new(HAIRLINE, BEVEL_DARK));
+                ui.label(egui::RichText::new(self.label.to_uppercase()).color(LABEL_DIM));
+            });
         });
     }
 }

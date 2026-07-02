@@ -244,10 +244,11 @@ fn parse_rfc3339(text: &str) -> Result<Instant, String> {
 /// Runs the mock `panels` (the scene's `ui` section) through egui once to
 /// produce a render-ready [`UiFrame`] - the headless analogue of the windowed
 /// egui driving in `application`. The mock is rendered via the same
-/// `ui::control_panel` the live app uses, so the overlay is faithful. The egui
-/// screen is sized to the output in points at 1.0 pixels-per-point, so mock
-/// positions are in output pixels. The panels were already validated by the
-/// scene parse in [`run`].
+/// `ui::control_panel` the live app uses (taffy lays out the rows; the JSON
+/// carries no pixel coordinates), so the overlay is faithful. The egui screen
+/// is sized to the output in points at 1.0 pixels-per-point, so mock panel
+/// sizes land in output pixels. The panels were already validated by the scene
+/// parse in [`run`].
 fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     let mut mock = PanelSet { panels };
 
@@ -265,10 +266,13 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     // egui builds its font atlas and measures text lazily on the first pass, so
     // a single pass tessellates to nothing. (The live app never sees this - it
     // runs continuously, settling by frame two.) Run a throwaway warmup pass to
-    // load fonts/lay out, then a second pass for the real geometry. egui emits
-    // each texture delta exactly once, so the font-atlas allocation arrives on
-    // the *warmup* output; merge its texture deltas into the second pass's so
-    // the renderer actually gets the atlas the glyph primitives reference.
+    // load fonts/lay out (this also seeds egui_taffy's layout cache; each
+    // run_ui below may internally add a discard pass - install_theme sets
+    // max_passes = 2 - so the taffy layout is settled by the second run), then
+    // a second pass for the real geometry. egui emits each texture delta
+    // exactly once, so the font-atlas allocation arrives on the *warmup*
+    // output; merge its texture deltas into the second pass's so the renderer
+    // actually gets the atlas the glyph primitives reference.
     let warmup = ctx.run_ui(raw_input.clone(), |ui| {
         ui::control_panel(ui.ctx(), &mut mock)
     });

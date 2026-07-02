@@ -1,7 +1,8 @@
 use egui::Stroke;
+use egui_taffy::{Tui, TuiBuilderLogic, taffy};
 
 use super::Instrument;
-use crate::ui::theme::{ACCENT_GREEN, KEY_LIT, KEY_LIT_TEXT};
+use crate::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 
 /// A latching key that lights green while `active` - the inert render data
 /// only. Drawing lives in [`Toggle::draw`], shared by this struct's read-only
@@ -14,28 +15,56 @@ use crate::ui::theme::{ACCENT_GREEN, KEY_LIT, KEY_LIT_TEXT};
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Toggle {
-    pub position: [f32; 2],
     pub label: String,
     pub active: bool,
 }
 
 impl Toggle {
-    /// Draws the latching key into `ui`; returns whether it was clicked this
-    /// frame. Holds the lit-look override so the inert and interactive paths
-    /// render identically.
-    fn draw(&self, ui: &mut egui::Ui) -> bool {
-        toggle_key(ui, &self.label, self.active).clicked()
+    /// Adds the latching key as its own grown flex node; returns whether it
+    /// was clicked this frame. Holds the lit-look override so the inert and
+    /// interactive paths render identically. When lit, every pointer state
+    /// (rest/hover/press) is forced to the lit look so the key reads as an
+    /// engaged lamp, not a momentary button; the style override rides on this
+    /// node only.
+    fn draw(&self, tui: &mut Tui) -> bool {
+        let text = egui::RichText::new(self.label.to_uppercase());
+        // Keys grow to share their row: one key per row fills the panel (the
+        // selector column look); keys sharing a row split it evenly.
+        let node = tui.style(key_style());
+        if !self.active {
+            return node.ui_add(egui::Button::new(text)).clicked();
+        }
+        node.mut_egui_style(|style| {
+            let widgets = &mut style.visuals.widgets;
+            for state in [
+                &mut widgets.inactive,
+                &mut widgets.hovered,
+                &mut widgets.active,
+            ] {
+                state.bg_fill = KEY_LIT;
+                state.weak_bg_fill = KEY_LIT;
+                state.bg_stroke = Stroke::new(HAIRLINE, ACCENT_GREEN);
+                state.fg_stroke = Stroke::new(HAIRLINE, KEY_LIT_TEXT);
+            }
+        })
+        .ui_add(egui::Button::new(text.color(KEY_LIT_TEXT).strong()))
+        .clicked()
+    }
+}
+
+/// The shared key node style: grow to share the row with siblings (a lone key
+/// spans the panel; paired keys split it).
+pub(super) fn key_style() -> taffy::Style {
+    taffy::Style {
+        flex_grow: 1.0,
+        ..Default::default()
     }
 }
 
 impl Instrument for Toggle {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
+    fn render(&mut self, tui: &mut Tui) {
         // Inert: still clickable, but the click does nothing (e.g. a mock panel).
-        let _ = self.draw(ui);
+        let _ = self.draw(tui);
     }
 }
 
@@ -49,39 +78,9 @@ pub struct InteractiveToggle<'a> {
 }
 
 impl Instrument for InteractiveToggle<'_> {
-    fn position(&self) -> [f32; 2] {
-        self.toggle.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
-        if self.toggle.draw(ui) {
+    fn render(&mut self, tui: &mut Tui) {
+        if self.toggle.draw(tui) {
             (self.on_toggle)();
         }
     }
-}
-
-/// Renders a latching key that lights solid green (dark engraved text) while
-/// `active` - the latched-key look from the game-UI reference. When lit, every
-/// pointer state (rest/hover/press) is forced to the lit look so the key reads
-/// as an engaged lamp, not a momentary button. The style override is local to
-/// this element's child `Ui`.
-fn toggle_key(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
-    let text = egui::RichText::new(label.to_uppercase());
-    if !active {
-        return ui.button(text);
-    }
-    {
-        let widgets = &mut ui.style_mut().visuals.widgets;
-        for state in [
-            &mut widgets.inactive,
-            &mut widgets.hovered,
-            &mut widgets.active,
-        ] {
-            state.bg_fill = KEY_LIT;
-            state.weak_bg_fill = KEY_LIT;
-            state.bg_stroke = Stroke::new(1.0, ACCENT_GREEN);
-            state.fg_stroke = Stroke::new(1.0, KEY_LIT_TEXT);
-        }
-    }
-    ui.button(text.color(KEY_LIT_TEXT).strong())
 }

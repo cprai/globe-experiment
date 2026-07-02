@@ -6,6 +6,10 @@ edition = "2024"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }
 egui = "0.34.3"
+# Taffy (CSS flexbox) layout for the instrument panels: panels are flex
+# columns of rows, sized to content - no absolute instrument positions.
+# Pure-Rust (taffy + parking_lot), portable across all six targets.
+egui_taffy = "0.12"
 egui-wgpu = "0.34.3"
 egui-winit = "0.34.3"
 glam = "0.33.1"

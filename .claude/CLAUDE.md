@@ -64,19 +64,21 @@ cargo run --release -- render --output frame.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
 # Add a "ui" section (Vec<ui::UiPanel>) to overlay mock UI panels for
-# headless UI-layout debugging:
+# headless UI-layout debugging. A panel is a corner anchor + "rows" (outer
+# array = top-to-bottom rows, inner = left-to-right instruments); taffy
+# computes all positions and the panel size, so the JSON carries no pixels:
 cargo run --release -- render --output mock.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0},
-      "ui":[{"anchor":"top_left","offset":[10,10],"size":[340,190],
-        "elements":[{"header":{"position":[0,0],"title":"Time / Subsolar"}},
-                    {"readout":{"position":[0,26],"label":"UTC","value":"12:30:00"}},
-                    {"dual_readout":{"position":[0,74],"left_label":"Lat",
-                      "left_value":"-21","left_unit":"deg","right_label":"Lon",
-                      "right_value":"-5","right_unit":"deg"}},
-                    {"toggle":{"position":[0,124],"label":"Run","active":true}},
-                    {"lamp":{"position":[150,126],"label":"Signal","status":"ok"}},
-                    {"slider":{"position":[0,158],"value":0.5,"range":[0,4.6]}}]}]}'
+      "ui":[{"anchor":"top_left","rows":[
+        [{"header":{"title":"Time / Subsolar"}}],
+        [{"readout":{"label":"UTC","value":"12:30:00"}}],
+        [{"dual_readout":{"left_label":"Lat","left_value":"-21",
+          "left_unit":"deg","right_label":"Lon","right_value":"-5",
+          "right_unit":"deg"}}],
+        [{"toggle":{"label":"Run","active":true}},
+         {"lamp":{"label":"Signal","status":"ok"}}],
+        [{"slider":{"value":0.5,"range":[0,4.6]}}]]}]}'
 ```
 
 First build: slow (~1.5 min extra), needs network. `build.rs` downloads 13

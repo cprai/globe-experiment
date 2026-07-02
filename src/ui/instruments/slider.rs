@@ -1,8 +1,9 @@
 use std::ops::RangeInclusive;
 
+use egui_taffy::{Tui, taffy};
 use serde::Deserialize;
 
-use super::Instrument;
+use super::{Instrument, leaf};
 
 /// A value slider over `range` - the inert render data only. Drawing lives in
 /// [`Slider::draw`], shared by this struct's read-only [`Instrument`] impl and
@@ -15,33 +16,42 @@ use super::Instrument;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Slider {
-    pub position: [f32; 2],
     pub value: f32,
     #[serde(deserialize_with = "deserialize_range")]
     pub range: RangeInclusive<f32>,
 }
 
 impl Slider {
-    /// Draws the slider into `ui`; returns the new value when the user edited
-    /// it this frame, else `None`. Holds the widget look (width, no value
-    /// label) so the inert and interactive paths render identically.
-    fn draw(&self, ui: &mut egui::Ui) -> Option<f32> {
-        ui.spacing_mut().slider_width = 280.0;
-        let mut edited = self.value;
-        ui.add(egui::Slider::new(&mut edited, self.range.clone()).show_value(false))
-            .changed()
-            .then_some(edited)
+    /// Adds the slider as a full-width flex node; returns the new value when
+    /// the user edited it this frame, else `None`. Holds the widget look
+    /// (track fills the node, no value label) so the inert and interactive
+    /// paths render identically.
+    fn draw(&self, tui: &mut Tui) -> Option<f32> {
+        // Percent width (not grow): a percentage contributes nothing to the
+        // panel's content-driven min width, so the track follows whatever
+        // width the readout rows set rather than driving it.
+        let style = taffy::Style {
+            size: taffy::Size {
+                width: taffy::prelude::percent(1.0),
+                height: taffy::prelude::auto(),
+            },
+            ..Default::default()
+        };
+        leaf(tui, style, |ui| {
+            // The track spans the node (= the panel's content width).
+            ui.spacing_mut().slider_width = ui.available_width();
+            let mut edited = self.value;
+            ui.add(egui::Slider::new(&mut edited, self.range.clone()).show_value(false))
+                .changed()
+                .then_some(edited)
+        })
     }
 }
 
 impl Instrument for Slider {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
+    fn render(&mut self, tui: &mut Tui) {
         // Inert: still draggable, but the edit is discarded (e.g. a mock panel).
-        let _ = self.draw(ui);
+        let _ = self.draw(tui);
     }
 }
 
@@ -56,12 +66,8 @@ pub struct InteractiveSlider<'a> {
 }
 
 impl Instrument for InteractiveSlider<'_> {
-    fn position(&self) -> [f32; 2] {
-        self.slider.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
-        if let Some(value) = self.slider.draw(ui) {
+    fn render(&mut self, tui: &mut Tui) {
+        if let Some(value) = self.slider.draw(tui) {
             (self.on_change)(value);
         }
     }

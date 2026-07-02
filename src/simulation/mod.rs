@@ -358,40 +358,38 @@ impl TargetSelector {
         }
     }
 
-    /// The top-right Terra / Luna selector panel: a header plus two latching
-    /// keys, the chosen body lit. The keys' callbacks set disjoint request
-    /// flags (see the type docs); `luna_selected` is snapshotted up front so no
-    /// shared borrow outlives into the callbacks.
+    /// The top-right Terra / Luna selector panel: a header row plus one row of
+    /// two latching keys (side by side, splitting the row), the chosen body
+    /// lit. The keys' callbacks set disjoint request flags (see the type
+    /// docs); `luna_selected` is snapshotted up front so no shared borrow
+    /// outlives into the callbacks.
     pub fn panel(&mut self) -> UIDrawablePanel<'_> {
         let luna_active = self.luna_selected;
-        let elements: Vec<Box<dyn Instrument + '_>> = vec![
-            Box::new(Header {
-                position: [0.0, 0.0],
+        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
                 title: "Camera Target".to_string(),
-            }),
-            Box::new(InteractiveToggle {
-                toggle: Toggle {
-                    position: [0.0, 26.0],
-                    label: "Terra".to_string(),
-                    active: !luna_active,
-                },
-                on_toggle: Box::new(|| self.request_terra = true),
-            }),
-            Box::new(InteractiveToggle {
-                toggle: Toggle {
-                    position: [104.0, 26.0],
-                    label: "Luna".to_string(),
-                    active: luna_active,
-                },
-                on_toggle: Box::new(|| self.request_luna = true),
-            }),
+            })],
+            vec![
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Terra".to_string(),
+                        active: !luna_active,
+                    },
+                    on_toggle: Box::new(|| self.request_terra = true),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Luna".to_string(),
+                        active: luna_active,
+                    },
+                    on_toggle: Box::new(|| self.request_luna = true),
+                }),
+            ],
         ];
 
         UIDrawablePanel {
             anchor: PanelAnchor::TopRight,
-            offset: [10.0, 10.0],
-            size: [212.0, 64.0],
-            elements,
+            rows,
         }
     }
 }
@@ -505,69 +503,64 @@ impl BodySelector {
         CameraTarget::Body(SELECTABLE_BODIES[self.selected])
     }
 
-    /// The top-right selector panel: a header plus one latching key per body,
-    /// in a single column ordered by distance from Sol (the chosen body
-    /// lit). `selected` is snapshotted up front so no shared borrow
-    /// outlives into the per-key callbacks, which each set a disjoint
-    /// `request_*` flag.
+    /// The top-right selector panel: a header row plus one latching key per
+    /// row, a single column ordered by distance from Sol (the chosen body
+    /// lit; each lone key fills its row). `selected` is snapshotted up front
+    /// so no shared borrow outlives into the per-key callbacks, which each set
+    /// a disjoint `request_*` flag.
     pub fn panel(&mut self) -> UIDrawablePanel<'_> {
         let selected = self.selected;
         // One key per body, in its own row; index i lines up with
         // SELECTABLE_BODIES so the label + `active` reflect the live selection.
         let key = |i: usize| Toggle {
-            position: [0.0, 26.0 + i as f32 * 28.0],
             label: SELECTABLE_BODIES[i].name().to_string(),
             active: selected == i,
         };
-        let elements: Vec<Box<dyn Instrument + '_>> = vec![
-            Box::new(Header {
-                position: [0.0, 0.0],
+        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
                 title: "Camera Target".to_string(),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(0),
                 on_toggle: Box::new(|| self.request_mercury = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(1),
                 on_toggle: Box::new(|| self.request_venus = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(2),
                 on_toggle: Box::new(|| self.request_terra = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(3),
                 on_toggle: Box::new(|| self.request_luna = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(4),
                 on_toggle: Box::new(|| self.request_mars = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(5),
                 on_toggle: Box::new(|| self.request_jupiter = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(6),
                 on_toggle: Box::new(|| self.request_saturn = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(7),
                 on_toggle: Box::new(|| self.request_uranus = true),
-            }),
-            Box::new(InteractiveToggle {
+            })],
+            vec![Box::new(InteractiveToggle {
                 toggle: key(8),
                 on_toggle: Box::new(|| self.request_neptune = true),
-            }),
+            })],
         ];
 
         UIDrawablePanel {
             anchor: PanelAnchor::TopRight,
-            offset: [10.0, 10.0],
-            // Tall single column: header + 9 rows at 28px pitch.
-            size: [150.0, 282.0],
-            elements,
+            rows,
         }
     }
 }
@@ -595,50 +588,44 @@ impl UIDrawable for SimulationState {
         let speed_exp = self.clock.multiplier.ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
-        // Instrument positions are relative to this panel's content origin. The
-        // producer picks instruments + content only; all styling is in the
-        // instrument modules.
-        let elements: Vec<Box<dyn Instrument + '_>> = vec![
-            Box::new(Header {
-                position: [0.0, 0.0],
+        // The producer groups instruments into rows + picks content only; all
+        // styling and every metric live in the instrument modules / theme
+        // (taffy bottom-aligns the Run key with the speed window beside it).
+        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
                 title: "Time".to_string(),
-            }),
-            Box::new(Readout {
-                position: [0.0, 26.0],
+            })],
+            vec![Box::new(Readout {
                 label: "UTC".to_string(),
                 value: datetime,
                 unit: String::new(),
-            }),
-            Box::new(Readout {
-                position: [0.0, 74.0],
-                label: "Speed".to_string(),
-                value: speed,
-                unit: "x".to_string(),
-            }),
-            Box::new(InteractiveToggle {
-                toggle: Toggle {
-                    // Baseline-aligned with the speed digit window beside it.
-                    position: [110.0, 89.0],
-                    label: "Run".to_string(),
-                    active: running,
-                },
-                on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
-            }),
-            Box::new(InteractiveSlider {
+            })],
+            vec![
+                Box::new(Readout {
+                    label: "Speed".to_string(),
+                    value: speed,
+                    unit: "x".to_string(),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Run".to_string(),
+                        active: running,
+                    },
+                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                }),
+            ],
+            vec![Box::new(InteractiveSlider {
                 slider: Slider {
-                    position: [0.0, 126.0],
                     value: speed_exp,
                     range: exp_range,
                 },
                 on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
-            }),
+            })],
         ];
 
         vec![UIDrawablePanel {
             anchor: PanelAnchor::TopLeft,
-            offset: [10.0, 10.0],
-            size: [340.0, 158.0],
-            elements,
+            rows,
         }]
     }
 }

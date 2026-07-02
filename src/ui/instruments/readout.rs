@@ -1,7 +1,11 @@
 use egui::{CornerRadius, Margin, Stroke};
+use egui_taffy::{Tui, taffy};
 
-use super::Instrument;
-use crate::ui::theme::{BEVEL_LIGHT, LABEL_DIM, READOUT_CREAM, RECESS_FILL};
+use super::{Instrument, leaf};
+use crate::ui::theme::{
+    BEVEL_LIGHT, FONT_LABEL, FONT_VALUE, HAIRLINE, LABEL_DIM, RADIUS_UNIT, RADIUS_WINDOW,
+    READOUT_CREAM, RECESS_FILL, SPACE_MD, SPACE_SM, SPACE_XS,
+};
 
 /// A labelled value: a dim caption above a large cream value in a recessed
 /// digit window, with an optional unit stamped as an inverted block at the
@@ -15,7 +19,6 @@ use crate::ui::theme::{BEVEL_LIGHT, LABEL_DIM, READOUT_CREAM, RECESS_FILL};
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Readout {
-    pub position: [f32; 2],
     pub label: String,
     pub value: String,
     #[serde(default)]
@@ -23,12 +26,12 @@ pub struct Readout {
 }
 
 impl Instrument for Readout {
-    fn position(&self) -> [f32; 2] {
-        self.position
-    }
-
-    fn render(&mut self, ui: &mut egui::Ui, _child_rect: egui::Rect, _panel_size: egui::Vec2) {
-        readout_block(ui, &self.label, &self.value, &self.unit);
+    fn render(&mut self, tui: &mut Tui) {
+        // Content-sized: the digit window hugs its (fixed-width, monospace)
+        // value, so the panel width comes from the widest readout row.
+        leaf(tui, taffy::Style::default(), |ui| {
+            readout_block(ui, &self.label, &self.value, &self.unit);
+        });
     }
 }
 
@@ -38,46 +41,50 @@ impl Instrument for Readout {
 /// [`super::DualReadout`], which lays out two side by side.
 pub(super) fn readout_block(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.spacing_mut().item_spacing.y = SPACE_XS;
         ui.label(
             egui::RichText::new(label.to_uppercase())
                 .color(LABEL_DIM)
-                .size(11.0),
+                .size(FONT_LABEL),
         );
         egui::Frame::new()
             .fill(RECESS_FILL)
             // The panel body and the recessed fill composite to nearly the
             // same on-screen value, so the window outline - not the fill - is
             // what makes the digit window read as a cut-in field.
-            .stroke(Stroke::new(1.0, BEVEL_LIGHT))
-            .corner_radius(CornerRadius::same(2))
+            .stroke(Stroke::new(HAIRLINE, BEVEL_LIGHT))
+            .corner_radius(CornerRadius::same(RADIUS_WINDOW))
             // A slimmer right margin when a unit block caps the window, so the
             // block sits flush at the end like a stamped suffix.
             .inner_margin(Margin {
-                left: 7,
-                right: if unit.is_empty() { 7 } else { 3 },
-                top: 3,
-                bottom: 3,
+                left: (SPACE_MD + HAIRLINE) as i8,
+                right: if unit.is_empty() {
+                    (SPACE_MD + HAIRLINE) as i8
+                } else {
+                    SPACE_SM as i8
+                },
+                top: SPACE_SM as i8,
+                bottom: SPACE_SM as i8,
             })
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().item_spacing.x = SPACE_MD;
                     ui.label(
                         egui::RichText::new(value.to_uppercase())
                             .color(READOUT_CREAM)
-                            .size(17.0),
+                            .size(FONT_VALUE),
                     );
                     if !unit.is_empty() {
                         egui::Frame::new()
                             .fill(READOUT_CREAM)
-                            .corner_radius(CornerRadius::same(1))
-                            .inner_margin(Margin::symmetric(3, 1))
+                            .corner_radius(CornerRadius::same(RADIUS_UNIT))
+                            .inner_margin(Margin::symmetric(SPACE_SM as i8, HAIRLINE as i8))
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new(unit.to_uppercase())
                                         .color(RECESS_FILL)
                                         .strong()
-                                        .size(11.0),
+                                        .size(FONT_LABEL),
                                 );
                             });
                     }
