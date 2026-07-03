@@ -12,6 +12,8 @@ RUN rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 RUN cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgslfmt
 RUN cargo install --git https://github.com/gfx-rs/wgpu naga-cli
 
+RUN chown -R vscode:vscode /usr/local/cargo
+
 RUN npm install -g @anthropic-ai/claude-code
 ENV DISABLE_AUTOUPDATER=1
 
