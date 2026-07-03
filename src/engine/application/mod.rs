@@ -20,10 +20,10 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use crate::camera::Camera;
-use crate::renderer::UiFrame;
-use crate::simulation::Simulation;
-use crate::ui::{self, UIDrawable};
+use crate::engine::camera::Camera;
+use crate::engine::renderer::UiFrame;
+use crate::engine::simulation::Simulation;
+use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
 use input::Controller;
 

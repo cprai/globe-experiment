@@ -8,11 +8,13 @@
 use glam::Vec3;
 use satkit::Instant;
 
-use crate::application::{self, ApplicationState};
-use crate::camera::Camera;
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{self, CameraTarget, Clock, RenderState, Simulation, TargetSelector};
-use crate::ui::{
+use crate::engine::application::{self, ApplicationState};
+use crate::engine::camera::Camera;
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::{
+    self, CameraTarget, Clock, RenderState, Simulation, TargetSelector,
+};
+use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };

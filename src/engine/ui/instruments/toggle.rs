@@ -2,7 +2,7 @@ use egui::Stroke;
 use egui_taffy::{Tui, TuiBuilderLogic, taffy};
 
 use super::Instrument;
-use crate::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
+use crate::engine::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 
 /// A latching key that lights green while `active` - the inert render data
 /// only. Drawing lives in [`Toggle::draw`], shared by this struct's read-only
@@ -10,8 +10,9 @@ use crate::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 /// callback.
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
-/// `active` flag still drives its lit look); `Clone` so [`crate::ui::PanelSet`]
-/// can hand a copy out of its borrowing `get_drawables`.
+/// `active` flag still drives its lit look); `Clone` so
+/// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
+/// `get_drawables`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Toggle {
@@ -70,8 +71,9 @@ impl Instrument for Toggle {
 
 /// A [`Toggle`] wired to a toggle callback. `on_toggle` fires on click; the
 /// producer owns flipping the `active` state it reflects. The borrow `'a` is
-/// the `&mut self` of the producing [`crate::ui::UIDrawable::get_drawables`],
-/// so the closure can capture a disjoint mutable field of live state.
+/// the `&mut self` of the producing
+/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
+/// a disjoint mutable field of live state.
 pub struct InteractiveToggle<'a> {
     pub toggle: Toggle,
     pub on_toggle: Box<dyn FnMut() + 'a>,

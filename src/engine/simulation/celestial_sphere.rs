@@ -31,8 +31,8 @@ use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
 
-use crate::planet::{self, Rotation};
-use crate::simulation::body::{BodyState, CelestialBody, Placement};
+use crate::engine::planet::{self, Rotation};
+use crate::engine::simulation::body::{BodyState, CelestialBody, Placement};
 
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
 /// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s straight
@@ -432,7 +432,7 @@ fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
 }
 
 /// Rotation from a planet's body-fixed (Z=pole) frame to GCRF, from its IAU
-/// rotational elements (`crate::planet::Rotation`). The planet twin of
+/// rotational elements (`crate::engine::planet::Rotation`). The planet twin of
 /// [`lunar_body_to_gcrf`] without the libration series: the pole `alpha0` /
 /// `delta0` carry a linear rate in Julian centuries `T`, and the prime meridian
 /// `W` advances at the (possibly retrograde) sidereal spin rate in days `d`.

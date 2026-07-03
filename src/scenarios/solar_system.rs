@@ -15,10 +15,10 @@
 use glam::Vec3;
 use satkit::Instant;
 
-use crate::application::{self, ApplicationState};
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{self, BodySelector, CameraTarget, Clock, RenderState, Simulation};
-use crate::ui::{
+use crate::engine::application::{self, ApplicationState};
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::{self, BodySelector, CameraTarget, Clock, RenderState, Simulation};
+use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };

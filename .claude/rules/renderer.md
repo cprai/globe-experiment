@@ -1,8 +1,8 @@
 ---
 paths:
-  - "src/renderer/**/*.rs"
-  - "src/application/mod.rs"
-  - "src/application/gfx.rs"
+  - "src/engine/renderer/**/*.rs"
+  - "src/engine/application/mod.rs"
+  - "src/engine/application/gfx.rs"
   - "src/offscreen.rs"
 ---
 
@@ -233,9 +233,10 @@ z-clipped).
 ## The `headless` binary (`OffscreenRenderer` + `src/headless.rs`)
 
 The single-frame render mode is its own binary (`cargo run --release --bin
-headless -- --scene ... --output frame.png`), with its own winit-free module
-tree; `src/offscreen.rs` is its presenter, `src/headless.rs` its bin root
-(CLI + scene spec + mock-UI driving). See `architecture.md`.
+headless -- --scene ... --output frame.png`) over the shared `engine` (no
+`scenarios`; it calls none of the winit code); `src/offscreen.rs` is its
+presenter, `src/headless.rs` its bin root (CLI + scene spec + mock-UI
+driving). See `architecture.md`.
 
 - Offscreen format is **`Rgba8Unorm` (non-sRGB), on purpose** — twin of the
   surface format rule. The stored bytes already equal the sRGB-encoded

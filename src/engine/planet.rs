@@ -1,6 +1,6 @@
 //! Physical constants and geometry for the seven classical planets, in
-//! real-world units - the multi-body sibling of [`crate::terra`] and
-//! [`crate::luna`].
+//! real-world units - the multi-body sibling of [`crate::engine::terra`] and
+//! [`crate::engine::luna`].
 //!
 //! The planets are no longer a separate enum: they are variants of
 //! [`CelestialBody`] (`Mercury`..`Neptune`). This module hangs their
@@ -21,7 +21,7 @@
 
 use glam::Vec3;
 
-use crate::simulation::body::CelestialBody;
+use crate::engine::simulation::body::CelestialBody;
 
 /// Every planet, in increasing distance from Sol - the load/render order.
 /// Indexed by the renderer's per-planet GPU resource arrays and used to filter

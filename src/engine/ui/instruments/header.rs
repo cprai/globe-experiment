@@ -2,15 +2,17 @@ use egui::Stroke;
 use egui_taffy::{Tui, taffy};
 
 use super::{Instrument, leaf};
-use crate::ui::theme::{BEVEL_LIGHT, FONT_TITLE, HAIRLINE, HEADER_AMBER, SPACE_SM, SPACE_XS};
+use crate::engine::ui::theme::{
+    BEVEL_LIGHT, FONT_TITLE, HAIRLINE, HEADER_AMBER, SPACE_SM, SPACE_XS,
+};
 
 /// A section header: a bold amber title with a rule ruled across the panel
 /// width beneath it - the labelled divider that tops each cluster on the Apollo
 /// panels.
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
-/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`.
+/// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
+/// borrowing `get_drawables`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {

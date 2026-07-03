@@ -3,7 +3,7 @@ use std::time::Instant;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::window::CursorIcon;
 
-use crate::camera::Camera;
+use crate::engine::camera::Camera;
 
 /// Minimum release speed, in px/s, for a drag to keep coasting.
 const FLICK_SPEED: f32 = 50.0;

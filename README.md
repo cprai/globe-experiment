@@ -45,7 +45,7 @@ km/`tilt`, plus an optional `target` of `"terra"` (default), `"luna"`, or any
 planet (`"mercury"`, ..., `"neptune"`) to orbit that body instead — frame it with
 a `distance` scaled to the body), and an optional `ui`
 section that overlays mock UI panels for debugging UI layouts headlessly (see
-`src/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
+`src/engine/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
 written as a PNG and a short summary (resolved datetime, camera, output path)
 is printed. Unlike the interactive scenarios, the datetime here is **not**
 range-checked against the bundled Earth-orientation data - times outside the

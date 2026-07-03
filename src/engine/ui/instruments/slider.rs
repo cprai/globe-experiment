@@ -10,9 +10,9 @@ use super::{Instrument, leaf};
 /// by [`InteractiveSlider`], which adds the edit callback.
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
-/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`. `range` deserializes from a `[min, max]` JSON array (see
-/// [`deserialize_range`]).
+/// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
+/// borrowing `get_drawables`. `range` deserializes from a `[min, max]` JSON
+/// array (see [`deserialize_range`]).
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Slider {
@@ -58,8 +58,9 @@ impl Instrument for Slider {
 /// A [`Slider`] wired to an edit callback. `on_change` receives the new value
 /// on each edit; the producer owns any value mapping (e.g. the speed slider
 /// edits an exponent and its callback exponentiates). The borrow `'a` is the
-/// `&mut self` of the producing [`crate::ui::UIDrawable::get_drawables`], so
-/// the closure can capture a disjoint mutable field of live state.
+/// `&mut self` of the producing
+/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
+/// a disjoint mutable field of live state.
 pub struct InteractiveSlider<'a> {
     pub slider: Slider,
     pub on_change: Box<dyn FnMut(f32) + 'a>,

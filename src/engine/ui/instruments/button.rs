@@ -8,8 +8,8 @@ use super::toggle::key_style;
 /// by [`InteractiveButton`], which adds the press callback.
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
-/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`.
+/// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
+/// borrowing `get_drawables`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Button {
@@ -40,8 +40,8 @@ impl Instrument for Button {
 
 /// A [`Button`] wired to a press callback. `on_press` fires on click. The
 /// borrow `'a` is the `&mut self` of the producing
-/// [`crate::ui::UIDrawable::get_drawables`], so the closure can capture a
-/// disjoint mutable field of live state.
+/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
+/// a disjoint mutable field of live state.
 ///
 /// No live panel drives a click-fired button today (the burn keys hold-fire
 /// via [`InteractiveHoldButton`]); this completes the control set as part of

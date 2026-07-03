@@ -5,12 +5,12 @@ use wgpu::util::DeviceExt;
 
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::luna;
-use crate::planet;
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::satellite;
-use crate::simulation::{CelestialBody, RenderState, TerraSystemEntity};
-use crate::terra;
+use crate::engine::luna;
+use crate::engine::planet;
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::satellite;
+use crate::engine::simulation::{CelestialBody, RenderState, TerraSystemEntity};
+use crate::engine::terra;
 use mesh::Vertex;
 
 const STACKS: u32 = 64;
@@ -553,7 +553,7 @@ impl SceneRenderer {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("scene shader"),
                     source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../../shaders/scene.wgsl").into(),
+                        include_str!("../../../shaders/scene.wgsl").into(),
                     ),
                 })
             },

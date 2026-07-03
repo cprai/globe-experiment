@@ -2,7 +2,7 @@ use egui::{CornerRadius, Margin, Stroke};
 use egui_taffy::{Tui, taffy};
 
 use super::{Instrument, leaf};
-use crate::ui::theme::{
+use crate::engine::ui::theme::{
     BEVEL_LIGHT, FONT_LABEL, FONT_VALUE, HAIRLINE, LABEL_DIM, RADIUS_UNIT, RADIUS_WINDOW,
     READOUT_CREAM, RECESS_FILL, SPACE_MD, SPACE_SM, SPACE_XS,
 };
@@ -14,7 +14,7 @@ use crate::ui::theme::{
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// `unit` defaults empty, so pre-unit JSON still parses); `Clone` so
-/// [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

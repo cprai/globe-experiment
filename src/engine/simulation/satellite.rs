@@ -44,7 +44,7 @@ use satkit::sgp4::sgp4;
 use satkit::tle::TLE;
 use satkit::{Duration, Instant, Kepler, Vector3};
 
-use crate::terra;
+use crate::engine::terra;
 
 /// An instantaneous orbital state vector in the GCRF frame: the initial
 /// conditions for numerical propagation. Deliberately a plain-data type (no
@@ -444,7 +444,7 @@ mod tests {
     /// misses by orders of magnitude.
     #[test]
     fn numerical_pipeline_holds_circular_leo() {
-        crate::simulation::celestial_sphere::init_satkit_for_tests();
+        crate::engine::simulation::celestial_sphere::init_satkit_for_tests();
 
         let (state, t0) = circular_leo();
         let alt_km = (RADIUS_M - f64::from(terra::MEAN_RADIUS_KM) * 1000.0) / 1000.0;

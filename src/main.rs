@@ -1,12 +1,5 @@
-mod application;
-mod camera;
-mod luna;
-mod planet;
-mod renderer;
+mod engine;
 mod scenarios;
-mod simulation;
-mod terra;
-mod ui;
 
 use clap::{Parser, ValueEnum};
 

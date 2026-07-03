@@ -15,11 +15,11 @@
 //! layouts), an egui overlay is composited on top, exactly as in the windowed
 //! path.
 
-use crate::renderer::{
+use crate::engine::renderer::{
     DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
-use crate::simulation::RenderState;
+use crate::engine::simulation::RenderState;
 
 /// Maximum width or height (pixels) for a single-frame [`OffscreenRenderer`]
 /// target. Matches wgpu's default 2D texture dimension limit

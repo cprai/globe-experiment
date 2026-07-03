@@ -143,7 +143,7 @@ bundled file's first/last MJD (and 1962 as a hard lower bound).
 ## The `headless` binary (single-frame render)
 
 **The `headless` binary deliberately does NOT enforce the EOP range.** It
-(`src/headless.rs`, its own bin with a winit-free module tree — no
+(`src/headless.rs`, its own bin over the shared `engine` — no
 `scenarios`) accepts any datetime and degrades silently outside range.
 Do not add a range check there — the caller owns the time and the behavior
 is documented.

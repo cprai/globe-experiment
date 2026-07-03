@@ -40,7 +40,7 @@ simulation clock (1x-100x, plays from launch). Luna is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
 rotation (correct near side + libration), lit by Sol, with **mutual
 Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
-Luna"). The **seven planets** (`src/planet.rs`) are oblate ellipsoids at true
+Luna"). The **seven planets** (`src/engine/planet.rs`) are oblate ellipsoids at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
 sun-lit with simple Lambert. Each is drawn **as a single shader impostor** (no
 mesh): the CPU projects the planet center to screen space in `prepare` and the
@@ -64,12 +64,15 @@ Terra occlude Luna. **Past scenarios only** (before build date) — what makes f
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
-The crate builds **two binaries from two independent module trees** (no lib
+The crate builds **two binaries over one shared `src/engine/`** (no lib
 crate): `globe-experiment` (`src/main.rs`, the windowed app + scenarios) and
-`headless` (`src/headless.rs`, the single-frame PNG renderer). Neither tree
-compiles the other's code: the main binary declares nothing
-headless-rendering, and the headless binary declares no winit/window code
-(no `application`, no `scenarios`, no `Gfx`).
+`headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
+declare `mod engine;` (everything used to run the app: `application`, `camera`,
+`luna`, `planet`, `renderer`, `simulation`, `terra`, `ui`); the trees differ
+only at the top level — `scenarios` exists only in the main tree, `offscreen`
+only in the headless tree. The headless binary compiles (but never calls) the
+winit-bound `engine::application`; its crate-level `allow(dead_code)` covers
+that.
 
 ---
 

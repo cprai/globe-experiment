@@ -2,7 +2,7 @@ use egui_taffy::{Tui, taffy};
 
 use super::readout::readout_block;
 use super::{Instrument, leaf};
-use crate::ui::theme::SPACE_XXL;
+use crate::engine::ui::theme::SPACE_XXL;
 
 /// Two labelled values side by side on one row, for compact paired readouts
 /// (e.g. LAT / LON). Reuses [`super::Readout`]'s digit window (label above,
@@ -10,7 +10,7 @@ use crate::ui::theme::SPACE_XXL;
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// units default empty, so pre-unit JSON still parses); `Clone` so
-/// [`crate::ui::PanelSet`] can hand a copy out of its borrowing
+/// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -6,20 +6,21 @@
 //! analogue of a scenario's `run` in the main binary.
 //!
 //! This bin root declares its own module tree (the two binaries share source
-//! files, not a lib crate): only the winit-free shared modules plus
-//! `offscreen`, and none of the windowed ones (`application`, `scenarios`).
-//! The shared modules also carry items only the main binary calls, hence the
-//! crate-level `allow(dead_code)` - the main binary's tree keeps full
-//! dead-code checking for them.
+//! files, not a lib crate): the shared `engine` plus `offscreen`, and not the
+//! main binary's `scenarios`. The engine also carries items only the main
+//! binary calls (all of `engine::application`, plus windowed-only items in
+//! the shared modules), hence the crate-level `allow(dead_code)` - the main
+//! binary's tree keeps full dead-code checking for them.
 //!
 //! The whole scene is a single `--scene` JSON ([`SceneSpec`]): a `simulation`
 //! section (the datetime), a `camera` section, and an optional `ui` section of
-//! mock panels (see [`crate::ui::UiPanel`]) to overlay - so an agent can
-//! debug rendering *and* UI layouts without a live window. The output target
-//! (width/height/path) stays on the CLI, not in the JSON. When `ui` is present
-//! the mock is run through the same `ui::control_panel` path as the live app
-//! and composited by [`OffscreenRenderer`]; this binary is the headless
-//! analogue of the windowed egui driving in the main binary's `application`.
+//! mock panels (see [`crate::engine::ui::UiPanel`]) to overlay - so an agent
+//! can debug rendering *and* UI layouts without a live window. The output
+//! target (width/height/path) stays on the CLI, not in the JSON. When `ui` is
+//! present the mock is run through the same `ui::control_panel` path as the
+//! live app and composited by [`OffscreenRenderer`]; this binary is the
+//! headless analogue of the windowed egui driving in the main binary's
+//! `application`.
 //!
 //! IMPORTANT: unlike scenarios (see the "Scenarios & valid time range" rules in
 //! `CLAUDE.md`), the headless binary does **not** range-check the datetime
@@ -31,18 +32,12 @@
 //! also documented in `.claude/rules/scenarios.md` and the `analyze-render`
 //! skill.
 
-// Shared modules included by both bin trees; scenario/windowed-only items in
-// them are intentionally unused here (see the module doc above).
+// The shared engine is included whole in both bin trees; scenario/windowed-
+// only items in it are intentionally unused here (see the module doc above).
 #![allow(dead_code)]
 
-mod camera;
-mod luna;
+mod engine;
 mod offscreen;
-mod planet;
-mod renderer;
-mod simulation;
-mod terra;
-mod ui;
 
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
@@ -50,12 +45,12 @@ use std::time::UNIX_EPOCH;
 use clap::Parser;
 use satkit::Instant;
 
-use crate::camera::Camera;
+use crate::engine::camera::Camera;
+use crate::engine::renderer::UiFrame;
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::{self, CameraTarget, CelestialBody, RenderState};
+use crate::engine::ui::{self, PanelSet, UiPanel};
 use crate::offscreen::{MAX_FRAME_DIMENSION, OffscreenRenderer};
-use crate::renderer::UiFrame;
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{CameraTarget, CelestialBody, RenderState};
-use crate::ui::{PanelSet, UiPanel};
 
 /// Renders a single frame of the astronomically-accurate solar system to a PNG
 /// and exits (no window, no interactivity). The `--scene` JSON fixes the

@@ -1,8 +1,8 @@
 use glam::{Mat3, Quat, Vec3};
 
-use crate::simulation::CameraTarget;
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::terra;
+use crate::engine::simulation::CameraTarget;
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::terra;
 
 /// Orbital camera that lives in the **inertial (star-fixed) frame** and orbits
 /// a chosen subject (the [`CameraTarget`] - Terra, Luna, a planet, or a free
@@ -104,9 +104,12 @@ impl Camera {
     /// ground under the cursor approximately follows it at any altitude.
     pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
         // Ground arc length spanned by one pixel at the target plane, in km.
-        let km_per_pixel =
-            2.0 * self.distance * (crate::renderer::FOV_Y_DEG / 2.0).to_radians().tan()
-                / viewport_height.max(1.0);
+        let km_per_pixel = 2.0
+            * self.distance
+            * (crate::engine::renderer::FOV_Y_DEG / 2.0)
+                .to_radians()
+                .tan()
+            / viewport_height.max(1.0);
 
         // Convert that arc length to an angle on the body: one radian of arc
         // subtends ~one mean radius of surface distance, so scaling by the

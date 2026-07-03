@@ -11,7 +11,7 @@ paths:
 - **WGS84 ellipsoid at origin; world space in km; +Y = north pole; lon0/lat0
   -> +Z; +X = 90 deg E.** This is ITRF/ECEF with axes permuted so north is
   +Y.
-- Constants and helpers in `src/terra.rs` — single source of truth; mesh
+- Constants and helpers in `src/engine/terra.rs` — single source of truth; mesh
   and camera both call it.
 
 ## Axis permutation P (world <-> ECEF)
@@ -39,7 +39,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Luna body frame
 
-- `src/luna.rs` is the lunar twin of `terra.rs`: a **triaxial** ellipsoid
+- `src/engine/luna.rs` is the lunar twin of `terra.rs`: a **triaxial** ellipsoid
   (semi-axes ~1737.4 / 1735.7 / 1734.5 km) in the **same body convention** as
   Terra — +Y = north (rotation pole), selenographic lon0/lat0 (the mean
   sub-Terra point) -> +Z, +X = 90 deg east. `surface_position` scales the
@@ -52,7 +52,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Planet body frames
 
-- `src/planet.rs` is the multi-body twin of `terra.rs`/`luna.rs`: each of the 7
+- `src/engine/planet.rs` is the multi-body twin of `terra.rs`/`luna.rs`: each of the 7
   planets is an **oblate ellipsoid of revolution** (equatorial radius on +X/+Z,
   polar radius on +Y) in the **same body convention** — +Y = north (rotation
   pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`

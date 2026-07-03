@@ -5,13 +5,13 @@
 
 use glam::Vec3;
 
-use crate::application::{self, ApplicationState};
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::satellite::{Propagation, Satellite};
-use crate::simulation::{
+use crate::engine::application::{self, ApplicationState};
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::satellite::{Propagation, Satellite};
+use crate::engine::simulation::{
     self, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, marker_occluded,
 };
-use crate::ui::{
+use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };

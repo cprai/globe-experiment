@@ -1,8 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-use crate::luna;
-use crate::terra;
+use crate::engine::luna;
+use crate::engine::terra;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

@@ -80,7 +80,7 @@ paths:
   derives its Sol direction from `sol_pos` (`normalize(sol_pos - world_pos)` for
   surfaces, `normalize(sol_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
-  per marker (`marker_occluded` in `src/simulation/mod.rs`). No depth test.
+  per marker (`marker_occluded` in `src/engine/simulation/mod.rs`). No depth test.
 - **Orbit paths are instanced mitered line segments** (`vs_path`/`fs_path`),
   drawn just before the markers: constant pixel width via the marker `clip.w`
   trick, watertight miter joints from per-instance neighbor samples (any
@@ -167,7 +167,7 @@ LUNA_AMBIENT 0.02          LUNA_ECLIPSE_GLOW (0.06, 0.012, 0.004)
 terminator: smoothstep(-0.12, 0.18, cos_sol)
 ```
 
-**`src/renderer/mod.rs`** (depth/eclipse): `DEPTH_FORMAT Depth32Float`,
+**`src/engine/renderer/mod.rs`** (depth/eclipse): `DEPTH_FORMAT Depth32Float`,
 `SOL_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra; distinct from the star
 pass's `SOL_ANGULAR_RADIUS` disc-size cheat).
 
@@ -179,14 +179,14 @@ OZONE_ABSORPTION [0.650, 1.881, 0.085]e-3       (tent peak 25 km, +/-15)
 TRANSMITTANCE 256x64 / 40 steps   INSCATTER 256x128 / 32 steps
 ```
 
-**`src/application/input.rs`**:
+**`src/engine/application/input.rs`**:
 ```
 FLICK_SPEED 50   STOP_SPEED 15   HALF_LIFE 0.3   FLICK_TIMEOUT 0.1
 ZOOM_HALF_LIFE_MIN 0.01   ZOOM_HALF_LIFE_MAX 0.1   WHEEL_GAP_CAP 0.25
 ZOOM_COAST_HALF_LIFE 0.15   ZOOM_STOP_RATE 0.1
 ```
 
-**`src/terra.rs`** (WGS84 + dynamics):
+**`src/engine/terra.rs`** (WGS84 + dynamics):
 ```
 SEMI_MAJOR_AXIS_KM 6378.137   INVERSE_FLATTENING 298.257223563
 SEMI_MINOR_AXIS_KM ~6356.752  ECCENTRICITY_SQ ~0.00669438
@@ -194,7 +194,7 @@ MEAN_RADIUS_KM ~6371.0088     GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418
 ANGULAR_VELOCITY_RAD_S 7.292115e-5
 ```
 
-**`src/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
+**`src/engine/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
 scaled by the orbit target's `mean_radius_km()`; values below are the Terra
 target). FOV/near/far moved to `renderer`:
 ```
@@ -202,7 +202,7 @@ MIN_DISTANCE_RADII 0.01 (~63.7)   MAX_DISTANCE_RADII 10 (~63710)   MAX_TILT 80
 DEFAULT_DISTANCE_RADII 2 (Terra ~12742)   defaults: lon 0, lat 0, tilt 0   lat clamp +/-89
 ```
 
-**`src/renderer/mod.rs`**: `STACKS 64`, `SLICES 128` (Terra/Luna meshes only),
+**`src/engine/renderer/mod.rs`**: `STACKS 64`, `SLICES 128` (Terra/Luna meshes only),
 `MARKER_RADIUS_PX 6`, projection `FOV_Y_DEG 45`, `NEAR_PLANE_RADII 0.01`
 (* target radius), `FAR_PLANE_KM 500000` (far-plane *floor*; the actual far
 plane is `max(FAR_PLANE_KM, |camera_pos| + 2*radius)`, so a large orbited body

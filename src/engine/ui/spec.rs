@@ -1,6 +1,7 @@
 //! The headless `--scene` `ui` overlay: the panels deserialized straight from
-//! the scene JSON and run through the exact same [`crate::ui::control_panel`]
-//! path as the live app, so a mock layout is faithful to real output.
+//! the scene JSON and run through the exact same
+//! [`crate::engine::ui::control_panel`] path as the live app, so a mock layout
+//! is faithful to real output.
 //!
 //! Because the interactive instruments split their callback into an
 //! `Interactive*` wrapper, the bare instrument structs are pure render data and
@@ -59,7 +60,7 @@ pub struct UiPanel {
 }
 
 /// The set of deserialized `ui` panels, rendered through the exact same
-/// [`crate::ui::control_panel`] path as the live UI so a mock layout is
+/// [`crate::engine::ui::control_panel`] path as the live UI so a mock layout is
 /// faithful to real output. Every control is inert (no callback) - it renders
 /// but does nothing.
 pub struct PanelSet {

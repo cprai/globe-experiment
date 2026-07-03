@@ -2,7 +2,7 @@ use egui::Stroke;
 use egui_taffy::{Tui, taffy};
 
 use super::{Instrument, leaf};
-use crate::ui::theme::{
+use crate::engine::ui::theme::{
     ACCENT_GREEN, ACCENT_RED, BEVEL_DARK, HAIRLINE, HEADER_AMBER, LABEL_DIM, RECESS_FILL, SPACE_LG,
     SPACE_MD, SPACE_SM,
 };
@@ -33,8 +33,9 @@ pub enum LampStatus {
 /// `status`, plus a dim caption.
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
-/// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`. `dead_code` allowed like [`LampStatus`] (no live producer).
+/// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
+/// borrowing `get_drawables`. `dead_code` allowed like [`LampStatus`] (no live
+/// producer).
 #[allow(dead_code)]
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

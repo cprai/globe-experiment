@@ -36,7 +36,7 @@ present. Currently nineteen entries:
 - **Seven planet textures** (JPEG verbatim, sRGB): `8k_mercury.jpg`,
   `8k_venus_surface.jpg`, `8k_mars.jpg`, `8k_jupiter.jpg`, `8k_saturn.jpg` (8K),
   `2k_uranus.jpg`, `2k_neptune.jpg` (2K). The filename<->planet mapping is owned
-  by `CelestialBody::texture_file()` (`src/planet.rs`); the renderer's `include_bytes!`
+  by `CelestialBody::texture_file()` (`src/engine/planet.rs`); the renderer's `include_bytes!`
   list + this table must stay in `planet::ALL` order. ~686 MB VRAM total — see
   `constraints.md`.
 

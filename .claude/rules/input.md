@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/application/input.rs"
+  - "src/engine/application/input.rs"
 ---
 
 # Input controller rules

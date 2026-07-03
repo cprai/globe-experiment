@@ -23,8 +23,10 @@ pub use body::{CelestialBody, TerraSystemEntity};
 #[allow(unused_imports)]
 pub use clock::Clock;
 
-use crate::terra;
-use crate::ui::{Header, Instrument, InteractiveToggle, PanelAnchor, Toggle, UIDrawablePanel};
+use crate::engine::terra;
+use crate::engine::ui::{
+    Header, Instrument, InteractiveToggle, PanelAnchor, Toggle, UIDrawablePanel,
+};
 use celestial_sphere::CelestialSphere;
 
 /// Synthetic characteristic radius (km) for a free [`CameraTarget::Coordinate`]
@@ -151,8 +153,9 @@ impl CameraTarget {
 /// scenario requires no changes to the application layer.
 ///
 /// This trait is UI-agnostic. The egui panel reads/drives a scenario through a
-/// separate `crate::ui::UIDrawable` impl (no `clock_mut`, no UI snapshots from
-/// `frame_state`); the rendering trait is kept distinct from `Simulation`.
+/// separate `crate::engine::ui::UIDrawable` impl (no `clock_mut`, no UI
+/// snapshots from `frame_state`); the rendering trait is kept distinct from
+/// `Simulation`.
 pub trait Simulation {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
@@ -181,8 +184,8 @@ pub trait Simulation {
     /// look direction + up. Satellite propagation happens here, once per frame
     /// per satellite. The per-satellite readout produced by the same
     /// propagation is stashed on the scenario so the immediately-following
-    /// `crate::ui::UIDrawable::get_drawables` call (the egui panel) reports
-    /// values matching the rendered markers.
+    /// `crate::engine::ui::UIDrawable::get_drawables` call (the egui panel)
+    /// reports values matching the rendered markers.
     fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState;
 }
 
@@ -193,7 +196,7 @@ pub trait Simulation {
 /// matrices - only what the renderer cannot recompute: the time, the camera,
 /// and the satellite markers. Returned by [`Simulation::frame_state`] from the
 /// application-resolved camera; the UI readout for the same frame is pulled
-/// separately via `crate::ui::UIDrawable`.
+/// separately via `crate::engine::ui::UIDrawable`.
 #[derive(Clone)]
 pub struct RenderState {
     /// The instant the frame depicts. The renderer evaluates the ephemeris at
@@ -251,8 +254,8 @@ pub struct SatelliteMarker {
 /// `Vec<SatelliteTelemetry>` each frame in [`Simulation::frame_state`], built
 /// from the same propagation that fills [`RenderState::markers`] (so readout
 /// and marker can never disagree, and the orbit is propagated once per frame),
-/// and turns it into `crate::ui` instruments in its `crate::ui::UIDrawable`
-/// impl.
+/// and turns it into `crate::engine::ui` instruments in its
+/// `crate::engine::ui::UIDrawable` impl.
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").

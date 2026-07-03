@@ -10,11 +10,13 @@
 use glam::{DVec3, Vec3};
 use satkit::Instant;
 
-use crate::application::{self, ApplicationState};
-use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
-use crate::simulation::{self, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded};
-use crate::ui::{
+use crate::engine::application::{self, ApplicationState};
+use crate::engine::simulation::celestial_sphere::CelestialSphere;
+use crate::engine::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
+use crate::engine::simulation::{
+    self, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded,
+};
+use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };

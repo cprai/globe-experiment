@@ -10,9 +10,9 @@
   modules. Any test needing satkit globals must seed via the `Once`-guarded
   `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is set-once
   per process; a second bare `init_satkit` panics in the shared test binary).
-  `cargo test` builds and runs the shared-module tests **twice** — once per
-  binary's test harness (the two bin roots each compile their own module
-  tree); each harness is its own process, so the `Once` seeding still holds.
+  `cargo test` builds and runs the shared-engine tests **twice** — once per
+  binary's test harness (both bin roots compile the shared `engine`); each
+  harness is its own process, so the `Once` seeding still holds.
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
 - **After every shader edit**: `naga --compact --capabilities none
   shaders/scene.wgsl`. This is the same naga the app links through wgpu —

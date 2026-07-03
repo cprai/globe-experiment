@@ -1,5 +1,5 @@
 //! Physical constants and geometry for Luna, in real-world units - the
-//! lunar twin of [`crate::terra`].
+//! lunar twin of [`crate::engine::terra`].
 //!
 //! World space throughout the renderer is **kilometers**; this module gives the
 //! Luna's body-fixed (selenographic) surface points and normals in the same

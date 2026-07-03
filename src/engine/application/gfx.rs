@@ -1,7 +1,7 @@
 //! The windowed presentation side of rendering: `Gfx` owns the GPU surface,
 //! swapchain configuration, and per-frame present, wrapping the shared scene
-//! core (`crate::renderer::SceneRenderer`). It lives in `application` (not
-//! `renderer`) because it is winit-bound - the surface is built from the
+//! core (`crate::engine::renderer::SceneRenderer`). It lives in `application`
+//! (not `renderer`) because it is winit-bound - the surface is built from the
 //! window and every frame outcome drives window visibility/redraw scheduling -
 //! and because the `headless` binary must compile the renderer without any
 //! winit code (its offscreen twin is `crate::offscreen::OffscreenRenderer`).
@@ -12,11 +12,11 @@ use winit::dpi::PhysicalSize;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
-use crate::renderer::{
+use crate::engine::renderer::{
     DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
-use crate::simulation::RenderState;
+use crate::engine::simulation::RenderState;
 
 /// The renderer: owns the GPU surface/device/queue, the scene resources
 /// (pipelines, buffers, bind group), and the egui paint backend. Created once

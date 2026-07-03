@@ -19,8 +19,8 @@
 
 use glam::{Mat3, Vec3};
 
-use crate::planet;
-use crate::{luna, terra};
+use crate::engine::planet;
+use crate::engine::{luna, terra};
 
 /// A member of the Terra system. Luna is named here rather than as a
 /// top-level body so the hierarchy reads as "the Terra system contains the
@@ -33,8 +33,8 @@ pub enum TerraSystemEntity {
 }
 
 /// Identity of a renderable body, with no placement. This is the vocabulary the
-/// [`crate::simulation::CameraTarget`] and the body selectors speak; per-frame
-/// position/orientation lives in [`BodyState`].
+/// [`crate::engine::simulation::CameraTarget`] and the body selectors speak;
+/// per-frame position/orientation lives in [`BodyState`].
 ///
 /// Hierarchical: Terra and Luna are reached through [`TerraSystemEntity`];
 /// the seven planets are listed individually. The variants are ordered by
@@ -42,7 +42,7 @@ pub enum TerraSystemEntity {
 /// (between Venus and Mars). A future `SaturnSystem(SaturnSystemEntity)` would
 /// group Saturn + its rings the same way the Terra system groups Terra +
 /// Luna. The planet-specific data (oblate radii, IAU rotation, texture)
-/// hangs off these variants in [`crate::planet`].
+/// hangs off these variants in [`crate::engine::planet`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CelestialBody {
     Mercury,

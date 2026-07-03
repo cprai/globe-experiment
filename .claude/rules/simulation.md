@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/simulation/**/*.rs"
+  - "src/engine/simulation/**/*.rs"
 ---
 
 # Simulation & satkit rules
@@ -101,7 +101,7 @@ Luna is positioned and oriented per frame in `CelestialSphere::at`:
   +Z sub-Terra) into the standard (Z=pole) frame `M_body2gcrf` expects, so the
   mesh shares Terra's body convention. It is a pure rotation (normals need no
   transpose).
-- Luna is a **triaxial ellipsoid** (`src/luna.rs`), the long axis toward
+- Luna is a **triaxial ellipsoid** (`src/engine/luna.rs`), the long axis toward
   Terra; the deviation from a sphere is ~1-3 km (imperceptible) but modeled.
 - Test: `luna_near_side_faces_terra` asserts the sub-Terra point faces Terra
   within the optical libration (~8 deg), validating the model render-free.
@@ -118,10 +118,10 @@ the same DE440:
 - **Orientation** (`iau_body_to_gcrf`, the planet twin of `lunar_body_to_gcrf`
   without the libration series, sharing the `body_basis` helper): pole
   `alpha0(T)`/`delta0(T)` + prime meridian `W = W0 + W_dot*d` from the IAU
-  constants in `src/planet.rs` (`w_dot` negative for the retrograde rotators
+  constants in `src/engine/planet.rs` (`w_dot` negative for the retrograde rotators
   Venus, Uranus). `planet_rot = P * R_gcrf2itrf * iau_body_to_gcrf * P^T`, same
   `P^T` un-permute as Luna.
-- Planets are **oblate ellipsoids** (`src/planet.rs`: equatorial vs polar radii;
+- Planets are **oblate ellipsoids** (`src/engine/planet.rs`: equatorial vs polar radii;
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
   `celestial_sphere` so `planet.rs` stays satkit-free (like `terra`/`luna`).
