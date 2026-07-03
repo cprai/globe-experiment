@@ -1,10 +1,10 @@
 {
-  "name": "rust-claude-code",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
-  "mounts": [
-    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
-  ],
-  "remoteUser": "vscode"
+    "name": "rust-claude-code",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "mounts": [
+        "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
+    ],
+    "remoteUser": "vscode"
 }
