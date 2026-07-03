@@ -1,26 +1,10 @@
 {
   "name": "rust-claude-code",
-  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {},
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  "build": {
+    "dockerfile": "Dockerfile"
   },
   "mounts": [
     "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
   ],
-  "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
-    "LIBGL_ALWAYS_SOFTWARE": "1",
-    "VK_DRIVER_FILES": "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json:/usr/share/vulkan/icd.d/lvp_icd.aarch64.json"
-  },
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools libgl1-mesa-dri libglx-mesa0 mesa-utils && sudo chown -R vscode:vscode /home/vscode/.claude && cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgslfmt && cargo install --git https://github.com/gfx-rs/wgpu naga-cli",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "rust-lang.rust-analyzer",
-        "tamasfe.even-better-toml"
-      ]
-    }
-  },
   "remoteUser": "vscode"
 }
