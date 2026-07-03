@@ -33,7 +33,7 @@ breaks Apple Silicon (Metal: ASTC/ETC2 only, not BC/S3TC).
 - **Second noise octave** in `value_noise_3d` if grain reads too regular
   (keep fixed-scale to preserve coherent wipe).
 - **No satellite markers in render mode** (deliberate). If wanted: implement
-  a headless `Simulation` variant (or add a `SimulationState::at(instant)`
-  helper) feeding a scenario's `frame_state`, instead of the current direct
-  `RenderState` construction in `snapshot::run`.
+  a headless `Simulation` variant (or a helper building a clock + celestial
+  sphere at an instant) feeding a scenario's `frame_state`, instead of the
+  current direct `RenderState` construction in `snapshot::run`.
 - **Real bloom post-process** — explicitly **declined** for now.

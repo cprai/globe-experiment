@@ -1514,7 +1514,8 @@ impl SceneRenderer {
     /// `&mut self` (and `&Device`) because the marker and path instance
     /// buffers grow on demand when more satellites are tracked than they
     /// currently hold. All camera/astronomical math is done by the simulation
-    /// (see `simulation::SimulationState`), except the orbit-path propagation
+    /// (each scenario's clock + celestial sphere), except the orbit-path
+    /// propagation
     /// (`satellite::orbit_path_inertial`), which runs here from each marker's
     /// `Propagation` (analytic SGP4 or numerical orbitprop); otherwise this
     /// just packs finished values into the GPU layout.

@@ -18,19 +18,20 @@ Six top-level modules + `terra`:
 - **`application`** — window, camera, input, egui logic. Owns `Camera` +
   `Controller`. `ApplicationState<S: Simulation>` is generic over the
   simulation — nothing outside this module names the `Camera` type.
-- **`simulation`** — the `Simulation` trait (UI-agnostic), `SimulationState`
-  (clock + celestial sphere; **no satellites**) plus its shared-core `impl
-  UIDrawable for SimulationState`, `RenderState`, `SatelliteTelemetry`, and
-  helpers. **No winit/wgpu dependency. No `Camera` type.** Depends on `ui`
-  (hence egui) only for that `UIDrawable` impl. Takes resolved `Vec3`/`Mat4`;
-  returns `RenderState` (UI readout pulled separately via `ui::UIDrawable`).
+- **`simulation`** — the `Simulation` trait (UI-agnostic), `RenderState`,
+  `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
+  helpers. The clock + celestial sphere are held **directly by each scenario
+  struct** (there is no shared core struct). **No winit/wgpu dependency. No
+  `Camera` type.** Depends on `ui` (hence egui) only for the selector panel
+  builders. Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI readout
+  pulled separately via `ui::UIDrawable`).
 - **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
 - **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
   `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
   `control_panel` that frames each panel at its anchored corner and lays out
   its rows of boxed `Instrument`s with taffy (`egui_taffy`; content-sized, no
-  pixel positions; no `Clock`/scenario knowledge). The shared-core `impl
-  UIDrawable for SimulationState` lives in `simulation`, not here.
+  pixel positions; no `Clock`/scenario knowledge). Each scenario implements
+  `UIDrawable` itself (its own Time panel + scenario panels).
   `ui/instruments/*.rs` is one `Instrument`-impl struct per file;
   `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
   panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
@@ -38,8 +39,10 @@ Six top-level modules + `terra`:
 - **`terra`** — WGS84 constants + helpers. Single source of truth for all
   geometry; mesh and camera both call it.
 - **`scenarios`** — one `<Name>Simulation` struct + `Simulation` impl per
-  past scenario, each with a `run()`. Satellites live here, not in
-  `simulation`.
+  past scenario, each with a `run()`. Each struct holds its `Clock` +
+  `CelestialSphere` directly and builds its own Time panel (the panel code is
+  deliberately duplicated per scenario so scenarios can diverge). Satellites
+  live here, not in `simulation`.
 - **`snapshot`** — headless single-frame render mode.
 
 ## Where things live

@@ -1,11 +1,12 @@
 //! Simulation state and astronomical math: the simulation clock and the
-//! ephemeris-driven celestial sphere. This module owns the shared simulation
-//! core, defines the `Simulation` trait that every scenario implements, and
-//! carries the `impl UIDrawable for SimulationState` that emits the shared-core
-//! panel. It stays free of any windowing (winit) or GPU (wgpu) dependency and
-//! never references the camera type (the camera lives in `application`); it
-//! does depend on `ui` for the `UIDrawable`/`Instrument` types the shared-core
-//! panel is built from.
+//! ephemeris-driven celestial sphere. This module defines the `Simulation`
+//! trait that every scenario implements; the clock + celestial sphere live
+//! directly in each scenario struct, which also builds its own Time panel
+//! (deliberately per-scenario, so scenarios can diverge). It stays free of
+//! any windowing (winit) or GPU (wgpu) dependency and never references the
+//! camera type (the camera lives in `application`); it does depend on `ui`
+//! for the `UIDrawablePanel`/`Instrument` types the selector panels are
+//! built from.
 
 pub mod body;
 pub mod celestial_sphere;
@@ -19,10 +20,7 @@ pub use body::{CelestialBody, TerraSystemEntity};
 pub use clock::Clock;
 
 use crate::terra;
-use crate::ui::{
-    Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
-    UIDrawable, UIDrawablePanel,
-};
+use crate::ui::{Header, Instrument, InteractiveToggle, PanelAnchor, Toggle, UIDrawablePanel};
 use celestial_sphere::CelestialSphere;
 
 /// Synthetic characteristic radius (km) for a free [`CameraTarget::Coordinate`]
@@ -150,8 +148,7 @@ impl CameraTarget {
 ///
 /// This trait is UI-agnostic. The egui panel reads/drives a scenario through a
 /// separate `crate::ui::UIDrawable` impl (no `clock_mut`, no UI snapshots from
-/// `frame_state`); the rendering trait is kept distinct from `Simulation` even
-/// though both the trait and the shared-core impl now live in this module.
+/// `frame_state`); the rendering trait is kept distinct from `Simulation`.
 pub trait Simulation {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
@@ -271,45 +268,6 @@ pub struct SatelliteTelemetry {
 /// about the `celestial_sphere` submodule.
 pub fn init() {
     celestial_sphere::init_satkit();
-}
-
-/// The shared simulation core: the clock (datetime + play/paused + speed) and
-/// the ephemeris-driven celestial sphere (Sol direction + star-map
-/// orientation). Held by composition inside each scenario's simulation struct,
-/// which adds its own satellite list and implements [`Simulation`].
-///
-/// Does not own satellites - those live in the scenario struct so each scenario
-/// can choose its own tracked objects without changing this shared core. This
-/// struct owns the astronomical infrastructure; the `Simulation` trait owns the
-/// per-scenario policy.
-pub struct SimulationState {
-    pub clock: Clock,
-    pub celestial_sphere: CelestialSphere,
-}
-
-impl SimulationState {
-    /// Builds the core state starting at `start_epoch`. `init` must already
-    /// have run (the celestial sphere reads satkit globals).
-    pub fn new(start_epoch: Instant) -> Self {
-        let clock = Clock::new(start_epoch);
-        let celestial_sphere = CelestialSphere::at(&clock.now());
-        Self {
-            clock,
-            celestial_sphere,
-        }
-    }
-
-    /// Advances the clock and, while it is running, re-evaluates the
-    /// ephemeris-driven celestial sphere at the new time. Returns whether the
-    /// clock is running - an "animating" source that keeps frames coming; when
-    /// paused nothing advances and the app can go idle.
-    pub fn advance(&mut self) -> bool {
-        let running = self.clock.tick();
-        if running {
-            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
-        }
-        running
-    }
 }
 
 /// Tracks which body the user has chosen to orbit (Terra or Luna) and builds
@@ -571,71 +529,6 @@ impl BodySelector {
             anchor: PanelAnchor::TopRight,
             rows,
         }
-    }
-}
-
-impl UIDrawable for SimulationState {
-    /// The shared-core panel, read from live state: the clock datetime, and
-    /// the play/pause + speed controls whose
-    /// callbacks mutate the live clock. The two control callbacks capture
-    /// disjoint clock fields (`paused` vs `multiplier`) via direct field
-    /// assignment - a `Clock` method would borrow the whole clock and collide.
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
-        // so no shared borrow of the clock outlives into the mutable callback
-        // captures below.
-        let datetime = self.clock.datetime_label();
-        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
-        // font is monospace, so a fixed-width value keeps the digit window
-        // from resizing as the speed changes.
-        let speed = format!("{:>5.1}", self.clock.multiplier);
-        let running = !self.clock.paused;
-
-        // Exponential (base e) speed: the slider edits the exponent, so
-        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
-        // right, 10x at the midpoint. The mapping lives here, not in the panel.
-        let speed_exp = self.clock.multiplier.ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
-
-        // The producer groups instruments into rows + picks content only; all
-        // styling and every metric live in the instrument modules / theme
-        // (taffy bottom-aligns the Run key with the speed window beside it).
-        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
-            vec![Box::new(Header {
-                title: "Time".to_string(),
-            })],
-            vec![Box::new(Readout {
-                label: "UTC".to_string(),
-                value: datetime,
-                unit: String::new(),
-            })],
-            vec![
-                Box::new(Readout {
-                    label: "Speed".to_string(),
-                    value: speed,
-                    unit: "x".to_string(),
-                }),
-                Box::new(InteractiveToggle {
-                    toggle: Toggle {
-                        label: "Run".to_string(),
-                        active: running,
-                    },
-                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
-                }),
-            ],
-            vec![Box::new(InteractiveSlider {
-                slider: Slider {
-                    value: speed_exp,
-                    range: exp_range,
-                },
-                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
-            })],
-        ];
-
-        vec![UIDrawablePanel {
-            anchor: PanelAnchor::TopLeft,
-            rows,
-        }]
     }
 }
 

@@ -9,18 +9,17 @@
 //! - [`spec`] - the serde-deserialized [`PanelSet`]/[`UiPanel`]/[`UiElement`]
 //!   for the `render --scene` overlay.
 //! - this file - the [`UIDrawable`] trait, [`UIDrawablePanel`]/[`PanelAnchor`],
-//!   and [`control_panel`]. The shared-core `impl UIDrawable for
-//!   SimulationState` lives in `crate::simulation` alongside the type.
+//!   and [`control_panel`]. Each scenario implements `UIDrawable` itself,
+//!   building its own Time panel plus any scenario panels.
 //!
 //! Panels are laid out by taffy flexbox (via `egui_taffy`): a panel is a
 //! content-sized flex column of rows, each row a flex row of instruments -
 //! there are no absolute pixel positions or fixed panel boxes. A producer
 //! groups instruments into rows; every metric comes from the `theme` tokens.
 //!
-//! `SimulationState` (clock + celestial sphere) is the shared core that every
-//! scenario struct holds by composition. The panel reads/drives a scenario
-//! through its `UIDrawable` impl, which is kept separate from the `Simulation`
-//! trait.
+//! The clock + celestial sphere live directly in each scenario struct. The
+//! panel reads/drives a scenario through its `UIDrawable` impl, which is kept
+//! separate from the `Simulation` trait.
 
 mod instruments;
 mod spec;
@@ -72,10 +71,9 @@ pub struct UIDrawablePanel<'a> {
 
 /// Anything the control panel can render: it yields a list of anchored
 /// [`UIDrawablePanel`]s, each owning rows of [`Instrument`]s. Implemented by
-/// [`crate::simulation::SimulationState`] (one shared-core panel)
-/// and by each scenario (which returns the core panel plus its own
-/// per-satellite panel). `&mut self` so a control's callback can capture a
-/// disjoint mutable field of live state.
+/// each scenario (which returns its Time panel plus its own scenario panels).
+/// `&mut self` so a control's callback can capture a disjoint mutable field
+/// of live state.
 pub trait UIDrawable {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>;
 }

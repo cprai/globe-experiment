@@ -17,15 +17,20 @@ use satkit::Instant;
 
 use crate::application::{self, ApplicationState};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{
-    self, BodySelector, CameraTarget, RenderState, Simulation, SimulationState,
+use crate::simulation::{self, BodySelector, CameraTarget, Clock, RenderState, Simulation};
+use crate::ui::{
+    Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
+    UIDrawable, UIDrawablePanel,
 };
-use crate::ui::{UIDrawable, UIDrawablePanel};
 
-/// Empty solar-system simulation: the shared core (clock + celestial sphere)
+/// Empty solar-system simulation: the clock + celestial sphere held directly,
 /// plus the body selector. No satellites.
 pub struct SolarSystemSimulation {
-    simulation: SimulationState,
+    /// Simulation clock (datetime + play/paused + speed).
+    clock: Clock,
+    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
+    /// clock runs.
+    celestial_sphere: CelestialSphere,
     selector: BodySelector,
 }
 
@@ -36,8 +41,12 @@ impl SolarSystemSimulation {
         // clock auto-plays from here; the planets and their phases evolve.
         let epoch =
             Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
+        // `simulation::init` must already have run (the celestial sphere reads
+        // satkit globals).
+        let clock = Clock::new(epoch);
         Self {
-            simulation: SimulationState::new(epoch),
+            celestial_sphere: CelestialSphere::at(&clock.now()),
+            clock,
             selector: BodySelector::default(),
         }
     }
@@ -47,11 +56,19 @@ impl Simulation for SolarSystemSimulation {
     fn advance(&mut self) -> bool {
         // Fold in any pending body-key press before the camera target is read.
         self.selector.apply_requests();
-        self.simulation.advance()
+        // Advance the clock and, while it is running, re-evaluate the
+        // ephemeris-driven celestial sphere at the new time. Returns whether
+        // the clock is running - an "animating" source that keeps frames
+        // coming; when paused nothing advances and the app can go idle.
+        let running = self.clock.tick();
+        if running {
+            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
+        }
+        running
     }
 
     fn celestial(&self) -> &CelestialSphere {
-        &self.simulation.celestial_sphere
+        &self.celestial_sphere
     }
 
     fn camera_target(&self) -> CameraTarget {
@@ -64,7 +81,7 @@ impl Simulation for SolarSystemSimulation {
         // render origin (which must match the one the camera built its rig
         // against - both come from `camera_target()` this frame).
         RenderState {
-            time: self.simulation.clock.now(),
+            time: self.clock.now(),
             camera_target: self.camera_target(),
             camera_pos,
             camera_look_at: look_at,
@@ -76,9 +93,67 @@ impl Simulation for SolarSystemSimulation {
 
 impl UIDrawable for SolarSystemSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The shared-core panel plus the one-key-per-body selector. The two
-        // panels borrow disjoint fields (`simulation` vs `selector`).
-        let mut panels = self.simulation.get_drawables();
+        // The Time panel (datetime + run/speed) plus the one-key-per-body
+        // selector. The panels borrow disjoint fields (`clock` vs `selector`).
+        // The panel builder is deliberately kept per-scenario - scenarios may
+        // diverge in what they expose.
+        //
+        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
+        // so no shared borrow of the clock outlives into the mutable callback
+        // captures below. The two control callbacks capture disjoint clock
+        // fields (`paused` vs `multiplier`) via direct field assignment - a
+        // `Clock` method would borrow the whole clock and collide.
+        let datetime = self.clock.datetime_label();
+        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
+        // font is monospace, so a fixed-width value keeps the digit window
+        // from resizing as the speed changes.
+        let speed = format!("{:>5.1}", self.clock.multiplier);
+        let running = !self.clock.paused;
+
+        // Exponential (base e) speed: the slider edits the exponent, so
+        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
+        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        let speed_exp = self.clock.multiplier.ln();
+        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+
+        // The producer groups instruments into rows + picks content only; all
+        // styling and every metric live in the instrument modules / theme
+        // (taffy bottom-aligns the Run key with the speed window beside it).
+        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
+                title: "Time".to_string(),
+            })],
+            vec![Box::new(Readout {
+                label: "UTC".to_string(),
+                value: datetime,
+                unit: String::new(),
+            })],
+            vec![
+                Box::new(Readout {
+                    label: "Speed".to_string(),
+                    value: speed,
+                    unit: "x".to_string(),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Run".to_string(),
+                        active: running,
+                    },
+                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                }),
+            ],
+            vec![Box::new(InteractiveSlider {
+                slider: Slider {
+                    value: speed_exp,
+                    range: exp_range,
+                },
+                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+            })],
+        ];
+        let mut panels = vec![UIDrawablePanel {
+            anchor: PanelAnchor::TopLeft,
+            rows: time_rows,
+        }];
         panels.push(self.selector.panel());
         panels
     }

@@ -13,12 +13,10 @@ use satkit::Instant;
 use crate::application::{self, ApplicationState};
 use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
-use crate::simulation::{
-    self, RenderState, SatelliteMarker, Simulation, SimulationState, marker_occluded,
-};
+use crate::simulation::{self, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded};
 use crate::ui::{
-    Button, DualReadout, Header, Instrument, InteractiveHoldButton, PanelAnchor, Readout,
-    UIDrawable, UIDrawablePanel,
+    Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
+    InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
 // This scenario's seed TLE, inlined as a source literal - see `iss.rs` for the
@@ -51,11 +49,15 @@ struct ManualTelemetry {
     shape: Option<OrbitShape>,
 }
 
-/// Manually-controlled simulation: the shared core by composition, plus the
-/// satellite's live GCRF state vector (re-anchored to the clock every frame)
-/// and the six burn request flags.
+/// Manually-controlled simulation: the clock + celestial sphere held directly,
+/// plus the satellite's live GCRF state vector (re-anchored to the clock every
+/// frame) and the six burn request flags.
 pub struct ManualControlSimulation {
-    simulation: SimulationState,
+    /// Simulation clock (datetime + play/paused + speed).
+    clock: Clock,
+    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
+    /// clock runs.
+    celestial_sphere: CelestialSphere,
     /// Object name from the seed TLE, for the panel header.
     name: String,
     /// The satellite's GCRF state vector, valid at `orbit_epoch`. THE orbit -
@@ -85,8 +87,12 @@ impl ManualControlSimulation {
         let mut seed = Satellite::from_tle(ISS_TLE);
         let epoch = seed.epoch();
         let orbit = seed.state_at(&epoch).orbit;
+        // `simulation::init` must already have run (the celestial sphere reads
+        // satkit globals).
+        let clock = Clock::new(epoch);
         Self {
-            simulation: SimulationState::new(epoch),
+            celestial_sphere: CelestialSphere::at(&clock.now()),
+            clock,
             name: seed.name,
             orbit,
             orbit_epoch: epoch,
@@ -138,8 +144,14 @@ impl ManualControlSimulation {
 
 impl Simulation for ManualControlSimulation {
     fn advance(&mut self) -> bool {
-        let running = self.simulation.advance();
-        let now = self.simulation.clock.now();
+        // Advance the clock and, while it is running, re-evaluate the
+        // ephemeris-driven celestial sphere at the new time (paused = nothing
+        // advances and the app can go idle).
+        let running = self.clock.tick();
+        if running {
+            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
+        }
+        let now = self.clock.now();
 
         // Re-anchor the state vector to the clock: one numerical step over
         // this frame's simulation dt, so the stored initial conditions are
@@ -172,11 +184,11 @@ impl Simulation for ManualControlSimulation {
     }
 
     fn celestial(&self) -> &CelestialSphere {
-        &self.simulation.celestial_sphere
+        &self.celestial_sphere
     }
 
     fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
-        let now = self.simulation.clock.now();
+        let now = self.clock.now();
 
         // `advance` just re-anchored the state to `now`, so this is a pure
         // frame change (GCRF -> the world-frame marker), no propagation.
@@ -210,11 +222,69 @@ impl Simulation for ManualControlSimulation {
 
 impl UIDrawable for ManualControlSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The shared-core panel first (its callbacks borrow `self.simulation`),
-        // then the telemetry panel from the disjoint `last_telemetry`, then
-        // the Burns panel whose key callbacks each capture one disjoint
-        // `burn_*` flag - all coexisting borrows of separate fields.
-        let mut panels = self.simulation.get_drawables();
+        // The Time panel first (its callbacks capture disjoint `self.clock`
+        // fields), then the telemetry panel from the disjoint `last_telemetry`,
+        // then the Burns panel whose key callbacks each capture one disjoint
+        // `burn_*` flag - all coexisting borrows of separate fields. The panel
+        // builder is deliberately kept per-scenario (like the propagation
+        // loop) - scenarios may diverge in what they expose.
+        //
+        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
+        // so no shared borrow of the clock outlives into the mutable callback
+        // captures below. The two control callbacks capture disjoint clock
+        // fields (`paused` vs `multiplier`) via direct field assignment - a
+        // `Clock` method would borrow the whole clock and collide.
+        let datetime = self.clock.datetime_label();
+        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
+        // font is monospace, so a fixed-width value keeps the digit window
+        // from resizing as the speed changes.
+        let clock_speed = format!("{:>5.1}", self.clock.multiplier);
+        let running = !self.clock.paused;
+
+        // Exponential (base e) speed: the slider edits the exponent, so
+        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
+        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        let speed_exp = self.clock.multiplier.ln();
+        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+
+        // The producer groups instruments into rows + picks content only; all
+        // styling and every metric live in the instrument modules / theme
+        // (taffy bottom-aligns the Run key with the speed window beside it).
+        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
+                title: "Time".to_string(),
+            })],
+            vec![Box::new(Readout {
+                label: "UTC".to_string(),
+                value: datetime,
+                unit: String::new(),
+            })],
+            vec![
+                Box::new(Readout {
+                    label: "Speed".to_string(),
+                    value: clock_speed,
+                    unit: "x".to_string(),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Run".to_string(),
+                        active: running,
+                    },
+                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                }),
+            ],
+            vec![Box::new(InteractiveSlider {
+                slider: Slider {
+                    value: speed_exp,
+                    range: exp_range,
+                },
+                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+            })],
+        ];
+        let mut panels = vec![UIDrawablePanel {
+            anchor: PanelAnchor::TopLeft,
+            rows: time_rows,
+        }];
 
         if let Some(telemetry) = &self.last_telemetry {
             // Values padded to their widest form (monospace font), so the

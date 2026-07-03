@@ -179,7 +179,7 @@ pub fn run(params: RenderParams) {
     simulation::init();
 
     // Build the frame directly from the celestial sphere + camera: render mode
-    // has no clock, no tracked satellites, and no SimulationState. The camera
+    // has no clock, no tracked satellites, and no scenario struct. The camera
     // math is identical to the windowed path (see `application`'s redraw).
     let celestial = CelestialSphere::at(&time);
     // Camera rig uses the equatorial frame (`star_rot_inv`); the star texture

@@ -18,29 +18,34 @@ time window) and wires it into the clap CLI.
      `concat!` of the three TLE lines (name + two element lines). TLE data is
      **deliberately duplicated** per scenario — do not factor it into a
      shared const.
-   - defines a `pub struct <Name>Simulation { simulation: SimulationState,
-     satellites: Vec<Satellite>, last_telemetry: Vec<SatelliteTelemetry> }`.
-   - implements `Simulation` for it (`advance`, `celestial_to_world`,
-     `frame_state`). The `frame_state` impl propagates `self.satellites` using
-     `self.simulation.clock.now()`, fills in `RenderState` from
-     `self.simulation.celestial_sphere`, and stashes the per-satellite readout
-     into `self.last_telemetry`. Use `marker_occluded` from `crate::simulation`
+   - defines a `pub struct <Name>Simulation { clock: Clock, celestial_sphere:
+     CelestialSphere, satellites: Vec<Satellite>, last_telemetry:
+     Vec<SatelliteTelemetry> }` (the clock + celestial sphere are direct
+     fields; there is no shared core struct).
+   - implements `Simulation` for it (`advance`, `celestial`, `frame_state`).
+     `advance` ticks the clock and, while it is running, re-evaluates
+     `CelestialSphere::at(&self.clock.now())`. The `frame_state` impl
+     propagates `self.satellites` using `self.clock.now()`, fills in
+     `RenderState`, and stashes the per-satellite readout into
+     `self.last_telemetry`. Use `marker_occluded` from `crate::simulation`
      for visibility testing.
    - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
      `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
-     you use, e.g. `Header`/`DualReadout`/`Readout`, from `crate::ui`): return
-     `self.simulation.get_drawables()` (the shared-core panel) then push **one**
-     `UIDrawablePanel` (e.g. `anchor: PanelAnchor::TopRight`) whose `elements`
-     are a `Vec<Box<dyn Instrument>>` of per-satellite readouts from
-     `self.last_telemetry` (e.g. `Box::new(Header { .. })`), positioned relative
-     to the panel (top = `[0,0]`).
+     you use, from `crate::ui`): build the top-left **Time panel** first (copy
+     it from an existing scenario: UTC readout, speed readout, Run toggle +
+     speed slider whose callbacks assign the disjoint `self.clock.paused` /
+     `self.clock.multiplier` fields directly — the panel code is deliberately
+     duplicated per scenario), then push **one** scenario `UIDrawablePanel`
+     (e.g. `anchor: PanelAnchor::TopRight`) whose rows are per-satellite
+     readouts from `self.last_telemetry` (e.g. `Box::new(Header { .. })`).
    - has a `run()` function that: calls `simulation::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
      use), then calls
      `application::run(ApplicationState::new(<Name>Simulation::new()))`.
    - In `<Name>Simulation::new()`: build `satellites` first (for the epoch),
-     take `satellites.first().expect(...).epoch()` as the clock start, and
-     construct `SimulationState::new(epoch)`.
+     take `satellites.first().expect(...).epoch()` as the clock start, then
+     `let clock = Clock::new(epoch);` and `celestial_sphere:
+     CelestialSphere::at(&clock.now())`.
 2. **Wire the CLI** in `src/main.rs`: add a `ScenarioName` `ValueEnum`
    variant (use `#[value(name = "<token>")]` to keep the token snake_case)
    and dispatch to the new `run`. `list_scenarios` iterates

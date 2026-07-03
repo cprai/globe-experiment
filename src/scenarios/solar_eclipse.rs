@@ -10,21 +10,25 @@ use satkit::Instant;
 
 use crate::application::{self, ApplicationState, Camera};
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{
-    self, CameraTarget, RenderState, Simulation, SimulationState, TargetSelector,
+use crate::simulation::{self, CameraTarget, Clock, RenderState, Simulation, TargetSelector};
+use crate::ui::{
+    Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
+    UIDrawable, UIDrawablePanel,
 };
-use crate::ui::{UIDrawable, UIDrawablePanel};
 
 /// Eye distance for the day-side framing (km): Terra fills most of the
 /// frame with Luna's umbral shadow spot centered near the subsolar point.
 const VIEW_DISTANCE_KM: f32 = 22000.0;
 
-/// Empty solar-eclipse simulation: just the shared core (clock + celestial
-/// sphere); no satellites. Carries a [`TargetSelector`] so the view can be
-/// switched between orbiting Terra (the default day-side framing) and
-/// orbiting Luna.
+/// Empty solar-eclipse simulation: just the clock + celestial sphere; no
+/// satellites. Carries a [`TargetSelector`] so the view can be switched
+/// between orbiting Terra (the default day-side framing) and orbiting Luna.
 pub struct SolarEclipseSimulation {
-    simulation: SimulationState,
+    /// Simulation clock (datetime + play/paused + speed).
+    clock: Clock,
+    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
+    /// clock runs.
+    celestial_sphere: CelestialSphere,
     selector: TargetSelector,
 }
 
@@ -36,8 +40,12 @@ impl SolarEclipseSimulation {
         // ephemeris/Earth-orientation accuracy holds.
         let epoch =
             Instant::from_datetime(2024, 4, 8, 17, 47, 0.0).expect("valid solar-eclipse datetime");
+        // `simulation::init` must already have run (the celestial sphere reads
+        // satkit globals).
+        let clock = Clock::new(epoch);
         Self {
-            simulation: SimulationState::new(epoch),
+            celestial_sphere: CelestialSphere::at(&clock.now()),
+            clock,
             // Default to orbiting Terra (the day-side framing below).
             selector: TargetSelector::new(false),
         }
@@ -49,11 +57,19 @@ impl Simulation for SolarEclipseSimulation {
         // Fold in any pending target-selector key press before the camera target
         // is read this frame.
         self.selector.apply_requests();
-        self.simulation.advance()
+        // Advance the clock and, while it is running, re-evaluate the
+        // ephemeris-driven celestial sphere at the new time. Returns whether
+        // the clock is running - an "animating" source that keeps frames
+        // coming; when paused nothing advances and the app can go idle.
+        let running = self.clock.tick();
+        if running {
+            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
+        }
+        running
     }
 
     fn celestial(&self) -> &CelestialSphere {
-        &self.simulation.celestial_sphere
+        &self.celestial_sphere
     }
 
     fn camera_target(&self) -> CameraTarget {
@@ -65,7 +81,7 @@ impl Simulation for SolarEclipseSimulation {
         // system from the frame's time; the selector's target (Terra or Luna)
         // keeps the origin at Terra either way.
         RenderState {
-            time: self.simulation.clock.now(),
+            time: self.clock.now(),
             camera_target: self.camera_target(),
             camera_pos,
             camera_look_at: look_at,
@@ -77,10 +93,68 @@ impl Simulation for SolarEclipseSimulation {
 
 impl UIDrawable for SolarEclipseSimulation {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The shared-core panel (datetime + run/speed) plus the
-        // Terra / Luna camera-target selector. The two panels borrow disjoint
-        // fields (`simulation` vs `selector`), so both can be live at once.
-        let mut panels = self.simulation.get_drawables();
+        // The Time panel (datetime + run/speed) plus the Terra / Luna
+        // camera-target selector. The panels borrow disjoint fields (`clock`
+        // vs `selector`), so both can be live at once. The panel builder is
+        // deliberately kept per-scenario - scenarios may diverge in what they
+        // expose.
+        //
+        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
+        // so no shared borrow of the clock outlives into the mutable callback
+        // captures below. The two control callbacks capture disjoint clock
+        // fields (`paused` vs `multiplier`) via direct field assignment - a
+        // `Clock` method would borrow the whole clock and collide.
+        let datetime = self.clock.datetime_label();
+        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
+        // font is monospace, so a fixed-width value keeps the digit window
+        // from resizing as the speed changes.
+        let speed = format!("{:>5.1}", self.clock.multiplier);
+        let running = !self.clock.paused;
+
+        // Exponential (base e) speed: the slider edits the exponent, so
+        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
+        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        let speed_exp = self.clock.multiplier.ln();
+        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+
+        // The producer groups instruments into rows + picks content only; all
+        // styling and every metric live in the instrument modules / theme
+        // (taffy bottom-aligns the Run key with the speed window beside it).
+        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+            vec![Box::new(Header {
+                title: "Time".to_string(),
+            })],
+            vec![Box::new(Readout {
+                label: "UTC".to_string(),
+                value: datetime,
+                unit: String::new(),
+            })],
+            vec![
+                Box::new(Readout {
+                    label: "Speed".to_string(),
+                    value: speed,
+                    unit: "x".to_string(),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Run".to_string(),
+                        active: running,
+                    },
+                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                }),
+            ],
+            vec![Box::new(InteractiveSlider {
+                slider: Slider {
+                    value: speed_exp,
+                    range: exp_range,
+                },
+                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+            })],
+        ];
+        let mut panels = vec![UIDrawablePanel {
+            anchor: PanelAnchor::TopLeft,
+            rows: time_rows,
+        }];
         panels.push(self.selector.panel());
         panels
     }
@@ -98,7 +172,7 @@ pub fn run() {
     // Frame the sunlit face (and Luna's shadow spot near the subsolar point)
     // by looking along -sol_dir, computed from the ephemeris at the start
     // instant. The view stays interactive afterward.
-    let celestial = &sim.simulation.celestial_sphere;
+    let celestial = &sim.celestial_sphere;
     let camera = Camera::looking_toward(
         CameraTarget::terra(),
         celestial.star_rot_inv,

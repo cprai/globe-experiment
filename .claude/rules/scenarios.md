@@ -11,20 +11,28 @@ paths:
 - One module per past scenario under `src/scenarios/`, each defining a
   `<Name>Simulation` struct that implements the `Simulation` trait, plus a
   `run()`. Add a module and a `ScenarioName` variant in `src/main.rs`.
-- Each scenario struct holds a `SimulationState` (clock + celestial sphere)
-  by composition, plus its own `Vec<Satellite>`. Name the struct
-  `<Name>Simulation` (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
+- Each scenario struct holds `clock: Clock` + `celestial_sphere:
+  CelestialSphere` as direct fields (there is no shared core struct), plus its
+  own `Vec<Satellite>`. `new()` builds `Clock::new(epoch)` +
+  `CelestialSphere::at(&clock.now())`; `advance()` ticks the clock and, while
+  running, re-evaluates the sphere. `get_drawables` builds the top-left Time
+  panel itself (UTC readout, speed readout, Run toggle, speed slider - the
+  toggle/slider callbacks mutate the disjoint `clock.paused` /
+  `clock.multiplier` fields by direct assignment). The Time-panel code is
+  **deliberately duplicated across scenarios** (like the propagation loop) so
+  each can diverge in what it exposes. Name the struct `<Name>Simulation`
+  (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
 
 ### Empty (no-satellite) scenarios
 
 Some scenarios track **no** objects and just wind the celestial sphere to an
 event (e.g. `solar_eclipse`, `lunar_eclipse`). They omit the `Vec<Satellite>`
 and `last_telemetry` fields entirely: `frame_state` returns `markers:
-Vec::new()` and the celestial state from the shared core; `get_drawables`
-returns only `self.simulation.get_drawables()` (no scenario panel). With no
-TLE there is no epoch to borrow, so `new()` sets the clock start **directly**
-from the event datetime via `satkit::Instant::from_datetime(...)` (still
-range-check it against the EOP window below).
+Vec::new()` and the time from the scenario's own clock; `get_drawables`
+returns the Time panel (plus a selector panel if the scenario has one). With
+no TLE there is no epoch to borrow, so `new()` sets the clock start
+**directly** from the event datetime via `satkit::Instant::from_datetime(...)`
+(still range-check it against the EOP window below).
 
 ### Initial camera framing (optional)
 
@@ -99,17 +107,17 @@ reshapes live, and stashes lat/lon/alt + `satellite::orbit_shape`
 renderer likewise draws nothing for e >= 1).
 
 - The `Simulation` impl's `frame_state` propagates `self.satellites` using
-  `self.simulation.clock.now()`, calls `marker_occluded` from
+  `self.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, fills each `SatelliteMarker`'s
   `propagation` (the renderer propagates it ahead for the predicted orbit
   path) — `Propagation::Sgp4` with a cloned TLE, or `Propagation::Numerical`
   with the `SatelliteState.orbit` GCRF state vector from the same propagation
   (`iss_and_hubble` deliberately mixes both, ISS SGP4 + Hubble numerical, to
   exercise the mixed-scene capability) — and reads Sol/star values from
-  `self.simulation.celestial_sphere`. The near-identical propagation loop
-  across scenarios is **intentional** — each may diverge (marker style,
-  visibility logic, non-satellite objects); premature factoring adds
-  indirection before any variant exists.
+  `self.celestial_sphere`. The near-identical propagation loop (and Time-panel
+  builder) across scenarios is **intentional** — each may diverge (marker
+  style, visibility logic, non-satellite objects, panel content); premature
+  factoring adds indirection before any variant exists.
 - Each satellite scenario owns its inline TLE `const`s. The `ISS_TLE` literal
   is **deliberately duplicated** across scenarios that need it — do not factor
   into a shared const. (Empty scenarios have no TLE.)

@@ -64,9 +64,9 @@ src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          taffy (egui_taffy): panel = flex column of rows, row =
                          flex row of instrument nodes, all content-sized (+ the
                          shared min width) - no pixel positions or fixed panel
-                         boxes (interactivity via callbacks). The shared-core
-                         impl UIDrawable for SimulationState lives in
-                         src/simulation/mod.rs. Re-exports the instrument structs
+                         boxes (interactivity via callbacks). Each scenario
+                         implements UIDrawable itself (its own Time panel +
+                         scenario panels). Re-exports the instrument structs
                          (bare + Interactive*) + theme install_theme + the spec
                          types (PanelSet/UiPanel).
 src/ui/instruments/mod.rs  the Instrument trait (render(&mut Tui): each
@@ -151,8 +151,8 @@ src/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
                          + placement). The shared vocabulary for the celestial
                          sphere, CameraTarget, and the selectors
 src/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
-                         to Terra), SimulationState (core: clock + celestial
-                         sphere) + its shared-core impl UIDrawable, RenderState
+                         to Terra; the clock + celestial sphere live directly
+                         in each scenario struct), RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
                          + camera_target + markers (each SatelliteMarker carries
                          a satellite::Propagation - cloned TLE or GCRF state
@@ -214,8 +214,8 @@ renderer    -> simulation (RenderState + CelestialSphere::at), terra, luna,
                                        # Derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # impl UIDrawable
-                                       # for SimulationState; NO winit/wgpu/Camera
+simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # selector
+                                       # panel builders use ui; NO winit/wgpu/Camera
 terra       -> (glam)
 luna        -> (glam)
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
@@ -231,8 +231,8 @@ Defined in `src/simulation/mod.rs`. The sole simulation interface
 application layer. It is **UI-agnostic** - the panel reads/drives a scenario
 through a *separate* `ui::UIDrawable` impl, kept distinct from `Simulation`.
 (The `Simulation` trait itself takes no UI types; the `simulation` module does
-depend on `ui` for the shared-core `impl UIDrawable for SimulationState` that
-now lives there.) `ApplicationState<S>` bounds `S: Simulation + UIDrawable`.
+depend on `ui` for the selector panel builders, `TargetSelector::panel` /
+`BodySelector::panel`.) `ApplicationState<S>` bounds `S: Simulation + UIDrawable`.
 
 ```
 advance(&mut self) -> bool
@@ -265,8 +265,8 @@ The trait + panel live in `src/ui/mod.rs`; each instrument is a struct in its
 own `src/ui/instruments/*.rs` (egui-free *data* + boxed closures - egui only
 enters in each instrument's `render` and in `control_panel`). Decouples panel
 *rendering* from *interactivity*. The trait stays separate from `Simulation`;
-the shared-core `impl UIDrawable for SimulationState` lives next to the type in
-`src/simulation/mod.rs` (so `simulation` depends on `ui` for these types).
+each scenario implements it itself, building its own Time panel from its
+directly-held clock plus its scenario panels.
 
 ```
 UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
@@ -313,19 +313,20 @@ trait Instrument { render(&mut self, tui: &mut Tui) }
 PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
 ```
 
-- `impl UIDrawable for SimulationState` (in `src/simulation/mod.rs`) emits
-  **one** panel (top-left) from live state: the UTC datetime + speed readouts,
-  and the Run toggle + speed slider
-  whose callbacks mutate the live clock (each captures a *disjoint* clock field -
-  `paused` vs `multiplier` - via direct field assignment, so both coexist with
-  no interior mutability; do not call a `Clock` method in those closures, it
-  would borrow the whole clock).
-- Each scenario's `impl UIDrawable` returns `self.simulation.get_drawables()`
-  (the core panel) plus **one** scenario panel (top-right) built from the stashed
-  `last_telemetry` (a disjoint field). The two panels are independently
-  anchored - no stacking constant. `ui::control_panel(&mut impl UIDrawable)`
-  frames each panel and lays out its rows with taffy, firing callbacks on
-  interaction.
+- Each scenario's `impl UIDrawable` emits the **Time panel** (top-left) first,
+  built from live state: the UTC datetime + speed readouts, and the Run toggle
+  + speed slider whose callbacks mutate the live clock (each captures a
+  *disjoint* clock field - `paused` vs `multiplier` - via direct field
+  assignment, so both coexist with no interior mutability; do not call a
+  `Clock` method in those closures, it would borrow the whole clock). The
+  panel-building code is **deliberately duplicated per scenario** (like the
+  propagation loop) so each scenario can diverge in what it exposes.
+- After the Time panel, each scenario pushes its own panel(s): top-right
+  telemetry from the stashed `last_telemetry` (a disjoint field) or the
+  selector panel, plus manual_control's bottom-center Burns panel. All panels
+  are independently anchored - no stacking constant.
+  `ui::control_panel(&mut impl UIDrawable)` frames each panel and lays out its
+  rows with taffy, firing callbacks on interaction.
 - **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
   `Context` and must be called once per context (both `ApplicationState::new`
   and `snapshot::build_ui_frame` do). It also sets egui `max_passes = 2`:
@@ -339,10 +340,10 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   with the gunmetal `panel_frame` and paints the bevel highlight + corner
   rivets per panel.
 
-`SimulationState` (clock + celestial sphere) is the shared core that every
-scenario struct holds by composition. Satellites belong to the scenario struct,
-not to `SimulationState`. `Clock` is re-exported from `simulation` so callers
-need not know the `clock` submodule path.
+Every scenario struct holds the clock + celestial sphere as direct fields
+(there is no shared core struct), alongside its own satellites/selector.
+`Clock` is re-exported from `simulation` so callers need not know the `clock`
+submodule path.
 
 ## Purity rules (compiler-enforced)
 
@@ -352,8 +353,8 @@ need not know the `clock` submodule path.
   changes local to `application` and each scenario's `frame_state` impl
   independently testable.
   `simulation` *does* depend on `ui` (hence egui, transitively) for the
-  shared-core `impl UIDrawable for SimulationState`, which lives next to the
-  type rather than in `ui`. The `UIDrawable`/`UIDrawablePanel`/`Instrument`
+  selector panel builders (`TargetSelector::panel` / `BodySelector::panel`).
+  The `UIDrawable`/`UIDrawablePanel`/`Instrument`
   types are still defined in `ui`, and interactivity is carried by the
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
