@@ -47,8 +47,11 @@ time ch. 12 (GMST/GAST). Shares no code or data with satkit/DE440, so agreement
 is a real cross-check. Expect ~0.01 deg residual (Meeus's own theory error), no
 systematic bias.
 
-**Sol / Earth orientation — use the printed subsolar point.** The `headless`
-binary prints `subsolar: lat L lon O`. The relationships:
+**Sol / Earth orientation — use the subsolar point.** Nothing prints it today
+(the `headless` summary used to; the line was removed as non-generic), so
+derive it from `CelestialSphere::sol_dir` (world frame: +Y north, +Z lon 0):
+`subsolar_lat = asin(sol_dir.y)`, `subsolar_lon = atan2(sol_dir.x, sol_dir.z)`
+— via a throwaway debug print, reverted after the check. The relationships:
 - `subsolar_lat = solar declination` (delta).
 - `subsolar_lon = RA_sol - GAST` (reduce to +/-180). This is epoch-clean (GHA
   is a physical ECEF angle), so it validates the Sol ephemeris AND the sidereal

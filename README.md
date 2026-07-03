@@ -46,7 +46,7 @@ planet (`"mercury"`, ..., `"neptune"`) to orbit that body instead — frame it w
 a `distance` scaled to the body), and an optional `ui`
 section that overlays mock UI panels for debugging UI layouts headlessly (see
 `src/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
-written as a PNG and a short summary (resolved datetime, subsolar point, camera)
+written as a PNG and a short summary (resolved datetime, camera, output path)
 is printed. Unlike the interactive scenarios, the datetime here is **not**
 range-checked against the bundled Earth-orientation data - times outside the
 bundled range (before 1962 or after the build date) render but silently lose

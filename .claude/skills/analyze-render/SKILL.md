@@ -28,18 +28,20 @@ The whole scene is one `--scene` JSON: a `simulation` section (`datetime`) and a
 `camera` section, both **required** (there is no default camera; unknown keys are
 rejected). `camera.distance` is in kilometers (Terra mean radius is ~6371 km;
 ~12742 km gives a whole-Terra view). An optional `camera.target` (`"terra"`,
-default, or `"luna"`) picks the orbit body; with `"luna"` the lon/lat/distance/
-tilt are relative to Luna's surface (mean radius ~1737 km, so frame it with a
-much smaller `distance`, e.g. ~2500-3500 km), and the printed `luna-aim` lon/lat
-points the camera at the lit near side. The output target (`--output`/`--width`/
-`--height`) stays as CLI flags. An optional `ui` section overlays mock UI panels
-(see the `build-and-run`/`src/ui/` docs) - not usually needed for look
-analysis. Then open `/tmp/render.png` with the Read tool and describe / compare
-what you see.
+default, `"luna"`, or a planet) picks the orbit body; with `"luna"` the
+lon/lat/distance/tilt are relative to Luna's surface (mean radius ~1737 km, so
+frame it with a much smaller `distance`, e.g. ~2500-3500 km); the camera always
+looks at the orbited body's center, so lon/lat only pick which side you view.
+The output target (`--output`/`--width`/`--height`) stays as CLI flags. An
+optional `ui` section overlays mock UI panels (see the
+`build-and-run`/`src/ui/` docs) - not usually needed for look analysis. Then
+open `/tmp/render.png` with the Read tool and describe / compare what you see.
 
-The command also prints a summary to stdout (resolved datetime, subsolar
-lat/lon, camera, output path) - read it for context on where the day side and
-terminator should fall in the frame.
+The command also prints a summary to stdout (resolved datetime, camera with the
+clamped distance, output path). It does NOT print the subsolar point - estimate
+the subsolar longitude from the UTC time (`lon ~ (12 - UTC_hours) * 15` deg,
+positive east; latitude follows the season, +/-23.4 deg) when planning where
+the day side and terminator should fall in the frame.
 
 ## Framing tips
 - **Terminator / day-night edge:** aim at a longitude near the subsolar
