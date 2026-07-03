@@ -8,7 +8,7 @@ use crate::ui::theme::{BEVEL_LIGHT, FONT_TITLE, HAIRLINE, HEADER_AMBER, SPACE_SM
 /// width beneath it - the labelled divider that tops each cluster on the Apollo
 /// panels.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.
 #[derive(Clone, serde::Deserialize)]

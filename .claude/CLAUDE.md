@@ -34,8 +34,8 @@ near one full orbit), inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
 any of the **seven planets** in the `solar_system` scenario via a body-selector
 panel (one key per body); Luna in the eclipse scenarios via a Terra/Luna
-panel; headless
-`render` picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
+panel; the `headless`
+binary picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
 simulation clock (1x-100x, plays from launch). Luna is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
 rotation (correct near side + libration), lit by Sol, with **mutual
@@ -64,23 +64,31 @@ Terra occlude Luna. **Past scenarios only** (before build date) — what makes f
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
+The crate builds **two binaries from two independent module trees** (no lib
+crate): `globe-experiment` (`src/main.rs`, the windowed app + scenarios) and
+`headless` (`src/headless.rs`, the single-frame PNG renderer). Neither tree
+compiles the other's code: the main binary declares nothing
+headless-rendering, and the headless binary declares no winit/window code
+(no `application`, no `scenarios`, no `Gfx`).
+
 ---
 
 ## Build & run
 
 ```sh
-cargo run --release
-# `render` takes ONE --scene JSON (simulation + camera + optional ui); the
-# output target (--output, --width, --height) stays as CLI flags. Unknown JSON
-# keys are rejected (deny_unknown_fields).
-cargo run --release -- render --output frame.png --scene \
+cargo run --release          # the windowed app (default-run = globe-experiment)
+# The separate `headless` binary renders one frame to a PNG (flat flags, no
+# subcommand). It takes ONE --scene JSON (simulation + camera + optional ui);
+# the output target (--output, --width, --height) stays as CLI flags. Unknown
+# JSON keys are rejected (deny_unknown_fields).
+cargo run --release --bin headless -- --output frame.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
 # Add a "ui" section (Vec<ui::UiPanel>) to overlay mock UI panels for
 # headless UI-layout debugging. A panel is a corner anchor + "rows" (outer
 # array = top-to-bottom rows, inner = left-to-right instruments); taffy
 # computes all positions and the panel size, so the JSON carries no pixels:
-cargo run --release -- render --output mock.png --scene \
+cargo run --release --bin headless -- --output mock.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0},
       "ui":[{"anchor":"top_left","rows":[

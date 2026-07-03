@@ -1,15 +1,15 @@
 ---
 name: analyze-render
-description: Render a single frame headless via the `render` CLI mode and inspect the PNG to get visual feedback on rendering changes (lighting, terminator, atmosphere, framing). Use after shader/atmosphere/renderer edits to see the actual output.
+description: Render a single frame via the separate `headless` binary and inspect the PNG to get visual feedback on rendering changes (lighting, terminator, atmosphere, framing). Use after shader/atmosphere/renderer edits to see the actual output.
 ---
 
 # Analyze a render (visual feedback loop)
 
-Render one frame to a PNG with `render` mode, then **open the PNG** (with the
-Read tool) to judge the look. This is how to get real visual feedback in this
-environment: the windowed app can't be eyeballed here, but the headless
-`render` mode writes an image an agent can actually inspect. Pick a datetime +
-camera that frames the feature you changed.
+Render one frame to a PNG with the `headless` binary, then **open the PNG**
+(with the Read tool) to judge the look. This is how to get real visual feedback
+in this environment: the windowed app can't be eyeballed here, but the
+`headless` binary writes an image an agent can actually inspect. Pick a
+datetime + camera that frames the feature you changed.
 
 ## Tools
 - `cargo` (stable) to run the app
@@ -17,7 +17,7 @@ camera that frames the feature you changed.
 
 ## Command
 ```sh
-cargo run --release -- render --output /tmp/render.png --width 1280 --height 720 \
+cargo run --release --bin headless -- --output /tmp/render.png --width 1280 --height 720 \
     --scene '{
       "simulation": {"datetime": "2024-01-01T12:00:00Z"},
       "camera": {"longitude": <deg>, "latitude": <deg>,
@@ -49,8 +49,8 @@ terminator should fall in the frame.
 - **Night side (city lights):** a longitude on the dark hemisphere.
 - **Before/after:** render the change to two paths and inspect both.
 
-## IMPORTANT: no EOP time-bound checking in render mode
-Render mode does **not** validate the datetime against the bundled
+## IMPORTANT: no EOP time-bound checking in the headless binary
+The headless binary does **not** validate the datetime against the bundled
 Earth-orientation (EOP) data (unlike scenarios). Out-of-range times silently
 degrade and will mislead a visual analysis:
 - before ~1962-01-01: satkit falls back to zero EOP (the Sol/stars drift);
@@ -64,9 +64,9 @@ frame. This is the agent's responsibility - the tool will not warn you.
   non-sRGB LDR output (the offscreen target is non-sRGB `Rgba8Unorm` exactly so
   the bytes match the window), so colors are trustworthy.
 - **Does NOT:** interaction feel (pan/zoom/inertia) - that still needs a native
-  windowed run. Satellite markers are absent in render mode by design; the egui
-  UI is absent unless the scene supplies a `ui` section (mock panels for layout
-  debugging, no live data).
+  windowed run. Satellite markers are absent in the headless binary by design;
+  the egui UI is absent unless the scene supplies a `ui` section (mock panels
+  for layout debugging, no live data).
 
 ## Cleanup
 Delete any temp images you created once you are done inspecting them - they are

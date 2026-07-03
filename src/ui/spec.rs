@@ -1,6 +1,6 @@
-//! The `render --scene` `ui` overlay: the panels deserialized straight from the
-//! scene JSON and run through the exact same [`crate::ui::control_panel`] path
-//! as the live app, so a mock layout is faithful to real output.
+//! The headless `--scene` `ui` overlay: the panels deserialized straight from
+//! the scene JSON and run through the exact same [`crate::ui::control_panel`]
+//! path as the live app, so a mock layout is faithful to real output.
 //!
 //! Because the interactive instruments split their callback into an
 //! `Interactive*` wrapper, the bare instrument structs are pure render data and
@@ -47,7 +47,7 @@ impl UiElement {
     }
 }
 
-/// One deserialized panel from the `render --scene` `ui` JSON: a corner
+/// One deserialized panel from the headless `--scene` `ui` JSON: a corner
 /// `anchor` and `rows` of elements (outer array = top-to-bottom rows, inner =
 /// left-to-right instruments). The owned, callback-free mirror of one
 /// [`UIDrawablePanel`].

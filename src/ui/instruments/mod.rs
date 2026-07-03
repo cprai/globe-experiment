@@ -15,7 +15,7 @@
 //! [`InteractiveToggle`], [`InteractiveSlider`]). The shared widget draw lives
 //! on the bare struct, so both render identically; the bare struct on its own
 //! is inert (clickable/draggable but does nothing). Splitting the callback out
-//! lets the bare structs derive `Deserialize`, so the `render --scene` `ui`
+//! lets the bare structs derive `Deserialize`, so the headless `--scene` `ui`
 //! JSON deserializes straight into them (via the `ui::spec` tagged enum) with
 //! no mirror type. The wrapper's borrow `'a` is the `&mut self` of the
 //! producing [`crate::ui::UIDrawable::get_drawables`]; each callback captures a

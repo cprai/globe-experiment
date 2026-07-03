@@ -19,11 +19,20 @@ build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
                          OUT_DIR; bakes 3 atmosphere LUTs as f16 KTX2.
                          Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
-src/main.rs              clap CLI: `scenario <name>` | `render` subcommands
-                         (render takes one --scene JSON + --output/width/height)
-src/snapshot.rs          headless single-frame render mode (no EOP range check);
-                         SceneSpec = --scene JSON (simulation + camera +
-                         optional ui); camera.target "terra"/"luna"
+src/main.rs              bin root of `globe-experiment` (the windowed app;
+                         default-run): clap CLI with only the `scenario <name>`
+                         subcommand; declares the windowed module tree
+                         (application, camera, luna, planet, renderer,
+                         scenarios, simulation, terra, ui - NO headless code)
+src/headless.rs          bin root of `headless` (single-frame render to PNG; no
+                         EOP range check): flat clap flags --scene --output
+                         [--width --height], no subcommand; declares the
+                         winit-free module tree (camera, luna, offscreen,
+                         planet, renderer, simulation, terra, ui - NO
+                         application/scenarios/Gfx) + crate-level
+                         allow(dead_code) for shared items only the main tree
+                         uses. SceneSpec = --scene JSON (simulation + camera +
+                         optional ui); camera.target "terra"/"luna"/planets
                          (CameraTargetSpec, default terra); optional mock-panel
                          overlay (build_ui_frame)
 src/scenarios/mod.rs     scenario registry
@@ -53,10 +62,18 @@ src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
 src/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
-src/application/camera.rs   orbital camera (inertial-frame rig, km world space)
-                         orbiting a CameraTarget (Terra/Luna); per-frame retarget
+src/application/gfx.rs   Gfx: the windowed presenter - GPU surface/swapchain
+                         config/present + egui_wgpu overlay around the shared
+                         renderer::SceneRenderer; FrameOutcome drives window
+                         visibility/redraw. The winit-bound half of rendering
+                         (main bin tree only; offscreen.rs is its headless twin)
 src/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed
                          zoom, reset_animation (on target switch)
+src/camera.rs            orbital camera (inertial-frame rig, km world space)
+                         orbiting a CameraTarget (Terra/Luna/planet); per-frame
+                         retarget. Top-level and winit-free so BOTH bin trees
+                         build the same rig (application drives it interactively;
+                         headless.rs constructs it from the --scene JSON)
 src/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          + PanelAnchor (egui-free data), and the egui
                          control_panel that frames each panel at its anchored
@@ -109,12 +126,14 @@ src/ui/theme.rs          install_theme: the Apollo-panel egui look (gunmetal
                          (panel_frame/bevel/rivets). Stamped onto the egui
                          Context by both the windowed app and the headless
                          render path
-src/ui/spec.rs           the serde-deserialized render --scene `ui` overlay: a
-                         tagged enum (UiElement) over the bare instrument structs
-                         themselves + a UiPanel (anchor + rows of elements; no
-                         pixel coordinates) + PanelSet (UIDrawable). No mirror
-                         type - the bare structs derive Deserialize, so each
-                         element clones into an inert boxed Instrument
+src/ui/spec.rs           the serde-deserialized headless --scene `ui` overlay:
+                         a tagged enum (UiElement) over the bare instrument
+                         structs themselves + a UiPanel (anchor + rows of
+                         elements; no pixel coordinates) + PanelSet (UIDrawable).
+                         No mirror type - the bare structs derive Deserialize,
+                         so each element clones into an inert boxed Instrument.
+                         Constructed only by the headless bin's tree (main tree
+                         allows dead_code on the module)
 src/terra.rs             WGS84 constants + surface_position / geodetic_normal helpers
 src/luna.rs              lunar constants (triaxial ellipsoid radii, mean radius)
                          + surface_position / geodetic_normal (body-fixed frame);
@@ -126,19 +145,27 @@ src/planet.rs            the 7 planets' data, hung off the CelestialBody planet
                          + surface_position / geodetic_normal free fns. satkit-
                          free, like terra/luna; references simulation::body for
                          the CelestialBody type
-src/renderer/mod.rs      Gfx: surface/device/queue + egui_wgpu + SceneRenderer
-                         (7 pipelines incl. Luna, a single planet impostor, and
-                         the predicted orbit path (mitered screen-space line
-                         strip, depth test-no-write);
-                         reversed-Z Depth32Float buffer). Derives all body
-                         positions from RenderState.time via CelestialSphere::at
-                         and rebuilds view_proj (view_proj_reversed_z) from the
+src/renderer/mod.rs      the winit-free shared scene core, compiled into BOTH
+                         binaries: SceneRenderer (7 pipelines incl. Luna, a
+                         single planet impostor, and the predicted orbit path
+                         (mitered screen-space line strip, depth test-no-write);
+                         reversed-Z Depth32Float buffer) + the shared device/
+                         depth helpers (request_adapter_device,
+                         create_depth_view, depth_attachment, DEPTH_FORMAT) +
+                         UiFrame + the projection consts/view_proj_reversed_z.
+                         Derives all body positions from RenderState.time via
+                         CelestialSphere::at and rebuilds view_proj from the
                          camera rig; SGP4-propagates each marker's TLE one
                          period ahead (satellite::orbit_path_inertial) for the
                          path. Planets use a separate group-1 bind group
-                         (per-planet impostor uniform + texture)
-src/renderer/headless.rs HeadlessRenderer: surfaceless Rgba8Unorm offscreen render
-                         (+ matching depth buffer)
+                         (per-planet impostor uniform + texture). Gfx does NOT
+                         live here anymore (it is winit-bound ->
+                         application/gfx.rs)
+src/offscreen.rs         OffscreenRenderer: surfaceless Rgba8Unorm offscreen
+                         render + readback (+ matching depth buffer) around the
+                         shared SceneRenderer; owns MAX_FRAME_DIMENSION. The
+                         headless bin's presenter (its tree only; the windowed
+                         twin is application/gfx.rs)
 src/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
                          wgs84_ellipsoid + luna_ellipsoid (planets are
                          impostors, not meshes)
@@ -203,15 +230,30 @@ OUT_DIR/                 gitignored; include_bytes!'d: 13 textures (11 JPEG +
 
 ## Module dependency graph
 
+Two bin roots, two trees over the same shared source files (no lib crate):
+
 ```
-main        -> application, simulation, renderer, scenarios
-application -> simulation (incl. CelestialSphere, to resolve the camera
+main (bin globe-experiment) -> application, camera, simulation, renderer,
+                                       # scenarios (NO offscreen/headless code)
+headless (bin headless)     -> camera, offscreen, simulation, renderer, ui,
+                                       # terra, luna, planet (NO application/
+                                       # scenarios; nothing winit)
+application -> camera, simulation (incl. CelestialSphere, to resolve the camera
                                        # target's center), renderer, ui, terra,
-                                       # (winit, egui, egui_winit, glam)
+                                       # (winit, egui, egui_winit, glam).
+                                       # Contains gfx.rs (the windowed Gfx
+                                       # presenter around renderer's
+                                       # SceneRenderer)
+camera      -> simulation (CameraTarget + CelestialSphere), terra,
+                                       # renderer::FOV_Y_DEG, (glam)  # winit-free
+offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
+                                       # simulation (RenderState), (wgpu,
+                                       # egui_wgpu, image)  # headless tree only
 ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
 renderer    -> simulation (RenderState + CelestialSphere::at), terra, luna,
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
-                                       # Derives all body geometry from
+                                       # winit-free (Gfx moved to application);
+                                       # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
 simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # selector
@@ -221,7 +263,7 @@ luna        -> (glam)
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # the 7 planets' data off the CelestialBody
                                        # variants (mutual ref with simulation::body)
-scenarios   -> simulation, ui, application
+scenarios   -> simulation, ui, application, camera
 ```
 
 ## `Simulation` trait
@@ -329,7 +371,7 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   rows with taffy, firing callbacks on interaction.
 - **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
   `Context` and must be called once per context (both `ApplicationState::new`
-  and `snapshot::build_ui_frame` do). It also sets egui `max_passes = 2`:
+  and the headless bin's `build_ui_frame` do). It also sets egui `max_passes = 2`:
   egui_taffy measures content immediate-mode and requests a discard pass when
   the layout it drew from is stale, so the settled layout needs the second
   pass to land same-frame. **All color and every metric live in `ui::theme`
@@ -359,25 +401,35 @@ submodule path.
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.
-- **`Camera` type lives in `application` only.** Other modules see only the
-  resolved rig (eye / look-at / up); the renderer rebuilds the projection from
-  it via `renderer::view_proj_reversed_z` (the FOV/near/far projection consts
-  also live in `renderer`). (`RenderState` is defined in `simulation` but
-  consumed by `renderer`, and `CameraTarget` is defined in `simulation` but
-  consumed by `application`'s `Camera` — the two allowed edges. `CameraTarget`
-  is plain **identity** data: it names no `Camera`/winit/wgpu type, only the
-  orbit subject (a `CelestialBody` identity, or a free `Coordinate`). It does
-  **not** store the body's moving center; the center is resolved from the
-  `CelestialSphere` on demand via `center_world(&sphere)` / `render_origin(&
-  sphere)`, with the static geometry accessors delegating through the identity
-  to `terra`/`luna`/`planet`. The scenario→application *camera* channel is the
+- **`Camera` type lives in the shared top-level `camera` module** (winit-free;
+  owner-approved re-home from `application` for the two-binary split, so the
+  `headless` binary builds the same rig without compiling any winit code). Its
+  *input mechanics* (the `Controller`, all drag/zoom/animation) stay in
+  `application`; other modules see only the resolved rig (eye / look-at / up);
+  the renderer rebuilds the projection from it via
+  `renderer::view_proj_reversed_z` (the FOV/near/far projection consts also
+  live in `renderer`). (`RenderState` is defined in `simulation` but consumed
+  by `renderer`, and `CameraTarget` is defined in `simulation` but consumed by
+  `camera` — the two allowed edges. `CameraTarget` is plain **identity** data:
+  it names no `Camera`/winit/wgpu type, only the orbit subject (a
+  `CelestialBody` identity, or a free `Coordinate`). It does **not** store the
+  body's moving center; the center is resolved from the `CelestialSphere` on
+  demand via `center_world(&sphere)` / `render_origin(&sphere)`, with the
+  static geometry accessors delegating through the identity to
+  `terra`/`luna`/`planet`. The scenario→application *camera* channel is the
   `Simulation::camera_target` return value, so the application still owns all
   camera mechanics.)
+- **`renderer` is winit-free (compiler-enforced by the headless tree).** The
+  windowed `Gfx` presenter (the only winit-touching render code) lives in
+  `application/gfx.rs`; the headless bin's `offscreen.rs` is its surfaceless
+  twin. Both wrap the shared `renderer::SceneRenderer`. The `headless` bin
+  root must never declare `application`/`scenarios`, and `main.rs` must never
+  declare `offscreen` — that source-level separation IS the two-binary
+  guarantee (each tree fails to compile if the other side leaks in).
 - **Relaxed: `application` may read the `CelestialSphere`.** The camera now
   resolves its target's center from the sphere (via `Simulation::celestial()`),
   so `application` touches `simulation`'s ephemeris-backed type and pulls in
   satkit transitively at runtime. This was a deliberate trade (owner-approved)
   to make `CameraTarget` a pure identity with a single source of truth for
   centers, rather than baking a resolved snapshot into the type. `application`
-  still imports no winit-in-`simulation` / wgpu types, and the `Camera` type
-  still lives only in `application`.
+  still imports no winit-in-`simulation` / wgpu types.

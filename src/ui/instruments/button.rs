@@ -7,7 +7,7 @@ use super::toggle::key_style;
 /// [`Button::draw`], shared by this struct's read-only [`Instrument`] impl and
 /// by [`InteractiveButton`], which adds the press callback.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.
 #[derive(Clone, serde::Deserialize)]

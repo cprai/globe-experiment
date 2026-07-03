@@ -10,6 +10,9 @@
   modules. Any test needing satkit globals must seed via the `Once`-guarded
   `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is set-once
   per process; a second bare `init_satkit` panics in the shared test binary).
+  `cargo test` builds and runs the shared-module tests **twice** — once per
+  binary's test harness (the two bin roots each compile their own module
+  tree); each harness is its own process, so the `Once` seeding still holds.
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
 - **After every shader edit**: `naga --compact --capabilities none
   shaders/scene.wgsl`. This is the same naga the app links through wgpu —
@@ -44,8 +47,8 @@ time ch. 12 (GMST/GAST). Shares no code or data with satkit/DE440, so agreement
 is a real cross-check. Expect ~0.01 deg residual (Meeus's own theory error), no
 systematic bias.
 
-**Sol / Earth orientation — use the printed subsolar point.** `render` prints
-`subsolar: lat L lon O`. The relationships:
+**Sol / Earth orientation — use the printed subsolar point.** The `headless`
+binary prints `subsolar: lat L lon O`. The relationships:
 - `subsolar_lat = solar declination` (delta).
 - `subsolar_lon = RA_sol - GAST` (reduce to +/-180). This is epoch-clean (GHA
   is a physical ECEF angle), so it validates the Sol ephemeris AND the sidereal

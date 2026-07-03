@@ -12,7 +12,7 @@ use crate::ui::theme::{
 /// window's end - the DSKY-style readout from the game-UI reference (e.g.
 /// `007.8|KM|`), sized so a value reads at a glance over the scene.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly (the
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// `unit` defaults empty, so pre-unit JSON still parses); `Clone` so
 /// [`crate::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.

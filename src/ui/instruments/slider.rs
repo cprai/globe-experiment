@@ -9,7 +9,7 @@ use super::{Instrument, leaf};
 /// [`Slider::draw`], shared by this struct's read-only [`Instrument`] impl and
 /// by [`InteractiveSlider`], which adds the edit callback.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`. `range` deserializes from a `[min, max]` JSON array (see
 /// [`deserialize_range`]).
@@ -75,7 +75,8 @@ impl Instrument for InteractiveSlider<'_> {
 
 /// Reads a slider `range` from a `[min, max]` JSON array into a
 /// `RangeInclusive`. The instrument keeps the richer range type; the wire form
-/// stays the two-element array the `render --scene` `ui` JSON has always used.
+/// stays the two-element array the headless `--scene` `ui` JSON has always
+/// used.
 fn deserialize_range<'de, D>(deserializer: D) -> Result<RangeInclusive<f32>, D::Error>
 where
     D: serde::Deserializer<'de>,

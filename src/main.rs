@@ -1,14 +1,12 @@
 mod application;
+mod camera;
 mod luna;
 mod planet;
 mod renderer;
 mod scenarios;
 mod simulation;
-mod snapshot;
 mod terra;
 mod ui;
-
-use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
@@ -18,11 +16,10 @@ use clap::{Parser, ValueEnum};
 // across all subcommands are ever wanted.) The `///` doc comment below is the
 // user-facing `about` text, so keep it free of implementation notes like this.
 /// Solar System: an astronomically-accurate solar-system renderer with
-/// satellite tracking (past scenarios only). The CLI either
-/// runs a past scenario in an interactive window (`scenario`) or renders a
-/// single frame to an image file (`render`); the actual setup lives in the
-/// `scenarios` / `snapshot` modules. `main` does nothing but parse args and
-/// dispatch.
+/// satellite tracking (past scenarios only). This CLI runs a past scenario in
+/// an interactive window (`scenario`); the actual setup lives in the
+/// `scenarios` modules. `main` does nothing but parse args and dispatch.
+/// (Single-frame image rendering lives in the separate `headless` binary.)
 //
 // No explicit `name`: clap defaults the command name to `CARGO_PKG_NAME` (the
 // Cargo.toml package name, "globe-experiment"), so there's no string to keep in
@@ -38,36 +35,6 @@ enum Cli {
         /// is what makes the bare `scenario` invocation valid.
         #[arg(value_enum)]
         name: Option<ScenarioName>,
-    },
-
-    /// Render a single frame to an image file and exit (no window, no UI). The
-    /// `--scene` JSON fixes the celestial positions (its `simulation.datetime`)
-    /// and the view (its `camera`), and may carry mock `ui` panels to overlay;
-    /// the frame is written to --output as a PNG. Intended for visually
-    /// debugging rendering and UI changes.
-    ///
-    /// NOTE: unlike `scenario`, the datetime is NOT range-checked against the
-    /// bundled Earth-orientation (EOP) data - times outside the bundled range
-    /// silently degrade rather than erroring. Use a past, in-range datetime for
-    /// an accurate frame.
-    Render {
-        /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
-        /// {"longitude", "latitude", "distance" (km), "tilt", "target":
-        /// "terra"|"luna"|"mercury"|...|"neptune"}, "ui": [panels]}`.
-        /// `camera.target` and `ui` are optional (target defaults to "terra";
-        /// omit `ui` for a body-only frame). See `snapshot::SceneSpec` /
-        /// `ui::UiPanel`. Unknown keys are rejected.
-        #[arg(long)]
-        scene: String,
-        /// Output image width in pixels.
-        #[arg(long, default_value_t = 1920)]
-        width: u32,
-        /// Output image height in pixels.
-        #[arg(long, default_value_t = 1080)]
-        height: u32,
-        /// Path to write the PNG.
-        #[arg(long)]
-        output: PathBuf,
     },
 }
 
@@ -112,17 +79,6 @@ fn main() {
         },
         // Bare `scenario` with no name: list what's available instead of erroring.
         Cli::Scenario { name: None } => list_scenarios(),
-        Cli::Render {
-            scene,
-            width,
-            height,
-            output,
-        } => snapshot::run(snapshot::RenderParams {
-            scene,
-            width,
-            height,
-            output,
-        }),
     }
 }
 

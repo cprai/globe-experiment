@@ -4,9 +4,9 @@
 //! directly in each scenario struct, which also builds its own Time panel
 //! (deliberately per-scenario, so scenarios can diverge). It stays free of
 //! any windowing (winit) or GPU (wgpu) dependency and never references the
-//! camera type (the camera lives in `application`); it does depend on `ui`
-//! for the `UIDrawablePanel`/`Instrument` types the selector panels are
-//! built from.
+//! camera type (the camera lives in the shared top-level `camera` module,
+//! driven by `application`); it does depend on `ui` for the
+//! `UIDrawablePanel`/`Instrument` types the selector panels are built from.
 
 pub mod body;
 pub mod celestial_sphere;
@@ -17,6 +17,10 @@ use glam::Vec3;
 use satkit::Instant;
 
 pub use body::{CelestialBody, TerraSystemEntity};
+// Only the main binary's scenarios name this re-export; the headless bin tree
+// compiles this module with no `Clock` consumer, so the import would warn
+// there (its crate-level allow covers `dead_code`, not `unused_imports`).
+#[allow(unused_imports)]
 pub use clock::Clock;
 
 use crate::terra;

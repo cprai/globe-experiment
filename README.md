@@ -24,15 +24,15 @@ longer (the ephemeris is ~98 MB). The textures, ephemeris, and EOP data are all
 embedded into the binary, so the build is self-contained and needs no data
 files at runtime.
 
-## Rendering a single frame (headless)
+## Rendering a single frame (the `headless` binary)
 
-Besides the interactive window, the tool can render one frame to an image file
-and exit - no window or input - which is handy for scripted/visual debugging of
-the renderer. The whole scene is a single `--scene` JSON; only the output target
-stays as CLI flags:
+Besides the interactive window, a separate `headless` binary renders one frame
+to an image file and exits - no window or input - which is handy for
+scripted/visual debugging of the renderer. The whole scene is a single
+`--scene` JSON; only the output target stays as CLI flags:
 
 ```sh
-cargo run --release -- render --output frame.png --width 1920 --height 1080 \
+cargo run --release --bin headless -- --output frame.png --width 1920 --height 1080 \
     --scene '{
       "simulation": {"datetime": "2024-01-15T12:30:00Z"},
       "camera": {"longitude": -75, "latitude": 40, "distance": 12742, "tilt": 0}

@@ -8,7 +8,8 @@
 use glam::Vec3;
 use satkit::Instant;
 
-use crate::application::{self, ApplicationState, Camera};
+use crate::application::{self, ApplicationState};
+use crate::camera::Camera;
 use crate::simulation::celestial_sphere::CelestialSphere;
 use crate::simulation::{self, CameraTarget, Clock, RenderState, Simulation, TargetSelector};
 use crate::ui::{

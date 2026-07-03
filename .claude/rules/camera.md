@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/application/camera.rs"
+  - "src/camera.rs"
 ---
 
 # Camera rules
@@ -111,10 +111,10 @@ scenarios override it from a `TargetSelector` driven by the panel's Terra / Luna
 keys). On a genuine **body switch** it reframes (distance = body default, tilt 0,
 re-aimed at the target's center resolved from the sphere) and returns `true`, and
 the application calls `Controller::reset_animation()` to cancel any in-flight
-zoom/flick (which targets the old body's scale). The headless `render` path picks
+zoom/flick (which targets the old body's scale). The `headless` binary picks
 the body directly: the `--scene` `camera.target` field is `"terra"` (default),
-`"luna"`, or a planet (a center-free `CameraTargetSpec` in `snapshot.rs`; the
-center is resolved from the ephemeris at render time).
+`"luna"`, or a planet (a center-free `CameraTargetSpec` in `src/headless.rs`;
+the center is resolved from the ephemeris at render time).
 
 ## Backdrop anchoring
 

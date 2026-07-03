@@ -8,7 +8,7 @@ use crate::ui::theme::SPACE_XXL;
 /// (e.g. LAT / LON). Reuses [`super::Readout`]'s digit window (label above,
 /// value + optional unit block below) for each half.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly (the
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// units default empty, so pre-unit JSON still parses); `Clone` so
 /// [`crate::ui::PanelSet`] can hand a copy out of its borrowing
 /// `get_drawables`.

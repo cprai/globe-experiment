@@ -9,7 +9,7 @@ use crate::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 /// [`Instrument`] impl and by [`InteractiveToggle`], which adds the toggle
 /// callback.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly (the
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// `active` flag still drives its lit look); `Clone` so [`crate::ui::PanelSet`]
 /// can hand a copy out of its borrowing `get_drawables`.
 #[derive(Clone, serde::Deserialize)]

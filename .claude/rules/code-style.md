@@ -14,10 +14,16 @@ paths:
 
 ## Module conventions
 
-Six top-level modules + `terra`:
-- **`application`** — window, camera, input, egui logic. Owns `Camera` +
-  `Controller`. `ApplicationState<S: Simulation>` is generic over the
-  simulation — nothing outside this module names the `Camera` type.
+Two bin roots (`main.rs` = the windowed `globe-experiment`, `headless.rs` =
+the single-frame `headless` bin), each declaring its own module tree over the
+shared files (no lib crate). The shared modules + `terra`:
+- **`application`** — window, camera input, egui logic, and the windowed
+  presenter. Owns `Controller` (input) and `gfx.rs` (`Gfx`: surface/swapchain/
+  present around the shared `renderer::SceneRenderer`). Main bin tree only —
+  all the winit-touching code lives here.
+- **`camera`** — the `Camera` rig type (top-level `src/camera.rs`, winit-free).
+  Shared by both trees: `application`/`scenarios` drive it interactively, the
+  headless bin constructs it from the `--scene` JSON.
 - **`simulation`** — the `Simulation` trait (UI-agnostic), `RenderState`,
   `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
   helpers. The clock + celestial sphere are held **directly by each scenario
@@ -25,7 +31,12 @@ Six top-level modules + `terra`:
   `Camera` type.** Depends on `ui` (hence egui) only for the selector panel
   builders. Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI readout
   pulled separately via `ui::UIDrawable`).
-- **`renderer`** — `Gfx` + `HeadlessRenderer`. Camera is NOT here.
+- **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
+  device/depth helpers + `UiFrame` + projection consts. Camera is NOT here;
+  `Gfx` is NOT here (it is winit-bound, in `application/gfx.rs`).
+- **`offscreen`** — `OffscreenRenderer` (`src/offscreen.rs`): the headless
+  bin's surfaceless presenter + readback around `SceneRenderer`. Headless bin
+  tree only.
 - **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
   `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
   `control_panel` that frames each panel at its anchored corner and lays out
@@ -43,7 +54,11 @@ Six top-level modules + `terra`:
   `CelestialSphere` directly and builds its own Time panel (the panel code is
   deliberately duplicated per scenario so scenarios can diverge). Satellites
   live here, not in `simulation`.
-- **`snapshot`** — headless single-frame render mode.
+- **`headless` bin root** (`src/headless.rs`) — the single-frame render
+  binary: flat `--scene`/`--output` CLI, scene-spec parsing, mock-UI
+  `build_ui_frame`, calls `OffscreenRenderer`. Carries a crate-level
+  `allow(dead_code)` (shared modules include items only the main tree uses);
+  the main tree keeps full dead-code checking.
 
 ## Where things live
 
@@ -52,7 +67,7 @@ Six top-level modules + `terra`:
   `shaders/scene.wgsl` (shader twins) — both must stay in sync.
 - **Input feel constants**: `src/application/input.rs` top.
 - **Terra physical constants + helpers**: `src/terra.rs`.
-- **Camera limits**: `Camera` associated consts in `src/application/camera.rs`
+- **Camera limits**: `Camera` associated consts in `src/camera.rs`
   — the distance/default limits are radius *ratios* (`*_RADII`), scaled at use by
   the orbit target's `mean_radius_km()`. **Projection** consts live in `renderer`
   (`FOV_Y_DEG`, `NEAR_PLANE_RADII`, `FAR_PLANE_KM`); the far plane is a *floor* —

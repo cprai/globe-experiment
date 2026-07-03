@@ -7,7 +7,7 @@
 //! - [`theme`] - the Apollo-panel palette, the spacing/type/radius tokens, the
 //!   taffy panel/row styles, [`install_theme`], and panel chrome.
 //! - [`spec`] - the serde-deserialized [`PanelSet`]/[`UiPanel`]/[`UiElement`]
-//!   for the `render --scene` overlay.
+//!   for the headless `--scene` overlay.
 //! - this file - the [`UIDrawable`] trait, [`UIDrawablePanel`]/[`PanelAnchor`],
 //!   and [`control_panel`]. Each scenario implements `UIDrawable` itself,
 //!   building its own Time panel plus any scenario panels.
@@ -22,6 +22,10 @@
 //! separate from the `Simulation` trait.
 
 mod instruments;
+// The spec types are constructed only by the headless binary's tree (its
+// `--scene` `ui` overlay deserializes into them); in the main binary's tree
+// they are intentionally unconstructed.
+#[allow(dead_code)]
 mod spec;
 mod theme;
 
@@ -45,7 +49,7 @@ use theme::{paint_bevel, paint_rivets, panel_frame};
 /// listed - add the bottom corners when a panel needs one.
 ///
 /// `Copy` so a [`PanelSet`] can hand it out of a borrowing `get_drawables` by
-/// value; `Deserialize` so the `render --scene` `ui` JSON can name an anchor
+/// value; `Deserialize` so the headless `--scene` `ui` JSON can name an anchor
 /// (`"top_left"` / `"top_right"` / `"bottom_center"`).
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,9 +1,16 @@
-//! Single-frame render mode (the `render` CLI subcommand): draws one frame to a
-//! PNG and exits, with no winit window or input. The frame is positioned by an
-//! explicit datetime (which fixes the celestial positions) and explicit camera
-//! parameters, and written to a caller-specified path - intended for visual
-//! debugging of rendering changes, e.g. by an agent that opens the image. This
-//! is the headless analogue of a scenario's `run`.
+//! The `headless` binary: renders one frame to a PNG and exits, with no winit
+//! window or input. The frame is positioned by an explicit datetime (which
+//! fixes the celestial positions) and explicit camera parameters, and written
+//! to a caller-specified path - intended for visual debugging of rendering
+//! changes, e.g. by an agent that opens the image. This is the headless
+//! analogue of a scenario's `run` in the main binary.
+//!
+//! This bin root declares its own module tree (the two binaries share source
+//! files, not a lib crate): only the winit-free shared modules plus
+//! `offscreen`, and none of the windowed ones (`application`, `scenarios`).
+//! The shared modules also carry items only the main binary calls, hence the
+//! crate-level `allow(dead_code)` - the main binary's tree keeps full
+//! dead-code checking for them.
 //!
 //! The whole scene is a single `--scene` JSON ([`SceneSpec`]): a `simulation`
 //! section (the datetime), a `camera` section, and an optional `ui` section of
@@ -11,42 +18,83 @@
 //! debug rendering *and* UI layouts without a live window. The output target
 //! (width/height/path) stays on the CLI, not in the JSON. When `ui` is present
 //! the mock is run through the same `ui::control_panel` path as the live app
-//! and composited by [`HeadlessRenderer`]; this module is the headless analogue
-//! of the windowed egui driving in `application`.
+//! and composited by [`OffscreenRenderer`]; this binary is the headless
+//! analogue of the windowed egui driving in the main binary's `application`.
 //!
 //! IMPORTANT: unlike scenarios (see the "Scenarios & valid time range" rules in
-//! `CLAUDE.md`), render mode does **not** range-check the datetime against the
-//! bundled Earth-orientation (EOP) data. The caller owns the time, and an
-//! out-of-range datetime silently degrades rather than erroring: before
+//! `CLAUDE.md`), the headless binary does **not** range-check the datetime
+//! against the bundled Earth-orientation (EOP) data. The caller owns the time,
+//! and an out-of-range datetime silently degrades rather than erroring: before
 //! ~1962-01-01 satkit falls back to zero EOP, and past the last bundled EOP
 //! entry it constant-extrapolates. Choosing an in-range past datetime for an
 //! accurate frame is the caller's responsibility. This deliberate deviation is
 //! also documented in `.claude/rules/scenarios.md` and the `analyze-render`
 //! skill.
 
+// Shared modules included by both bin trees; scenario/windowed-only items in
+// them are intentionally unused here (see the module doc above).
+#![allow(dead_code)]
+
+mod camera;
+mod luna;
+mod offscreen;
+mod planet;
+mod renderer;
+mod simulation;
+mod terra;
+mod ui;
+
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
+use clap::Parser;
 use satkit::Instant;
 
-use crate::application::Camera;
-use crate::renderer::{HeadlessRenderer, MAX_FRAME_DIMENSION, UiFrame};
+use crate::camera::Camera;
+use crate::offscreen::{MAX_FRAME_DIMENSION, OffscreenRenderer};
+use crate::renderer::UiFrame;
 use crate::simulation::celestial_sphere::CelestialSphere;
-use crate::simulation::{self, CameraTarget, CelestialBody, RenderState};
-use crate::ui::{self, PanelSet, UiPanel};
+use crate::simulation::{CameraTarget, CelestialBody, RenderState};
+use crate::ui::{PanelSet, UiPanel};
 
-/// Parameters for one single-frame render, built by `main` from the parsed CLI.
-/// The scene itself is the raw `--scene` JSON (parsed in [`run`] into a
-/// [`SceneSpec`]); only the output target stays as discrete CLI args.
-pub struct RenderParams {
-    /// Raw `--scene` JSON: a [`SceneSpec`] (simulation + camera + optional ui).
-    pub scene: String,
-    /// Output image width, pixels.
-    pub width: u32,
-    /// Output image height, pixels.
-    pub height: u32,
+/// Renders a single frame of the astronomically-accurate solar system to a PNG
+/// and exits (no window, no interactivity). The `--scene` JSON fixes the
+/// celestial positions (its `simulation.datetime`) and the view (its `camera`),
+/// and may carry mock `ui` panels to overlay; the frame is written to --output.
+/// Intended for visually debugging rendering and UI changes.
+///
+/// NOTE: the datetime is NOT range-checked against the bundled
+/// Earth-orientation (EOP) data - times outside the bundled range silently
+/// degrade rather than erroring. Use a past, in-range datetime for an accurate
+/// frame.
+//
+// The binary does exactly one thing, so the CLI is flat flags (no subcommand).
+// `name` is set explicitly: the derive default is CARGO_PKG_NAME
+// ("globe-experiment"), which would mislabel the help text.
+#[derive(Parser)]
+#[command(name = "headless", version, about)]
+struct Cli {
+    /// JSON scene: `{"simulation": {"datetime": ...}, "camera":
+    /// {"longitude", "latitude", "distance" (km), "tilt", "target":
+    /// "terra"|"luna"|"mercury"|...|"neptune"}, "ui": [panels]}`.
+    /// `camera.target` and `ui` are optional (target defaults to "terra";
+    /// omit `ui` for a body-only frame). See `SceneSpec` / `ui::UiPanel`.
+    /// Unknown keys are rejected.
+    #[arg(long)]
+    scene: String,
+    /// Output image width in pixels.
+    #[arg(long, default_value_t = 1920)]
+    width: u32,
+    /// Output image height in pixels.
+    #[arg(long, default_value_t = 1080)]
+    height: u32,
     /// Path to write the PNG.
-    pub output: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+}
+
+fn main() {
+    run(Cli::parse());
 }
 
 /// The full render scene, deserialized from the `--scene` JSON. Divides the
@@ -146,10 +194,10 @@ impl CameraTargetSpec {
     }
 }
 
-/// Renders one frame per `params`, writes it to `params.output` as a PNG, and
-/// prints a summary to stdout. Exits the process with a nonzero status on a
-/// usage error (bad datetime, bad dimensions, or write failure).
-pub fn run(params: RenderParams) {
+/// Renders one frame per the parsed CLI, writes it to `params.output` as a
+/// PNG, and prints a summary to stdout. Exits the process with a nonzero
+/// status on a usage error (bad datetime, bad dimensions, or write failure).
+fn run(params: Cli) {
     // Parse the scene JSON first (strict: a misspelled key errors, see
     // SceneSpec). Everything below reads from it.
     let scene: SceneSpec = serde_json::from_str(&params.scene)
@@ -217,7 +265,7 @@ pub fn run(params: RenderParams) {
     let ui_frame =
         (!scene.ui.is_empty()).then(|| build_ui_frame(scene.ui, params.width, params.height));
 
-    let image = HeadlessRenderer::new(params.width, params.height).render(&render, ui_frame);
+    let image = OffscreenRenderer::new(params.width, params.height).render(&render, ui_frame);
 
     if let Err(error) = image.save(&params.output) {
         fail(&format!(
@@ -290,9 +338,10 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
 }
 
 /// Prints a concise summary of the rendered frame to stdout: the resolved
-/// datetime, the camera, and the output path. Informational only - render mode
-/// is deliberately silent about EOP range (see the module note).
-fn print_summary(params: &RenderParams, camera: &CameraSpec, time: &Instant, distance: f32) {
+/// datetime, the camera, and the output path. Informational only - the
+/// headless binary is deliberately silent about EOP range (see the module
+/// note).
+fn print_summary(params: &Cli, camera: &CameraSpec, time: &Instant, distance: f32) {
     let (year, month, day, hour, minute, second) = time.as_datetime();
 
     // Note if the supplied distance was clamped into the camera's valid range.

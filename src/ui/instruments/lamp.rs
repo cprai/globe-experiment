@@ -10,6 +10,12 @@ use crate::ui::theme::{
 /// The *semantic* condition a producer selects for a [`Lamp`], mapped to a lamp
 /// color in [`Lamp::render`] (the producer never names a color). Serde
 /// snake_case so the mock JSON can say `"status": "ok"`.
+///
+/// No live panel constructs a lamp today - it is part of the reusable
+/// instrument library, constructed only via the headless binary's `ui` spec -
+/// so `dead_code` is allowed in the main binary's tree until a producer
+/// uses one.
+#[allow(dead_code)]
 #[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LampStatus {
@@ -26,9 +32,10 @@ pub enum LampStatus {
 /// A status indicator lamp: a colored disc in a recessed socket keyed to
 /// `status`, plus a dim caption.
 ///
-/// `Deserialize` so the `render --scene` `ui` JSON can name it directly;
+/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`.
+/// `get_drawables`. `dead_code` allowed like [`LampStatus`] (no live producer).
+#[allow(dead_code)]
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lamp {

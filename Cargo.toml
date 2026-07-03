@@ -1,6 +1,22 @@
 [package]
 name = "globe-experiment"
 edition = "2024"
+# Two binaries share this crate; keep bare `cargo run` launching the windowed
+# app (the build-and-run / smoke-test flows depend on it).
+default-run = "globe-experiment"
+
+# Each binary is its own module tree rooted in src/ (no lib crate): main.rs
+# never declares the headless modules and headless.rs never declares the
+# winit/window ones, so neither binary compiles the other's code. Explicit
+# [[bin]] sections are required - cargo only auto-discovers src/main.rs and
+# src/bin/*.
+[[bin]]
+name = "globe-experiment"
+path = "src/main.rs"
+
+[[bin]]
+name = "headless"
+path = "src/headless.rs"
 
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
@@ -13,10 +29,10 @@ egui_taffy = "0.12"
 egui-wgpu = "0.34.3"
 egui-winit = "0.34.3"
 glam = "0.33.1"
-# RFC3339 datetime parsing for the `render` single-frame CLI mode.
+# RFC3339 datetime parsing for the single-frame `headless` binary.
 humantime = "2"
 # Decodes the embedded body and star textures at startup (jpeg/tiff) and encodes
-# the `render` single-frame output (png). The textures are embedded verbatim by
+# the `headless` binary's single-frame output (png). The textures are embedded verbatim by
 # build.rs (no build-time transcode) and decoded here into uncompressed RGBA8,
 # so only these three codecs are needed; other default formats are dropped.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff"] }
@@ -30,7 +46,8 @@ rayon = "1.10"
 # embedded, and seeded via the `init_from_bytes` APIs (see
 # `simulation::celestial_sphere::init_satkit`).
 satkit = { version = "0.18", default-features = false }
-# Deserializes the `render --scene` JSON (simulation + camera + mock-panel ui)
+# Deserializes the `headless` binary's --scene JSON (simulation + camera +
+# mock-panel ui)
 # into the egui-free spec types (pure-Rust, portable across all six targets).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

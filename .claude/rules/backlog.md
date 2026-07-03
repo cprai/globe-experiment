@@ -32,8 +32,9 @@ breaks Apple Silicon (Metal: ASTC/ETC2 only, not BC/S3TC).
 - **No heading control, no fly-to animation, no tile streaming.**
 - **Second noise octave** in `value_noise_3d` if grain reads too regular
   (keep fixed-scale to preserve coherent wipe).
-- **No satellite markers in render mode** (deliberate). If wanted: implement
-  a headless `Simulation` variant (or a helper building a clock + celestial
-  sphere at an instant) feeding a scenario's `frame_state`, instead of the
-  current direct `RenderState` construction in `snapshot::run`.
+- **No satellite markers in the `headless` binary** (deliberate). If wanted:
+  implement a headless `Simulation` variant (or a helper building a clock +
+  celestial sphere at an instant) feeding a scenario's `frame_state`, instead
+  of the current direct `RenderState` construction in `headless::run` (but the
+  `scenarios` module is not in the headless bin's tree today).
 - **Real bloom post-process** — explicitly **declined** for now.

@@ -12,7 +12,7 @@ paths:
   Every look-tuning constant in `scene.wgsl` is calibrated to the non-sRGB
   surface. Do not switch to sRGB.
 - **Headless render target must also be non-sRGB** (`Rgba8Unorm`). Do not
-  "fix" `HeadlessRenderer` to `Rgba8UnormSrgb`. The stored 8-bit bytes
+  "fix" `OffscreenRenderer` (src/offscreen.rs) to `Rgba8UnormSrgb`. The stored 8-bit bytes
   already equal the sRGB-encoded on-screen pixels and are written verbatim
   to PNG (no gamma transform on readback).
 - **No HDR, no bloom.** LDR only. A real bloom pass is explicitly declined.
@@ -194,7 +194,7 @@ MEAN_RADIUS_KM ~6371.0088     GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418
 ANGULAR_VELOCITY_RAD_S 7.292115e-5
 ```
 
-**`src/application/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
+**`src/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
 scaled by the orbit target's `mean_radius_km()`; values below are the Terra
 target). FOV/near/far moved to `renderer`:
 ```

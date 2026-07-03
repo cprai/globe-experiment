@@ -1,22 +1,32 @@
-//! Headless single-frame renderer: draws the scene to an offscreen
+//! Offscreen single-frame renderer: draws the scene to an offscreen
 //! texture and reads it back to CPU pixels, with no window, surface, or
-//! present. Used by the `render` CLI mode (see `crate::snapshot`).
+//! present. The presenting half of the `headless` binary (whose root,
+//! `src/headless.rs`, builds the frame this draws).
 //!
 //! It shares the scene core ([`SceneRenderer`]) and the device-creation path
-//! ([`request_adapter_device`]) with the windowed [`Gfx`](super::Gfx); the only
+//! ([`request_adapter_device`]) with the main binary's windowed `Gfx`
+//! (`src/application/gfx.rs` - not part of this binary's module tree); the only
 //! differences are the presentation target (an owned color texture + a readback
 //! buffer instead of a swapchain surface) and that the UI is optional. The
 //! scene draw sequence is identical: clear to black (and the reversed-Z depth
 //! to 0.0), then stars -> planet impostors -> terra surface -> luna ->
-//! atmosphere (markers are skipped because render mode tracks none). When the
-//! caller supplies a [`UiFrame`] (from the `render --scene` `ui` mock layouts),
-//! an egui overlay is composited on top, exactly as in the windowed path.
+//! atmosphere (markers are skipped because the headless binary tracks none).
+//! When the caller supplies a [`UiFrame`] (from the `--scene` `ui` mock
+//! layouts), an egui overlay is composited on top, exactly as in the windowed
+//! path.
 
-use super::{
-    DEPTH_FORMAT, MAX_FRAME_DIMENSION, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
+use crate::renderer::{
+    DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
 use crate::simulation::RenderState;
+
+/// Maximum width or height (pixels) for a single-frame [`OffscreenRenderer`]
+/// target. Matches wgpu's default 2D texture dimension limit
+/// (`wgpu::Limits::default().max_texture_dimension_2d`, which the scene device
+/// requests); the offscreen color texture cannot exceed it. `OffscreenRenderer`
+/// `debug_assert`s this against the real device limit so the two cannot drift.
+pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
 /// Offscreen color format. **Non-sRGB on purpose.** Every look-tuning constant
 /// in `scene.wgsl` is calibrated to the windowed surface, which is also
@@ -30,8 +40,8 @@ use crate::simulation::RenderState;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Renders a single scene frame offscreen and returns it as CPU pixels. Built
-/// once per `render` invocation, used for one frame, then dropped.
-pub struct HeadlessRenderer {
+/// once per `headless` invocation, used for one frame, then dropped.
+pub struct OffscreenRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     scene: SceneRenderer,
@@ -52,14 +62,14 @@ pub struct HeadlessRenderer {
     padded_bytes_per_row: u32,
 }
 
-impl HeadlessRenderer {
-    /// Builds a headless renderer targeting a `width` x `height` image. Creates
-    /// its own surfaceless device (no optional features, same as the windowed
-    /// path), the scene resources, the egui paint backend (used only for
-    /// an optional mock-UI overlay), the offscreen color texture, and the
-    /// readback buffer. Panics if the dimensions are outside
-    /// `1..=MAX_FRAME_DIMENSION` (the caller validates first and reports a
-    /// clean CLI error).
+impl OffscreenRenderer {
+    /// Builds an offscreen renderer targeting a `width` x `height` image.
+    /// Creates its own surfaceless device (no optional features, same as
+    /// the windowed path), the scene resources, the egui paint backend
+    /// (used only for an optional mock-UI overlay), the offscreen color
+    /// texture, and the readback buffer. Panics if the dimensions are
+    /// outside `1..=MAX_FRAME_DIMENSION` (the caller validates first and
+    /// reports a clean CLI error).
     pub fn new(width: u32, height: u32) -> Self {
         assert!(
             width > 0
@@ -91,7 +101,7 @@ impl HeadlessRenderer {
         let depth_view = create_depth_view(&device, width, height);
 
         let color = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("headless color target"),
+            label: Some("offscreen color target"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -110,7 +120,7 @@ impl HeadlessRenderer {
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("headless readback"),
+            label: Some("offscreen readback"),
             size: u64::from(padded_bytes_per_row) * u64::from(height),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -142,11 +152,11 @@ impl HeadlessRenderer {
             .prepare(&self.device, &self.queue, render, viewport);
 
         // Apply egui's texture-set deltas (font atlas + per-glyph) before they
-        // are referenced by the overlay draw. Headless always renders to
-        // completion - there is no early-return frame like the windowed surface
-        // acquire - so the strict set-before-acquire ordering rule of
-        // `Gfx::update` is trivially met here; we keep set-before / free-after
-        // anyway to leave `egui_renderer` in a clean state.
+        // are referenced by the overlay draw. The offscreen path always renders
+        // to completion - there is no early-return frame like the windowed
+        // surface acquire - so the strict set-before-acquire ordering rule of
+        // the windowed `Gfx::update` is trivially met here; we keep set-before
+        // / free-after anyway to leave `egui_renderer` in a clean state.
         let screen = ui.as_ref().map(|ui| {
             for (id, delta) in &ui.textures_delta.set {
                 self.egui_renderer
@@ -164,7 +174,7 @@ impl HeadlessRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("headless frame encoder"),
+                label: Some("offscreen frame encoder"),
             });
 
         // egui's per-frame vertex/index/uniform buffers are updated through the
@@ -183,7 +193,7 @@ impl HeadlessRenderer {
 
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("headless frame pass"),
+                label: Some("offscreen frame pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,

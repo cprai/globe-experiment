@@ -2,6 +2,8 @@
 paths:
   - "src/renderer/**/*.rs"
   - "src/application/mod.rs"
+  - "src/application/gfx.rs"
+  - "src/offscreen.rs"
 ---
 
 # Renderer & application shell rules
@@ -167,7 +169,7 @@ dashes where the path grazes Terra's limb. The fade tail (`path_fade`,
 CPU-side per-endpoint alpha) holds full opacity until `PATH_FADE_START` of the
 period, then smoothsteps to zero at one full period. Recomputed every frame
 (a paused app renders zero frames, so idle stays free). Empty markers
-(eclipse/solar_system scenarios, headless render mode) mean `path_count == 0`
+(eclipse/solar_system scenarios, the headless binary) mean `path_count == 0`
 and the draw is skipped.
 
 ## Bind group 0 layout
@@ -207,7 +209,7 @@ draw.
 ## Depth buffer
 
 `Depth32Float`, reversed-Z (see `shader.md` and `camera.md`). `Gfx` owns a
-`depth_view` recreated on resize; `HeadlessRenderer` owns one sized to its
+`depth_view` recreated on resize; `OffscreenRenderer` owns one sized to its
 target. Shared helpers `create_depth_view` + `depth_attachment` (cleared to
 `0.0`) build both. All seven scene pipelines declare `depth_stencil` (the
 planet impostor writes `@builtin(frag_depth)`; the orbit path is the only
@@ -228,33 +230,39 @@ impostor `PLANET_PERSPECTIVE_MIN_ARCSEC 1800` / `PLANET_QUAD_MARGIN 1.3` /
 `PLANET_MIN_DEPTH 1e-6` (clamps a beyond-far planet's depth so it is not
 z-clipped).
 
-## Headless render mode (`HeadlessRenderer` + `snapshot`)
+## The `headless` binary (`OffscreenRenderer` + `src/headless.rs`)
+
+The single-frame render mode is its own binary (`cargo run --release --bin
+headless -- --scene ... --output frame.png`), with its own winit-free module
+tree; `src/offscreen.rs` is its presenter, `src/headless.rs` its bin root
+(CLI + scene spec + mock-UI driving). See `architecture.md`.
 
 - Offscreen format is **`Rgba8Unorm` (non-sRGB), on purpose** — twin of the
   surface format rule. The stored bytes already equal the sRGB-encoded
   on-screen pixels; written verbatim to PNG.
-- Shares `SceneRenderer` and `request_adapter_device` with the windowed path.
-  `HeadlessRenderer` passes `compatible_surface: None` to the adapter.
-- **No EOP range check** in render mode. Out-of-range datetimes render and
-  silently degrade. This is deliberate — documented in `snapshot.rs` and
+- Shares `SceneRenderer` and `request_adapter_device` with the windowed path
+  (both `pub(crate)` in `renderer`). `OffscreenRenderer` passes
+  `compatible_surface: None` to the adapter.
+- **No EOP range check** in the headless binary. Out-of-range datetimes render
+  and silently degrade. This is deliberate — documented in `headless.rs` and
   `scenarios.md`.
-- **No markers** in render mode (`RenderState.markers` is empty — so no
+- **No markers** in the headless binary (`RenderState.markers` is empty — so no
   predicted orbit paths either). The renderer
   derives every body from `RenderState.time`, so `camera.target` can be any of
   `"terra"`, `"luna"`, or a planet (`"mars"`, ..., `"neptune"`); the render
   origin is taken from the resolved `camera_target`.
-- **One `--scene` JSON drives the whole frame** (`snapshot::SceneSpec`,
+- **One `--scene` JSON drives the whole frame** (`headless::SceneSpec`,
   `deny_unknown_fields`): a `simulation` section (datetime), a `camera` section,
   and an optional `ui` section (`Vec<ui::UiPanel>`). The output target
   (`--output`/`--width`/`--height`) stays as CLI flags, NOT in the JSON. A
   misspelled key at any level errors with exit 2 (the agent-debugging payoff of
   strict parsing).
 - **Bodies-only by default; optional egui overlay when the scene has a `ui`.**
-  `HeadlessRenderer` owns an `egui_wgpu::Renderer` and `render()` takes an
+  `OffscreenRenderer` owns an `egui_wgpu::Renderer` and `render()` takes an
   `Option<UiFrame>`; when `Some`, panels composite over the scene exactly as in
   `Gfx::update` (apply `textures_delta.set`, `update_buffers`, `forget_lifetime`
   the pass, draw scene then egui, submit egui commands first, free deltas after).
-  `snapshot::build_ui_frame` takes the already-parsed `Vec<ui::UiPanel>`,
+  `headless.rs`'s `build_ui_frame` takes the already-parsed `Vec<ui::UiPanel>`,
   wraps it in `ui::PanelSet` — a `UiElement` tag enum over the bare instrument
   structs (which derive `Deserialize`), each cloned into an inert boxed
   `Instrument` — and drives it through the live `ui::control_panel`, so a mock

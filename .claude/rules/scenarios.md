@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/scenarios/**/*.rs"
-  - "src/snapshot.rs"
+  - "src/headless.rs"
 ---
 
 # Scenarios & valid time range
@@ -140,9 +140,10 @@ EOP-All.csv entry]` (approximately the build date):
 When adding a scenario, validate its `[start, end]` epochs against the
 bundled file's first/last MJD (and 1962 as a hard lower bound).
 
-## Render / snapshot mode
+## The `headless` binary (single-frame render)
 
-**`snapshot` deliberately does NOT enforce the EOP range.** The render mode
-(`src/snapshot.rs`) accepts any datetime and degrades silently outside range.
+**The `headless` binary deliberately does NOT enforce the EOP range.** It
+(`src/headless.rs`, its own bin with a winit-free module tree — no
+`scenarios`) accepts any datetime and degrades silently outside range.
 Do not add a range check there — the caller owns the time and the behavior
 is documented.

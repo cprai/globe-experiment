@@ -28,7 +28,10 @@ pub(crate) const READOUT_CREAM: Color32 = Color32::from_rgb(222, 214, 184);
 pub(crate) const LABEL_DIM: Color32 = Color32::from_rgb(150, 156, 150);
 /// Amber accent for a section header (the title atop a cluster).
 pub(crate) const HEADER_AMBER: Color32 = Color32::from_rgb(230, 178, 86);
-/// Red fault-lamp tone.
+/// Red fault-lamp tone. Reached only through `Lamp::render`, which no live
+/// panel constructs (see the lamp's `dead_code` note), so this is dead in the
+/// main binary's tree too.
+#[allow(dead_code)]
 pub(crate) const ACCENT_RED: Color32 = Color32::from_rgb(214, 92, 76);
 
 /// Panel body: near-black blue-gray gunmetal, slightly translucent so the scene

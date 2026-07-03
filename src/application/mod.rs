@@ -1,13 +1,16 @@
 //! The application layer: windowing, the winit event loop, per-frame redraw
-//! orchestration, and the camera (rig + all input/animation). It is generic
-//! over any `S: Simulation`, owns the `Gfx` renderer, updates the camera from
-//! window input, advances the simulation, and drives each render.
+//! orchestration, and all camera input/animation. It is generic over any
+//! `S: Simulation`, owns the windowed `Gfx` renderer (the `gfx` submodule),
+//! updates the camera from window input, advances the simulation, and drives
+//! each render.
 //!
-//! The camera and its input controller live here so that swapping the input
-//! scheme (e.g. adding touch controls) stays local to this module; the
-//! simulation and renderer only ever consume a resolved camera position/view.
+//! The camera's input controller lives here so that swapping the input scheme
+//! (e.g. adding touch controls) stays local to this module; the `Camera` rig
+//! type itself lives in the shared top-level `camera` module (winit-free, so
+//! the headless binary builds the same rig), and the simulation and renderer
+//! only ever consume a resolved camera position/view.
 
-mod camera;
+mod gfx;
 mod input;
 
 use std::sync::Arc;
@@ -17,12 +20,11 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use crate::renderer::{FrameOutcome, Gfx, UiFrame};
+use crate::camera::Camera;
+use crate::renderer::UiFrame;
 use crate::simulation::Simulation;
 use crate::ui::{self, UIDrawable};
-// Re-exported crate-wide so the headless `render` mode (`crate::snapshot`) can
-// build the same camera rig; only the input `Controller` stays private here.
-pub(crate) use camera::Camera;
+use gfx::{FrameOutcome, Gfx};
 use input::Controller;
 
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
