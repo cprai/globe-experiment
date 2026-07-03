@@ -1,7 +1,11 @@
 {
     "name": "rust-claude-code",
     "build": {
-        "dockerfile": "Dockerfile"
+        "dockerfile": "Dockerfile",
+        "args": {
+            "GIT_AUTHOR_NAME": "${localEnv:GIT_AUTHOR_NAME}",
+            "GIT_AUTHOR_EMAIL": "${localEnv:GIT_AUTHOR_EMAIL}"
+        }
     },
     "mounts": [
         "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
