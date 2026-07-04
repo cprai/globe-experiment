@@ -1,36 +1,53 @@
 ---
 name: smoke-test
-description: Run the Solar System app headless for ~20 seconds to confirm wgpu pipelines and bindings are valid - validation errors panic in the first frames, so a clean run means they are valid. Use after renderer, pipeline, or binding changes.
+description: Render one frame with the headless binary to confirm wgpu pipelines and bindings are valid - validation errors panic at pipeline creation or first draw, so a clean single-frame render means they are valid. Use after renderer, pipeline, or binding changes.
 ---
 
 # Smoke test (validate pipelines & bindings)
 
-Run the app headless for a few seconds to confirm wgpu pipelines and
-bindings are valid. wgpu validation errors **panic in the first frames**,
-so a clean 15-25 s run means pipelines/bindings are valid.
-
-## Tools
-- `cargo` (stable)
+Render a single frame with the `headless` binary. It builds the same shared
+`renderer::SceneRenderer` as the windowed app — all pipelines and bind groups
+are created in `SceneRenderer::new`, and wgpu validation errors **panic there
+or at first draw** — so one clean frame means pipelines/bindings are valid.
+No scenario, no window, no display server needed (works in the dev sandbox
+via lavapipe).
 
 ## Command
+
+One call, one-line verdict; the log is shown only on failure:
+
 ```sh
-timeout 20 cargo run --release 2>&1 | head
+cargo run -q --release --bin headless -- \
+    --output /tmp/smoke.png --width 320 --height 240 --scene \
+    '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},"camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}' \
+    > /tmp/smoke.log 2>&1 \
+  && echo "SMOKE PASS" \
+  || { echo "SMOKE FAIL"; tail -30 /tmp/smoke.log; }; \
+rm -f /tmp/smoke.png
 ```
-Or redirect to a file (pipe buffering can swallow output):
-```sh
-timeout 20 cargo run --release > /tmp/smoke.log 2>&1; head -40 /tmp/smoke.log
-```
+
+## Do NOT analyze the image
+
+The PNG is a byproduct, not the result. **Do not open, read, or analyze it**
+(that wastes tokens) — the pass signal is the exit code alone; the command
+deletes the image immediately. This is a smoke test looking only for obvious
+errors (panics), not graphical quality. To actually inspect rendered output,
+use the `analyze-render` skill instead.
 
 ## What it does / does not catch
+
 - **Catches:** invalid pipelines, bad bind-group layouts, uniform/buffer
-  mismatches — anything wgpu validates at pipeline creation or first draw.
-- **Does NOT catch:** shader compile/validation issues are caught here too
-  (naga runs at runtime), but you should still run the `validate-wgsl-naga`
-  skill after a shader edit for a precise line+caret error.
+  mismatches, shader compile errors (naga runs at runtime) — anything wgpu
+  validates at pipeline creation or first draw.
+- **Does NOT catch:** the winit/`Gfx` surface-swapchain path, the windowed
+  egui overlay, or satellite-marker draws (headless draws no markers) — those
+  need a real windowed run on a machine with a display.
 - **Does NOT catch:** look/color/interaction-feel correctness — that needs a
-  real interactive run, ideally a native Windows release build.
+  real interactive run, ideally a native Windows release build. For shader
+  errors with a precise line+caret, still run the `validate-wgsl-naga` skill.
 
 ## Pass criteria
-- No panic in the first frames; process runs until the `timeout` kills it.
-- Note: the clock **starts playing**, so the app renders continuously and
-  does not idle on its own during the smoke window — that is expected.
+
+- `SMOKE PASS` printed (headless exited 0). Nothing else to check.
+- Benign noise: `error: XDG_RUNTIME_DIR is invalid or not set` lines in the
+  log are expected in the sandbox and are NOT a failure.
