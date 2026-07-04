@@ -25,3 +25,5 @@ ENV DISABLE_AUTOUPDATER=1
 
 RUN mkdir -p /home/vscode/.claude
 RUN chown -R vscode:vscode /home/vscode/.claude
+
+RUN curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash

@@ -11,6 +11,17 @@ Look-tuning constants in `scene.wgsl` in particular drift between sessions.
 **After completing all changes, print a one-line commit message describing the
 currently uncommitted changes — as an example only. Do NOT make any commits.**
 
+## Code search: use the codebase-memory MCP (see the `codebase-search` skill)
+
+Whenever code needs to be searched, or before planning/making major code
+changes, **prefer the `codebase-memory-mcp` knowledge graph over grep/glob/
+whole-file reads** — it returns exact symbols, callers, and precise source
+ranges, saving agent token cost. **Re-index the project before searching, and
+re-index again after any code change** (indexing is fast at this project's
+size, so do it liberally). The `codebase-search` skill has the tool cheat
+sheet and the re-index commands. Plain Grep/Read remain right for non-Rust
+files (`scene.wgsl`, configs, docs), and always `Read` a file before editing.
+
 ---
 
 ## What this is
