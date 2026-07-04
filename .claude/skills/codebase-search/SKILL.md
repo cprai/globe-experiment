@@ -1,6 +1,6 @@
 ---
 name: codebase-search
-description: Search and explore code through the codebase-memory-mcp knowledge graph instead of grep/glob/whole-file reads — the preferred, token-cheap way to find definitions, callers, call chains, and structure. Use whenever code needs to be searched or before planning major code changes. ALWAYS re-index first (indexing is fast on this project), and re-index again after any code change.
+description: Search and explore code through the codebase-memory-mcp knowledge graph instead of grep/glob/whole-file reads — the preferred, token-cheap way to find definitions, callers, call chains, and structure. Use whenever code needs to be searched or before planning major code changes. ALWAYS re-index first (indexing is fast on this project), and re-index again after any code change. Also covers referencing dependency source (satkit, wgpu, egui, ...): index the crate's registry dir first, then search its graph.
 ---
 
 # Codebase graph search (codebase-memory-mcp)
@@ -50,6 +50,23 @@ Notes learned on this repo:
   filter on properties.
 - `search_graph` caps results (default 200) — check `has_more` and paginate
   with `offset`, or narrow with `label`/`file_pattern` first.
+
+## Dependencies: index the crate before referencing it
+
+Any time you need to reference a dependency's source (satkit, wgpu, egui,
+winit, ...), **index that crate first** and search its graph instead of
+reading registry files raw. Each crate indexes as its own separate project
+(the graphs do not link — no cross-project call edges), named after its path:
+
+```
+index_repository(repo_path="$CARGO_HOME/registry/src/<index>/<crate>-<version>", mode="fast")
+```
+
+Find the exact path with `ls $CARGO_HOME/registry/src/*/ | grep <crate>`
+(CARGO_HOME is `/usr/local/cargo` here). Registry sources are immutable per
+version, so a dependency needs indexing **once** — the re-index rule above
+does not apply to deps; `list_projects` shows if it is already indexed. A
+version bump changes the path, so just index the new version's dir.
 
 ## When plain tools are still right
 
