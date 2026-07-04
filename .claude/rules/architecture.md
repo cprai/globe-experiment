@@ -116,7 +116,9 @@ src/engine/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider
                          (InteractiveButton/InteractiveHoldButton/
                          InteractiveToggle/InteractiveSlider; the Hold variant
                          fires every frame the key is held - the burn keys'
-                         producer). Shared draw lives on the bare struct.
+                         producer - and senses click_and_drag so the press
+                         survives egui's 0.8 s max_click_duration). Shared
+                         draw lives on the bare struct.
                          Click-fired InteractiveButton has no live producer yet
                          (allow(dead_code)) - the full set ships as a reusable
                          instrument library

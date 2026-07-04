@@ -4,10 +4,12 @@
   interaction on native Windows. Do not add a CI gate without owner sign-off.
   There are a few render-free unit tests (`cargo test`): in
   `celestial_sphere.rs` covering the galactic star-frame matrix and the IAU
-  lunar rotation (`luna_near_side_faces_terra`), and in `satellite.rs`
+  lunar rotation (`luna_near_side_faces_terra`), in `satellite.rs`
   covering the TLE-free numerical pipeline
-  (`numerical_pipeline_holds_circular_leo`) — run them after touching those
-  modules. Any test needing satkit globals must seed via the `Once`-guarded
+  (`numerical_pipeline_holds_circular_leo`), and in `ui/instruments/button.rs`
+  covering hold-key press persistence past egui's 0.8 s click timeout
+  (`hold_key_fires_past_click_timeout`, CPU-only egui passes, no satkit) — run
+  them after touching those modules. Any test needing satkit globals must seed via the `Once`-guarded
   `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is set-once
   per process; a second bare `init_satkit` panics in the shared test binary).
   `cargo test` builds and runs the shared-engine tests **twice** — once per
