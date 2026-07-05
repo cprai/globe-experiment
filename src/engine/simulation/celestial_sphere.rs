@@ -281,11 +281,11 @@ impl CelestialSphere {
         let luna_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("luna ephemeris lookup");
         let luna_pos_world = p * (nvec(q_gcrf2itrf * luna_gcrf) / 1000.0);
 
-        // The lunar mesh is built in the project body convention (+Y north,
+        // Luna's body frame uses the project body convention (+Y north,
         // +Z sub-Terra); compose its body->world rotation as
         // P * R_gcrf2itrf * M_body2gcrf * P^T, where M_body2gcrf (standard
         // Z=pole convention) is the IAU lunar rotation and the P^T un-permutes
-        // the mesh's project-convention axes into the standard ones M expects.
+        // the project-convention axes into the standard ones M expects.
         let r_gcrf2itrf = Mat3::from_cols(
             nvec(q_gcrf2itrf * unit(1.0, 0.0, 0.0)),
             nvec(q_gcrf2itrf * unit(0.0, 1.0, 0.0)),

@@ -147,15 +147,19 @@ src/engine/luna.rs              lunar constants (triaxial ellipsoid radii, mean 
                          the Terra-style single source of truth for Luna geometry
 src/engine/planet.rs            the 7 planets' data, hung off the CelestialBody planet
                          variants (no separate Planet enum): ALL[CelestialBody;7]
-                         + data-driven table (oblate radii, IAU rotation
+                         + data-driven table (triaxial radii with rx = rz - the
+                         familiar oblate forms - via radii_km(), IAU rotation
                          constants, texture file) accessed via impl CelestialBody
                          + surface_position / geodetic_normal free fns. satkit-
                          free, like terra/luna; references simulation::body for
                          the CelestialBody type
 src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into BOTH
-                         binaries: SceneRenderer (7 pipelines incl. Luna, a
-                         single planet impostor, and the predicted orbit path
-                         (mitered screen-space line strip, depth test-no-write);
+                         binaries: SceneRenderer (6 pipelines: Terra surface,
+                         atmosphere, stars, markers, the predicted orbit path
+                         (mitered screen-space line strip, depth test-no-write),
+                         and a single body impostor shared by the 7 planets AND
+                         Luna (triaxial ray trace + generic same-system eclipse
+                         occluders, IMPOSTOR_BODIES slot order);
                          reversed-Z Depth32Float buffer) + the shared device/
                          depth helpers (request_adapter_device,
                          create_depth_view, depth_attachment, DEPTH_FORMAT) +
@@ -164,8 +168,8 @@ src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into 
                          CelestialSphere::at and rebuilds view_proj from the
                          camera rig; SGP4-propagates each marker's TLE one
                          period ahead (satellite::orbit_path_inertial) for the
-                         path. Planets use a separate group-1 bind group
-                         (per-planet impostor uniform + texture). Gfx does NOT
+                         path. Impostor bodies use a separate group-1 bind group
+                         (per-body impostor uniform + texture). Gfx does NOT
                          live here anymore (it is winit-bound ->
                          application/gfx.rs)
 src/offscreen.rs         OffscreenRenderer: surfaceless Rgba8Unorm offscreen
@@ -174,14 +178,17 @@ src/offscreen.rs         OffscreenRenderer: surfaceless Rgba8Unorm offscreen
                          headless bin's presenter (its tree only; the windowed
                          twin is application/gfx.rs)
 src/engine/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
-                         wgs84_ellipsoid + luna_ellipsoid (planets are
-                         impostors, not meshes)
+                         wgs84_ellipsoid only (Terra is the sole meshed body -
+                         Luna + planets are impostors)
 src/engine/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
                          enum (TerraSystem(TerraSystemEntity Terra|Luna), then
                          each planet Mercury..Neptune as its own variant) +
                          total geometry accessors (name/mean_radius/surface/
                          normal; planet data hangs off these variants in
-                         src/engine/planet.rs), Placement (pos+rot), BodyState (identity
+                         src/engine/planet.rs) + same_system (the generic
+                         mutual-eclipse rule: same-system bodies shadow each
+                         other - the renderer builds impostor occluder lists
+                         from it), Placement (pos+rot), BodyState (identity
                          + placement). The shared vocabulary for the celestial
                          sphere, CameraTarget, and the selectors
 src/engine/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults

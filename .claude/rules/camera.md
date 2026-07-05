@@ -126,7 +126,7 @@ parallax between Sol and stars (a fixed bug).
 **There is no Earth-fixed `sol_dir` in the render path.** Every lit pass derives
 its Sol direction from `uniforms.sol_pos` (Sol in the render frame =
 relative to the camera target): surfaces use `normalize(sol_pos - world_pos)`
-(Terra `fs_main`, Luna `fs_luna`, `fs_planet`), and the backdrop Sol disc
+(Terra `fs_main`; every impostor body incl. Luna `fs_planet`), and the backdrop Sol disc
 (`fs_stars`) uses `normalize(sol_pos)` (the camera target's own direction to the
 Sol). Sol is a solar-system object, so from a distant planet it is in a
 wholly different direction than from Terra (e.g. ~160 deg away at Jupiter), and

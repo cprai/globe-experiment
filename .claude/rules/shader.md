@@ -24,7 +24,8 @@ paths:
 - **Reversed-Z depth buffer (`Depth32Float`).** Cleared to `0.0` (the far
   plane), `depth_compare: Greater` (nearer = larger depth). It exists so the
   Terra occludes the much more distant Luna (incl. a partial limb). Per-pass
-  policy (in `SceneRenderer::new`): the **solid bodies** (Terra surface, Luna)
+  policy (in `SceneRenderer::new`): the **solid bodies** (the Terra surface
+  mesh; the body impostors via `@builtin(frag_depth)`)
   write depth + test `Greater`; the **backdrop, atmosphere, markers** neither
   write nor test (`Always`, no write) so they keep their exact draw-order
   layering. Because the atmosphere does not depth-test, `fs_atmosphere` does an
@@ -36,36 +37,43 @@ paths:
   projection must all agree or geometry vanishes. egui's overlay pipeline is
   built with `depth_stencil_format: Some(DEPTH_FORMAT)` (depth-off, draws on
   top) so it is compatible with the depth attachment.
-- **Draw order: stars -> planet impostors -> Terra surface -> Luna ->
-  atmosphere -> orbit paths -> markers**, one render pass. Every planet is a **single shader
+- **Draw order: stars -> body impostors (planets + Luna) -> Terra surface ->
+  atmosphere -> orbit paths -> markers**, one render pass. Every non-Terra
+  body - the seven planets AND Luna - is a **single shader
   impostor** (`vs_planet`/`fs_planet`): a camera-facing quad (no vertex buffer)
-  placed in screen space by the CPU (in `prepare`, projecting the planet center
-  to NDC) that ray-traces the oblate ellipsoid, textured + Lambert-lit, and
+  placed in screen space by the CPU (in `prepare`, projecting the body center
+  to NDC) that ray-traces the triaxial ellipsoid (Luna genuinely triaxial;
+  each planet oblate with rx = rz), textured + Lambert-lit, and
   **writes per-fragment depth** (reversed-Z, same as the solid bodies) - so the
-  depth buffer resolves planet-vs-planet and Terra-vs-planet occlusion and draw
+  depth buffer resolves body-vs-body and Terra-vs-body occlusion and draw
   order does not matter (impostors draw right after the backdrop). The trace is
-  **distance-adaptive**, chosen per planet on the CPU by apparent angular size
-  (`2*asin(req/distance)` vs `PLANET_PERSPECTIVE_MIN_ARCSEC`): a near/orbited
-  planet uses the **perspective** eye-ray trace (reconstructed from the
+  **distance-adaptive**, chosen per body on the CPU by apparent angular size
+  (`2*asin(rmax/distance)` vs `PLANET_PERSPECTIVE_MIN_ARCSEC`, `rmax` = the
+  largest semi-axis): a near/orbited
+  body uses the **perspective** eye-ray trace (reconstructed from the
   fragment's NDC via `inv_view_proj`, f32-safe because distance/radius is small
-  there) and writes the true hit-point depth; a distant planet uses the
+  there) and writes the true hit-point depth; a distant body uses the
   **orthographic** parallel-ray trace (built from the quad-corner offset,
   f32-safe at any distance) and the center's baseline depth. **Quad placement
-  also depends on the mode**: a distant planet's quad is anchored at its
+  also depends on the mode**: a distant body's quad is anchored at its
   projected center sized to the angular radius (tight + cheap), but a
-  perspective planet's quad covers the **whole screen** (`[-1,1]^2`) - its
+  perspective body's quad covers the **whole screen** (`[-1,1]^2`) - its
   projected center can fall far off-screen at high tilt (the center is far off
   the view axis while the near surface still fills the frame), so a
-  center-anchored quad would follow the center off-screen and the planet would
+  center-anchored quad would follow the center off-screen and the body would
   vanish; a full-screen quad + per-pixel ray-trace (misses discard) always
-  covers the visible surface. Only the orbited body is ever perspective, so this
-  is one full-screen pass at most. The group-1 bind
+  covers the visible surface. At most the orbited body and (near its perigee,
+  from a Terra orbit - Luna's apparent diameter straddles the cutoff over the
+  month) Luna are perspective, so this is at most two full-screen passes. The
+  group-1 bind
   group is shared; only the solar-system scenario shows the planets prominently
   (the Terra/Luna views carry them too, but far off-screen).
 - **Terra system is gated to Terra/Luna targets.** The Terra surface, atmosphere,
-  Luna, orbit paths, and satellite markers draw only when `render_origin == 0`
+  the Luna impostor, orbit paths, and satellite markers draw only when
+  `render_origin == 0`
   (orbiting the
-  Terra or Luna); the renderer sets a `draw_terra_system` flag. Orbiting a
+  Terra or Luna); the renderer sets a `draw_terra_system` flag (the impostor
+  loop skips Luna's slot on it). Orbiting a
   planet they would be a far speck and the Terra-centered atmosphere physics is
   meaningless, so they are skipped — only the planets + backdrop draw.
 - **Render frame (floating origin): the shader is fully camera-target-local.**
@@ -90,9 +98,17 @@ paths:
   clip z/w, so the fat quad depth-tests as the thin 3D line. Fade alpha is a
   per-endpoint instance value computed on the CPU.
 - **Mutual eclipse shadows are analytic** (`sol_visibility` in `scene.wgsl`):
-  the soft two-disk overlap of Sol and an occluding sphere. Luna
-  shadows Terra in `fs_main` (solar-eclipse spot); Terra shadows the
-  Luna in `fs_luna` (lunar-eclipse coppery glow). No shadow maps.
+  the soft two-disk overlap of Sol and an occluding sphere, with the Sol
+  angular radius passed per call. Luna
+  shadows Terra in `fs_main` (solar-eclipse spot, via the group-0
+  `luna_pos`/`luna_params`). Every impostor body is shadowed **generically** in
+  `fs_planet`: its uniform carries a fixed-size occluder list (`occluders`,
+  `MAX_OCCLUDERS` slots; radius 0 = unused) that the CPU fills with the body's
+  same-system neighbors (`CelestialBody::same_system` - today Terra shadowing
+  Luna, the lunar-eclipse coppery glow), plus a per-body Sol angular radius
+  computed from the true Sol distance. A future moon system self-shadows by
+  adding its enum arm to `same_system` - no renderer/shader change. No shadow
+  maps.
 - **Idle = zero GPU work.** Never add an unconditional vsync loop.
   `ControlFlow::Wait` + targeted `request_redraw`. The clock starts playing,
   so the app is non-idle from launch until paused.
@@ -163,13 +179,15 @@ MARKER_FILL (1.0, 0.25, 0.2)  MARKER_RING (1.0, 1.0, 1.0)
 PATH_WIDTH_PX 3.0          PATH_AA_PAD_PX 1.5
 PATH_MITER_LIMIT 4.0       PATH_OPACITY 0.85
 PATH_COLOR (0.35, 0.65, 1.0)
-LUNA_AMBIENT 0.02          LUNA_ECLIPSE_GLOW (0.06, 0.012, 0.004)
+PLANET_AMBIENT 0.02        ECLIPSE_GLOW (0.06, 0.012, 0.004)
+MAX_OCCLUDERS 4 (must match renderer)
 terminator: smoothstep(-0.12, 0.18, cos_sol)
 ```
 
 **`src/engine/renderer/mod.rs`** (depth/eclipse): `DEPTH_FORMAT Depth32Float`,
-`SOL_ANGULAR_RADIUS_RAD 0.004652` (eclipse penumbra; distinct from the star
-pass's `SOL_ANGULAR_RADIUS` disc-size cheat).
+`SOL_ANGULAR_RADIUS_RAD 0.004652` (fs_main solar-eclipse penumbra; distinct
+from the star pass's `SOL_ANGULAR_RADIUS` disc-size cheat), `SOL_RADIUS_KM
+695700` (per-impostor-body Sol angular radius = asin(SOL_RADIUS_KM/dist)).
 
 **`build.rs mod atmosphere`**:
 ```
@@ -202,13 +220,16 @@ MIN_DISTANCE_RADII 0.01 (~63.7)   MAX_DISTANCE_RADII 10 (~63710)   MAX_TILT 80
 DEFAULT_DISTANCE_RADII 2 (Terra ~12742)   defaults: lon 0, lat 0, tilt 0   lat clamp +/-89
 ```
 
-**`src/engine/renderer/mod.rs`**: `STACKS 64`, `SLICES 128` (Terra/Luna meshes only),
+**`src/engine/renderer/mod.rs`**: `STACKS 64`, `SLICES 128` (the Terra mesh
+only - Luna and the planets are impostors),
 `MARKER_RADIUS_PX 6`, projection `FOV_Y_DEG 45`, `NEAR_PLANE_RADII 0.01`
 (* target radius), `FAR_PLANE_KM 500000` (far-plane *floor*; the actual far
 plane is `max(FAR_PLANE_KM, |camera_pos| + 2*radius)`, so a large orbited body
-at max zoom-out is never z-clipped). Planet impostor:
+at max zoom-out is never z-clipped). Body impostor:
+`IMPOSTOR_BODIES` (planet::ALL + Luna, the GPU-slot order),
 `PLANET_PERSPECTIVE_MIN_ARCSEC 1800` (angular-diameter cutoff: at/above it the
 impostor uses the perspective trace, below it orthographic),
 `PLANET_QUAD_MARGIN 1.3` (Rust) / `PLANET_QUAD_MARGIN 1.3` (`scene.wgsl`, must
-match), and `PLANET_MIN_DEPTH 1e-6` (clamps a beyond-far planet so it is not
-z-clipped).
+match), `PLANET_MIN_DEPTH 1e-6` (clamps a beyond-far body so it is not
+z-clipped), and `MAX_OCCLUDERS 4` (eclipse-occluder slots per body, must match
+`scene.wgsl`).

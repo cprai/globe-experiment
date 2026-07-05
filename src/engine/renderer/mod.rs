@@ -42,8 +42,35 @@ const PATH_FADE_START: f32 = 0.85;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Sol's angular radius seen from Terra/Luna (~0.266 deg), in radians. Sets
-/// the soft penumbra width of the analytic eclipse shadows in the shader.
+/// the soft penumbra width of the solar-eclipse shadow on Terra (`fs_main`,
+/// group 0). The impostor bodies carry a per-body value computed from
+/// [`SOL_RADIUS_KM`] instead, so an outer system's sharper penumbra is
+/// automatic.
 const SOL_ANGULAR_RADIUS_RAD: f32 = 0.004652;
+
+/// Sol's physical radius (km): the per-body Sol angular radius uploaded with
+/// each impostor is `asin(SOL_RADIUS_KM / distance-to-Sol)`.
+const SOL_RADIUS_KM: f32 = 695_700.0;
+
+/// Eclipse-occluder slots in each impostor's uniform (unused slots have
+/// radius 0). One suffices for the Terra system (Terra shadowing Luna); sized
+/// for a future moon system's worth of same-system casters. Must match
+/// `MAX_OCCLUDERS` in scene.wgsl.
+const MAX_OCCLUDERS: usize = 4;
+
+/// Every body drawn as a shader impostor, in GPU-slot order (the renderer's
+/// per-body uniform/bind-group arrays): the seven planets in `planet::ALL`
+/// order, then Luna. Built from `planet::ALL` so the two never drift; Luna
+/// sits last, so the planet slots keep their `planet::ALL` indices.
+const IMPOSTOR_BODIES: [CelestialBody; 8] = {
+    let mut bodies = [CelestialBody::LUNA; 8];
+    let mut i = 0;
+    while i < planet::ALL.len() {
+        bodies[i] = planet::ALL[i];
+        i += 1;
+    }
+    bodies
+};
 
 /// Apparent-size cutoff (angular DIAMETER, arcsec) below which the planet
 /// impostor uses the ORTHOGRAPHIC (parallel-ray) trace and above which it uses
@@ -242,9 +269,11 @@ struct Uniforms {
     /// z = radius px, w = unused. (Per-marker position/visibility is
     /// per-instance, in the marker instance buffer, not here.)
     marker: [f32; 4],
-    /// Luna body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
-    luna_rot: [[f32; 4]; 3],
     /// Luna center in the render frame (km) = relative to the camera target.
+    /// Luna itself draws through the shared body impostor (group 1); this
+    /// group-0 copy feeds the two passes that must know about Luna without
+    /// drawing it: the solar-eclipse shadow on Terra (`fs_main`) and the
+    /// atmosphere's Luna occlusion check (`fs_atmosphere`).
     luna_pos: [f32; 3],
     _pad2: f32,
     /// Eclipse params: x = Luna mean radius km, y = Terra mean radius km,
@@ -257,49 +286,71 @@ struct Uniforms {
     _pad4: f32,
 }
 
-/// Per-planet impostor uniform (group 1). Layout must match `PlanetUniform` in
-/// scene.wgsl. The CPU projects the planet's center to screen space and packs
+/// Per-body impostor uniform (group 1). Layout must match `PlanetUniform` in
+/// scene.wgsl. The CPU projects the body's center to screen space and packs
 /// the placement here; the GPU draws a single quad at that NDC and ray-traces
-/// the oblate ellipsoid in its fragment shader.
+/// the triaxial ellipsoid in its fragment shader.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct PlanetUniform {
     /// Body-fixed -> world rotation; mat3x3 columns padded to vec4 stride.
     rot: [[f32; 4]; 3],
-    /// Planet center in the render frame (km) = relative to the camera target.
-    /// For the ORBITED planet this is exactly zero (its center IS the render
+    /// Body center in the render frame (km) = relative to the camera target.
+    /// For the ORBITED body this is exactly zero (its center IS the render
     /// origin) - the key to keeping the perspective trace f32-precise.
     pos: [f32; 3],
-    _pad_pos: f32,
-    /// Projected center of the planet in NDC (the impostor quad's center).
+    /// Sol's angular radius seen from this body (rad): the penumbra softness
+    /// of its eclipse shadows (`asin(SOL_RADIUS_KM / distance to Sol)`).
+    sol_angular_radius: f32,
+    /// Projected center of the body in NDC (the impostor quad's center).
     ndc_center: [f32; 2],
     /// Half-extent of the impostor quad in NDC (x, y), bounding the silhouette
     /// with margin.
     ndc_half_extent: [f32; 2],
-    /// Equatorial semi-axis (+X/+Z) in km; the impostor ellipsoid.
-    equatorial_radius_km: f32,
-    /// Polar semi-axis (+Y) in km.
-    polar_radius_km: f32,
+    /// Triaxial semi-axes (km) in the body frame (+X east, +Y pole, +Z prime
+    /// meridian); the impostor ellipsoid. rx = rz for a planet, all three
+    /// distinct for Luna.
+    radii: [f32; 3],
     /// Reversed-Z NDC depth of the projected center: the baseline fragment
     /// depth for the orthographic (distant) trace (the perspective trace
     /// overrides it per fragment from the hit point).
     depth: f32,
-    /// 1.0 = perspective (eye-ray) trace for a near/orbited planet; 0.0 =
+    /// Same-system eclipse occluders: xyz = center (render frame km), w =
+    /// caster sphere radius (km; 0 = unused slot). Luna carries Terra here
+    /// (the lunar eclipse); planets carry none today.
+    occluders: [[f32; 4]; MAX_OCCLUDERS],
+    /// 1.0 = perspective (eye-ray) trace for a near/orbited body; 0.0 =
     /// orthographic (parallel-ray) trace for a distant one. See
     /// `PLANET_PERSPECTIVE_MIN_ARCSEC`.
     perspective: f32,
+    _pad: [f32; 3],
 }
 
-/// Long-lived GPU resources for one planet: its per-frame impostor uniform and
-/// the group-1 bind group (uniform + texture + sampler) bound when it is drawn.
-/// One per planet, in `planet::ALL` order. (No mesh: every planet is drawn as a
-/// single shader impostor quad.)
+/// Long-lived GPU resources for one impostor body: its per-frame impostor
+/// uniform and the group-1 bind group (uniform + texture + sampler) bound when
+/// it is drawn. One per body, in `IMPOSTOR_BODIES` order. (No mesh: every
+/// body is drawn as a single shader impostor quad.)
 struct PlanetGpu {
-    /// Per-planet `PlanetUniform`, rewritten each frame in `prepare`.
+    /// Per-body `PlanetUniform`, rewritten each frame in `prepare`.
     uniform: wgpu::Buffer,
-    /// group-1 bind group: this planet's uniform + texture + the shared
+    /// group-1 bind group: this body's uniform + texture + the shared
     /// sampler.
     bind_group: wgpu::BindGroup,
+}
+
+/// Triaxial semi-axes (km) of an impostor body, in the shared body-frame
+/// convention (+X 90 deg east, +Y the rotation pole, +Z the prime meridian).
+/// Luna's come from its geometry module (genuinely triaxial - the long axis
+/// faces Terra), the planets' from theirs (oblate: rx = rz).
+fn impostor_radii_km(body: CelestialBody) -> Vec3 {
+    match body {
+        CelestialBody::TerraSystem(TerraSystemEntity::Luna) => Vec3::new(
+            luna::RADIUS_ALONGORBIT_KM as f32,
+            luna::RADIUS_POLAR_KM as f32,
+            luna::RADIUS_SUBTERRA_KM as f32,
+        ),
+        _ => body.radii_km(),
+    }
 }
 
 /// One on-screen satellite marker, as instance data for the marker pipeline.
@@ -375,15 +426,14 @@ fn path_fade(t: f32) -> f32 {
 }
 
 /// Owns every long-lived wgpu object for the scene: textures, LUTs,
-/// mesh buffers, and the seven render pipelines (terra surface, atmosphere,
-/// stars, markers, orbit paths, luna, planet impostor). The shared scene core,
+/// mesh buffers, and the six render pipelines (terra surface, atmosphere,
+/// stars, markers, orbit paths, body impostor). The shared scene core,
 /// owned by each binary's presenter: the windowed `Gfx` (main binary) or the
 /// `OffscreenRenderer` (headless binary).
 pub(crate) struct SceneRenderer {
     render_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
-    luna_pipeline: wgpu::RenderPipeline,
     marker_pipeline: wgpu::RenderPipeline,
     /// The predicted-orbit-path pipeline (`vs_path`/`fs_path`): thick
     /// screen-space-expanded segments, alpha-blended, depth-TESTED (`Greater`,
@@ -392,32 +442,29 @@ pub(crate) struct SceneRenderer {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
-    /// Lunar mesh (triaxial ellipsoid, body-fixed frame). Separate buffers from
-    /// the Terra mesh because Luna has its own geometry and is drawn with
-    /// its own model transform (`luna_rot` + `luna_pos_world`).
-    luna_vertices: wgpu::Buffer,
-    luna_indices: wgpu::Buffer,
-    luna_index_count: u32,
-    /// The single planet impostor pipeline (`vs_planet`/`fs_planet`), shared by
-    /// all seven planets; each draw swaps its group-1 bind group. No vertex
-    /// buffer (the quad is built from the vertex index); writes per-fragment
-    /// depth so planets occlude one another and Terra occludes them.
+    /// The single body impostor pipeline (`vs_planet`/`fs_planet`), shared by
+    /// the seven planets AND Luna; each draw swaps its group-1 bind group. No
+    /// vertex buffer (the quad is built from the vertex index); writes
+    /// per-fragment depth so bodies occlude one another and Terra occludes
+    /// them.
     planet_pipeline: wgpu::RenderPipeline,
-    /// Per-planet GPU resources, in `planet::ALL` order. Always built (textures
-    /// upload at init), but only drawn for the planets visible this frame.
+    /// Per-body GPU resources, in `IMPOSTOR_BODIES` order (planets then
+    /// Luna). Always built (textures upload at init), but only drawn for the
+    /// bodies visible this frame.
     planets: Vec<PlanetGpu>,
-    /// Indices into `planets` of the planets to draw this frame (those whose
-    /// center projects in front of the camera). Rebuilt each `prepare`. Order
-    /// is irrelevant: the impostor depth-tests, so occlusion is resolved by
-    /// the depth buffer, not draw order.
+    /// Indices into `planets` of the bodies to draw this frame (those whose
+    /// center projects in front of the camera; Luna only within the Terra
+    /// system). Rebuilt each `prepare`. Order is irrelevant: the impostor
+    /// depth-tests, so occlusion is resolved by the depth buffer, not draw
+    /// order.
     planet_draw_indices: Vec<usize>,
     /// Whether to draw the Terra system this frame: the Terra surface, the
-    /// atmosphere, Luna, and any satellite markers. True only when the
-    /// camera target is Terra or Luna (render origin at Terra, so their
-    /// absolute meshes are also the local meshes). When orbiting a planet these
-    /// are skipped - Terra's atmosphere physics is Terra-centered and
-    /// meaningless billions of km away, and drawing it there would otherwise
-    /// need the absolute (imprecise) world.
+    /// atmosphere, the Luna impostor, and any satellite markers. True only
+    /// when the camera target is Terra or Luna (render origin at Terra, so
+    /// their absolute geometry is also the local geometry). When orbiting a
+    /// planet these are skipped - Terra's atmosphere physics is Terra-centered
+    /// and meaningless billions of km away, and drawing it there would
+    /// otherwise need the absolute (imprecise) world.
     draw_terra_system: bool,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -461,18 +508,6 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let luna_mesh = mesh::luna_ellipsoid(STACKS, SLICES);
-        let luna_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("luna vertices"),
-            contents: bytemuck::cast_slice(&luna_mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let luna_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("luna indices"),
-            contents: bytemuck::cast_slice(&luna_mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scene uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -483,22 +518,24 @@ impl SceneRenderer {
         let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
         let paths = make_path_buffer(device, INITIAL_PATH_CAPACITY);
 
-        // The six Terra/star/Luna textures are downloaded verbatim by the build
+        // The five Terra/star textures are downloaded verbatim by the build
         // script (original JPEG/TIFF) and embedded; they are decoded with the
         // `image` crate and uploaded as uncompressed RGBA8 here - no GPU
         // compression feature required (see request_adapter_device). The three
         // atmosphere LUTs are still baked into f16 KTX2 by the build script and
         // uploaded as-is. Each entry's `TexKind` tells the parallel loader which
         // path to take: an sRGB color image, a linear data image, or an f16 LUT.
+        // (The Luna texture belongs to Luna's impostor bind group, so it loads
+        // with the group-1 batch below, not here.)
         //
-        // The nine loads are mutually independent, and shader-module
+        // The eight loads are mutually independent, and shader-module
         // compilation (naga parse + validation) is independent of all of them,
         // so the module is compiled on one rayon task while the textures decode
         // and upload in parallel across the rest of the pool. Device, Queue, and
         // the produced views/module are all Send + Sync. (Decoding 33 MP images
         // is CPU-heavy, so this parallelism matters more than it did for the old
         // memcpy-only BC7 uploads.)
-        let texture_inputs: [(&str, &[u8], TexKind); 9] = [
+        let texture_inputs: [(&str, &[u8], TexKind); 8] = [
             (
                 "terra day texture",
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_earth_daymap.jpg")),
@@ -541,11 +578,6 @@ impl SceneRenderer {
                 include_bytes!(concat!(env!("OUT_DIR"), "/8k_stars_milky_way.jpg")),
                 TexKind::ColorSrgb,
             ),
-            (
-                "luna texture",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
-                TexKind::ColorSrgb,
-            ),
         ];
 
         let (module, views) = rayon::join(
@@ -580,8 +612,7 @@ impl SceneRenderer {
             inscatter_rayleigh_view,
             inscatter_mie_view,
             stars_view,
-            luna_view,
-        ]: [wgpu::TextureView; 9] = views
+        ]: [wgpu::TextureView; 8] = views
             .try_into()
             .expect("upload_ktx2 returns one view per input");
 
@@ -710,16 +741,6 @@ impl SceneRenderer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
             ],
         });
 
@@ -771,20 +792,16 @@ impl SceneRenderer {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(&stars_view),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&luna_view),
-                },
             ],
         });
 
-        // --- Planets (group 1) ---
-        // Each planet's texture + per-planet model uniform live in their own
-        // bind group, used only by the planet pipeline, so the seven planet
-        // textures never enter the shared group-0 layout (whose 9 sampled
+        // --- Impostor bodies (group 1): the seven planets + Luna ---
+        // Each body's texture + per-body model uniform live in their own
+        // bind group, used only by the impostor pipeline, so the eight body
+        // textures never enter the shared group-0 layout (whose 8 sampled
         // textures stay well under the portable 16-per-stage limit, leaving room
         // for Saturn's rings later). The textures decode in parallel like the
-        // others. Order matches planet::ALL (and the build.rs download list).
+        // others. Order matches IMPOSTOR_BODIES (planet::ALL then Luna).
         let planet_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("planet bind group layout"),
@@ -818,37 +835,69 @@ impl SceneRenderer {
                 ],
             });
 
-        // The embedded planet albedo maps, in planet::ALL order. The literal
-        // include_bytes! paths must match `CelestialBody::texture_file()` (the
-        // single source of the planet<->file mapping), which is also used as the upload
-        // label below; build.rs downloads exactly these names into OUT_DIR.
-        let planet_texture_bytes: [&[u8]; 7] = [
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_venus_surface.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mars.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_jupiter.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/8k_saturn.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/2k_uranus.jpg")),
-            include_bytes!(concat!(env!("OUT_DIR"), "/2k_neptune.jpg")),
+        // The embedded body albedo maps, in IMPOSTOR_BODIES order. The
+        // literal include_bytes! paths must match `CelestialBody::texture_file()`
+        // for the planets (the single source of the planet<->file mapping) plus
+        // Luna's map last; build.rs downloads exactly these names into OUT_DIR.
+        let planet_texture_bytes: [(&str, &[u8]); 8] = [
+            (
+                "8k_mercury.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
+            ),
+            (
+                "8k_venus_surface.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_venus_surface.jpg")),
+            ),
+            (
+                "8k_mars.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_mars.jpg")),
+            ),
+            (
+                "8k_jupiter.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_jupiter.jpg")),
+            ),
+            (
+                "8k_saturn.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_saturn.jpg")),
+            ),
+            (
+                "2k_uranus.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/2k_uranus.jpg")),
+            ),
+            (
+                "2k_neptune.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/2k_neptune.jpg")),
+            ),
+            (
+                "8k_moon.jpg",
+                include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
+            ),
         ];
-        let planet_views: Vec<wgpu::TextureView> = planet::ALL
+        debug_assert_eq!(planet_texture_bytes.len(), IMPOSTOR_BODIES.len());
+        // Sanity-tie the planet slots to their texture_file mapping (Luna, the
+        // extra last slot, has no planet_data entry to check against).
+        debug_assert!(
+            planet::ALL
+                .iter()
+                .zip(&planet_texture_bytes)
+                .all(|(body, (file, _))| body.texture_file() == *file)
+        );
+        let planet_views: Vec<wgpu::TextureView> = planet_texture_bytes
             .par_iter()
-            .zip(planet_texture_bytes.par_iter())
-            .map(|(body, &bytes)| upload_image(device, queue, body.texture_file(), bytes, true))
+            .map(|&(label, bytes)| upload_image(device, queue, label, bytes, true))
             .collect();
 
-        let planets: Vec<PlanetGpu> = planet::ALL
-            .iter()
-            .zip(planet_views)
-            .map(|(&_body, view)| {
+        let planets: Vec<PlanetGpu> = planet_views
+            .into_iter()
+            .map(|view| {
                 let uniform = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("planet uniform"),
                     size: std::mem::size_of::<PlanetUniform>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                // The planet's group-1 bind group reuses the shared `sampler`
-                // (repeat U / clamp V), the same wrap Terra + Luna use.
+                // The body's group-1 bind group reuses the shared `sampler`
+                // (repeat U / clamp V), the same wrap Terra uses.
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("planet bind group"),
                     layout: &planet_bind_group_layout,
@@ -1145,73 +1194,25 @@ impl SceneRenderer {
             })
         };
 
-        // Luna: same vertex format as the Terra mesh, lit by Sol with its
-        // own eclipse shadow. A solid body, so it writes depth and tests
-        // `Greater` like the Terra surface (the depth buffer is what makes the
-        // Terra occlude it).
-        let make_luna_pipeline = || {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("luna pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_luna"),
-                    compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,
-                            1 => Float32x3,
-                            2 => Float32x2,
-                        ],
-                    }],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_luna"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Greater)),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-
         let (
             render_pipeline,
-            (
-                atmosphere_pipeline,
-                (stars_pipeline, (marker_pipeline, (luna_pipeline, path_pipeline))),
-            ),
+            (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, path_pipeline))),
         ) = rayon::join(make_render_pipeline, || {
             rayon::join(make_atmosphere_pipeline, || {
                 rayon::join(make_stars_pipeline, || {
-                    rayon::join(make_marker_pipeline, || {
-                        rayon::join(make_luna_pipeline, make_path_pipeline)
-                    })
+                    rayon::join(make_marker_pipeline, make_path_pipeline)
                 })
             })
         });
 
-        // The single planet impostor pipeline: the two-group layout (so it
-        // reuses each planet's group-1 bind group), no vertex buffer (the quad
-        // is built from the vertex index), and the same reversed-Z solid-body
-        // depth setup as Luna - the impostor writes per-fragment depth, so
-        // planets occlude one another and Terra occludes them, just like a mesh
-        // would. Built after the join (it borrows `planet_layout`). No back-face
-        // cull: the quad's winding is irrelevant (it is camera-facing).
+        // The single body impostor pipeline (the planets + Luna): the
+        // two-group layout (so it reuses each body's group-1 bind group), no
+        // vertex buffer (the quad is built from the vertex index), and the
+        // reversed-Z solid-body depth setup - the impostor writes per-fragment
+        // depth, so bodies occlude one another and Terra occludes them, just
+        // like a mesh would. Built after the join (it borrows `planet_layout`).
+        // No back-face cull: the quad's winding is irrelevant (it is
+        // camera-facing).
         let planet_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("planet impostor pipeline"),
             layout: Some(&planet_layout),
@@ -1245,15 +1246,11 @@ impl SceneRenderer {
             render_pipeline,
             atmosphere_pipeline,
             stars_pipeline,
-            luna_pipeline,
             marker_pipeline,
             path_pipeline,
             vertices,
             indices,
             index_count: mesh.indices.len() as u32,
-            luna_vertices,
-            luna_indices,
-            luna_index_count: luna_mesh.indices.len() as u32,
             planet_pipeline,
             planets,
             planet_draw_indices: Vec::new(),
@@ -1337,15 +1334,14 @@ impl SceneRenderer {
         // `star_rot_inv`; its mat3x3 columns are padded to vec4 stride.
         let star_cols = celestial.star_tex_rot_inv.to_cols_array_2d();
 
-        // Luna's placement drives the lunar mesh + the analytic eclipse shadows;
-        // its radius is implied by the identity (`luna::MEAN_RADIUS_KM`).
-        let luna = celestial
+        // Luna's placement feeds the group-0 uniforms for the two passes that
+        // must know about Luna without drawing it (the solar-eclipse shadow in
+        // fs_main, the atmosphere's occlusion check); its shadow-caster radius
+        // is implied by the identity (`luna::MEAN_RADIUS_KM`). Luna itself
+        // draws through the shared body impostor below.
+        let luna_pos_world = celestial
             .body(CelestialBody::TerraSystem(TerraSystemEntity::Luna))
-            .map(|state| state.placement);
-        let luna_pos_world = luna.map_or(Vec3::ZERO, |placement| placement.pos_world);
-        let luna_cols = luna
-            .map_or(glam::Mat3::IDENTITY, |placement| placement.rot)
-            .to_cols_array_2d();
+            .map_or(Vec3::ZERO, |state| state.placement.pos_world);
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array(),
@@ -1356,9 +1352,6 @@ impl SceneRenderer {
                 [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
             }),
             marker: [width, height, MARKER_RADIUS_PX, 0.0],
-            luna_rot: std::array::from_fn(|c| {
-                [luna_cols[c][0], luna_cols[c][1], luna_cols[c][2], 0.0]
-            }),
             luna_pos: (luna_pos_world - origin).to_array(),
             _pad2: 0.0,
             luna_params: [
@@ -1378,30 +1371,44 @@ impl SceneRenderer {
         // is Terra-centered physics, so they are skipped.
         self.draw_terra_system = origin == Vec3::ZERO;
 
-        // One impostor uniform per planet visible this frame. The CPU projects
-        // each planet's center to screen space (NDC center + quad half-extent +
-        // depth) and the GPU draws a single quad there, ray-tracing the oblate
-        // ellipsoid in its fragment shader. `celestial.bodies` is a flat list
-        // (Terra, Luna, planets); the planet entries drive this loop, mapped to
-        // their GPU slot by position in `planet::ALL`. Terra/Luna scenarios
-        // (origin at Terra) still carry the planets here, but they project far
-        // off-screen / behind the camera and are mostly sub-pixel specks.
+        // One impostor uniform per body visible this frame (the planets +
+        // Luna). The CPU projects each body's center to screen space (NDC
+        // center + quad half-extent + depth) and the GPU draws a single quad
+        // there, ray-tracing the triaxial ellipsoid in its fragment shader.
+        // `celestial.bodies` is a flat list (Terra, Luna, planets); every
+        // entry with an `IMPOSTOR_BODIES` GPU slot drives this loop (Terra is
+        // a real mesh and has no slot). Terra/Luna scenarios (origin at Terra)
+        // still carry the planets here, but they project far off-screen /
+        // behind the camera and are mostly sub-pixel specks.
         self.planet_draw_indices.clear();
         let tan_half_fov = (FOV_Y_DEG / 2.0).to_radians().tan();
         for state in &celestial.bodies {
             let body = state.body;
-            let Some(i) = planet::ALL.iter().position(|candidate| *candidate == body) else {
+            let Some(i) = IMPOSTOR_BODIES
+                .iter()
+                .position(|candidate| *candidate == body)
+            else {
                 continue;
             };
+            // Luna is part of the Terra system: orbiting a planet it is a
+            // sub-pixel speck next to the skipped Terra, so it is skipped with
+            // the rest of the system (same gate as the Terra surface).
+            if body == CelestialBody::LUNA && !self.draw_terra_system {
+                continue;
+            }
             let pos_render = state.placement.pos_world - origin;
             let rel = pos_render - render.camera_pos;
             let dist = rel.length();
             if dist <= f32::EPSILON {
                 continue;
             }
-            let req = body.equatorial_radius_km();
+            // Largest semi-axis: bounds the silhouette from any view direction
+            // (sizes the quad; also the orthographic offset scale in the
+            // shader, which must agree).
+            let radii = impostor_radii_km(body);
+            let rmax = radii.max_element();
 
-            // Project the center; skip planets behind the camera (a planet on
+            // Project the center; skip bodies behind the camera (a planet on
             // the far side of the sky from a Terra orbit).
             let clip = view_proj * pos_render.extend(1.0);
             if clip.w <= 0.0 {
@@ -1417,26 +1424,27 @@ impl SceneRenderer {
             // fragments write their own true depth regardless).
             let depth = (clip.z * inv_w).clamp(PLANET_MIN_DEPTH, 1.0);
 
-            // Apparent angular radius (tangent lines): asin(req/dist).
-            let sin_r = (req / dist).min(0.999);
+            // Apparent angular radius (tangent lines): asin(rmax/dist).
+            let sin_r = (rmax / dist).min(0.999);
             let ang_radius = sin_r.asin();
 
-            // Perspective (eye-ray) trace for a near/orbited planet - f32-safe
-            // because dist/req is small there; orthographic (parallel-ray) for a
+            // Perspective (eye-ray) trace for a near/orbited body - f32-safe
+            // because dist/rmax is small there; orthographic (parallel-ray) for a
             // distant one. The cutoff is on apparent angular DIAMETER.
             let arcsec = 2.0 * ang_radius.to_degrees() * 3600.0;
             let perspective = arcsec >= PLANET_PERSPECTIVE_MIN_ARCSEC;
 
-            // Place the impostor quad. A distant planet is a small disc, so a
+            // Place the impostor quad. A distant body is a small disc, so a
             // quad at the projected center sized to the angular radius (+margin)
-            // is tight and cheap. A near/orbited planet is traced perspectively
+            // is tight and cheap. A near/orbited body is traced perspectively
             // per pixel, and its projected center can fall far off-screen at high
             // tilt (the center is far off the view axis while the near surface
             // still fills the frame) - a center-anchored quad would follow the
-            // center off-screen and the planet would vanish. So cover the whole
+            // center off-screen and the body would vanish. So cover the whole
             // screen ([-1,1]^2) and let the fragment ray-trace decide coverage
-            // (misses discard). Only the orbited body is ever perspective, so
-            // this is one full-screen pass at most.
+            // (misses discard). At most the orbited body and (near its perigee,
+            // from a Terra orbit) Luna are perspective, so this is at most two
+            // full-screen passes.
             let (ndc_center, ndc_half_extent) = if perspective {
                 ([0.0, 0.0], [1.0, 1.0])
             } else {
@@ -1445,17 +1453,44 @@ impl SceneRenderer {
                 (proj_center, [half_y / aspect, half_y])
             };
 
+            // Same-system eclipse occluders (the generic mutual-shadow rule):
+            // every OTHER body of this body's planetary system casts an
+            // analytic sphere shadow on it - Terra shadowing Luna is the lunar
+            // eclipse. Cross-system shadows are astronomically negligible, so
+            // planets get all slots zeroed today.
+            let mut occluders = [[0.0f32; 4]; MAX_OCCLUDERS];
+            let mut occluder_count = 0;
+            for other in &celestial.bodies {
+                if occluder_count == MAX_OCCLUDERS {
+                    break;
+                }
+                if !body.same_system(other.body) {
+                    continue;
+                }
+                let occ_pos = other.placement.pos_world - origin;
+                occluders[occluder_count] =
+                    [occ_pos.x, occ_pos.y, occ_pos.z, other.body.mean_radius_km()];
+                occluder_count += 1;
+            }
+
+            // Sol's angular radius from this body sets its penumbra softness -
+            // per body, so an outer system's smaller Sol sharpens its shadows
+            // automatically.
+            let sol_dist = (celestial.sol_pos_world - state.placement.pos_world).length();
+            let sol_angular_radius = (SOL_RADIUS_KM / sol_dist.max(SOL_RADIUS_KM)).asin();
+
             let rot_cols = state.placement.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
                 rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
                 pos: pos_render.to_array(),
-                _pad_pos: 0.0,
+                sol_angular_radius,
                 ndc_center,
                 ndc_half_extent,
-                equatorial_radius_km: req,
-                polar_radius_km: body.polar_radius_km(),
+                radii: radii.to_array(),
                 depth,
+                occluders,
                 perspective: if perspective { 1.0 } else { 0.0 },
+                _pad: [0.0; 3],
             };
             queue.write_buffer(
                 &self.planets[i].uniform,
@@ -1551,13 +1586,13 @@ impl SceneRenderer {
         render_pass.set_pipeline(&self.stars_pipeline);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-        // Every planet as a shader impostor: one camera-facing quad each (no
-        // vertex buffer - built from the vertex index), placed in screen space
-        // by `prepare` and ray-traced in the fragment shader. The impostor
-        // writes per-fragment depth (reversed-Z, same as the solid bodies), so
-        // the depth buffer resolves planet-vs-planet and Terra-vs-planet
-        // occlusion - draw order does not matter. group 0 stays bound; group 1
-        // swaps per planet.
+        // Every non-Terra body (the planets + Luna) as a shader impostor: one
+        // camera-facing quad each (no vertex buffer - built from the vertex
+        // index), placed in screen space by `prepare` and ray-traced in the
+        // fragment shader. The impostor writes per-fragment depth (reversed-Z,
+        // same as the solid bodies), so the depth buffer resolves
+        // body-vs-body and Terra-vs-body occlusion - draw order does not
+        // matter. group 0 stays bound; group 1 swaps per body.
         if !self.planet_draw_indices.is_empty() {
             render_pass.set_pipeline(&self.planet_pipeline);
             for &i in &self.planet_draw_indices {
@@ -1566,28 +1601,18 @@ impl SceneRenderer {
             }
         }
 
-        // The Terra surface (which writes depth), Luna, then the atmosphere
-        // over the disc and limb - drawn only when orbiting the Terra/Luna (the
-        // render origin is at Terra). Orbiting a planet they would be a far
-        // speck (and the Terra-centered atmosphere physics is meaningless), so
-        // they are skipped, leaving just the planets + backdrop. They draw after
-        // the planet impostors; the depth buffer keeps a planet behind Terra
-        // hidden and a planet in front (never the case from a Terra orbit, where
-        // all planets are far) would survive.
+        // The Terra surface (which writes depth), then the atmosphere over the
+        // disc and limb - drawn only when orbiting the Terra/Luna (the render
+        // origin is at Terra). Orbiting a planet they would be a far speck
+        // (and the Terra-centered atmosphere physics is meaningless), so they
+        // are skipped, leaving just the impostors + backdrop. Terra draws
+        // after the impostors; the depth buffer keeps Luna / a planet behind
+        // Terra hidden, and one in front (only ever Luna, from a Luna orbit)
+        // survives.
         if self.draw_terra_system {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 
-            render_pass.set_pipeline(&self.luna_pipeline);
-            render_pass.set_vertex_buffer(0, self.luna_vertices.slice(..));
-            render_pass.set_index_buffer(self.luna_indices.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..self.luna_index_count, 0, 0..1);
-        }
-
-        if self.draw_terra_system {
-            // The atmosphere reuses the Terra shell mesh - rebind it.
-            render_pass.set_vertex_buffer(0, self.vertices.slice(..));
-            render_pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.set_pipeline(&self.atmosphere_pipeline);
             render_pass.draw_indexed(0..self.index_count, 0, 0..1);
 

@@ -14,10 +14,14 @@
 //! deliberately depends on neither satkit nor wgpu, exactly like
 //! `terra`/`luna`.
 //!
-//! Each planet is modeled as an **oblate ellipsoid of revolution** (equatorial
-//! radius along +X/+Z, polar radius along +Y). For the gas giants the
-//! flattening is large and visible (Saturn ~10%); for the rocky planets it is
-//! tiny but modeled for uniformity.
+//! Each planet is modeled as a **triaxial ellipsoid** in the same formulation
+//! as Luna (independent semi-axes on +X/+Y/+Z), with the +X and +Z semi-axes
+//! set equal - so every planet is in practice its familiar oblate spheroid of
+//! revolution (equatorial radius along +X/+Z, polar radius along +Y), but the
+//! geometry pipeline (and the impostor trace) is shared unchanged with the
+//! genuinely triaxial Luna. For the gas giants the flattening is large and
+//! visible (Saturn ~10%); for the rocky planets it is tiny but modeled for
+//! uniformity.
 
 use glam::Vec3;
 
@@ -59,7 +63,8 @@ pub struct Rotation {
 
 /// Per-planet constants table entry.
 struct Data {
-    /// Equatorial radius (km); the +X and +Z semi-axes.
+    /// Equatorial radius (km), applied to BOTH the +X and +Z semi-axes (a
+    /// planet's triaxial ellipsoid is an oblate spheroid: rx = rz).
     equatorial_radius_km: f64,
     /// Polar radius (km); the +Y (rotation-pole) semi-axis.
     polar_radius_km: f64,
@@ -183,17 +188,18 @@ impl CelestialBody {
         }
     }
 
-    /// Equatorial semi-axis (+X/+Z) in km. The renderer uses it for the
-    /// apparent-size test and to size + trace the billboard impostor ellipsoid.
-    /// Planet variants only.
-    pub fn equatorial_radius_km(self) -> f32 {
-        self.planet_data().equatorial_radius_km as f32
-    }
-
-    /// Polar semi-axis (+Y, the rotation pole) in km; the impostor's
-    /// oblateness. Planet variants only.
-    pub fn polar_radius_km(self) -> f32 {
-        self.planet_data().polar_radius_km as f32
+    /// The triaxial semi-axes in km, in the body frame (+X 90 deg east,
+    /// +Y the rotation pole, +Z the prime meridian) - the same shape
+    /// parameterization Luna uses, with rx = rz for a planet's oblate spheroid.
+    /// The renderer traces the impostor ellipsoid from these (and sizes the
+    /// quad by the largest axis). Planet variants only.
+    pub fn radii_km(self) -> Vec3 {
+        let d = self.planet_data();
+        Vec3::new(
+            d.equatorial_radius_km as f32,
+            d.polar_radius_km as f32,
+            d.equatorial_radius_km as f32,
+        )
     }
 
     /// The IAU rotational elements (evaluated against time in
@@ -209,39 +215,47 @@ impl CelestialBody {
     }
 }
 
-/// Point on the oblate planet ellipsoid at the given planetographic
+/// Point on the triaxial planet ellipsoid at the given planetographic
 /// latitude/longitude (radians), in the body frame (km). Parametric form (the
 /// sphere direction with each axis scaled by its semi-axis), matching the
 /// equirectangular texture exactly as `terra`/`luna` do. `body` must be a
 /// planet variant.
 pub fn surface_position(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
     let d = body.planet_data();
-    let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
+    let (rx, ry, rz) = (
+        d.equatorial_radius_km,
+        d.polar_radius_km,
+        d.equatorial_radius_km,
+    );
     let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
     let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
 
     Vec3::new(
-        (req * cos_lat * sin_lon) as f32,
-        (rpol * sin_lat) as f32,
-        (req * cos_lat * cos_lon) as f32,
+        (rx * cos_lat * sin_lon) as f32,
+        (ry * sin_lat) as f32,
+        (rz * cos_lat * cos_lon) as f32,
     )
 }
 
-/// Outward unit normal of the oblate ellipsoid at the given latitude/longitude
-/// (radians), in the body frame. The ellipsoid gradient `(x/rx^2, y/ry^2,
-/// z/rz^2)` (with `rx = rz = req`, `ry = rpol`), not the radial direction - so
-/// the gas giants' visible flattening lights correctly at the poles. `body`
-/// must be a planet variant.
+/// Outward unit normal of the triaxial ellipsoid at the given
+/// latitude/longitude (radians), in the body frame. The ellipsoid gradient
+/// `(x/rx^2, y/ry^2, z/rz^2)`, not the radial direction - so the gas giants'
+/// visible flattening lights correctly at the poles. `body` must be a planet
+/// variant.
 pub fn geodetic_normal(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
     let d = body.planet_data();
-    let (req, rpol) = (d.equatorial_radius_km, d.polar_radius_km);
+    let (rx, ry, rz) = (
+        d.equatorial_radius_km,
+        d.polar_radius_km,
+        d.equatorial_radius_km,
+    );
     let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
     let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
 
     Vec3::new(
-        (cos_lat * sin_lon / (req * req)) as f32,
-        (sin_lat / (rpol * rpol)) as f32,
-        (cos_lat * cos_lon / (req * req)) as f32,
+        (cos_lat * sin_lon / (rx * rx)) as f32,
+        (sin_lat / (ry * ry)) as f32,
+        (cos_lat * cos_lon / (rz * rz)) as f32,
     )
     .normalize()
 }

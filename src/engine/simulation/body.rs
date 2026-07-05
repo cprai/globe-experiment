@@ -41,7 +41,7 @@ pub enum TerraSystemEntity {
 /// distance from Sol, with the Terra system sitting at Terra's orbit
 /// (between Venus and Mars). A future `SaturnSystem(SaturnSystemEntity)` would
 /// group Saturn + its rings the same way the Terra system groups Terra +
-/// Luna. The planet-specific data (oblate radii, IAU rotation, texture)
+/// Luna. The planet-specific data (triaxial radii, IAU rotation, texture)
 /// hangs off these variants in [`crate::engine::planet`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CelestialBody {
@@ -84,14 +84,33 @@ impl CelestialBody {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => terra::MEAN_RADIUS_KM,
             CelestialBody::TerraSystem(TerraSystemEntity::Luna) => luna::MEAN_RADIUS_KM,
-            // Planets: IAU volumetric-ish mean radius from the oblate axes.
-            _ => (2.0 * self.equatorial_radius_km() + self.polar_radius_km()) / 3.0,
+            // Planets: IAU volumetric-ish mean radius over the triaxial axes
+            // (rx = rz for a planet, so this is the classic (2a + c) / 3).
+            _ => self.radii_km().element_sum() / 3.0,
         }
+    }
+
+    /// Whether two DISTINCT bodies belong to the same planetary system - the
+    /// generic mutual-shadow rule. Bodies of one system eclipse each other
+    /// (Terra <-> Luna today); bodies of different systems never do (their
+    /// mutual shadows are astronomically negligible). The renderer builds each
+    /// impostor's occluder list from this, so a future `JupiterSystem` variant
+    /// self-shadows by adding one arm here, with no renderer change. A body is
+    /// deliberately NOT in the same system as itself (it cannot occlude
+    /// itself).
+    pub fn same_system(self, other: CelestialBody) -> bool {
+        if self == other {
+            return false;
+        }
+        matches!(
+            (self, other),
+            (CelestialBody::TerraSystem(_), CelestialBody::TerraSystem(_))
+        )
     }
 
     /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
     /// body frame (km). Delegates to the single-source-of-truth geometry
-    /// modules (`terra`/`luna`) or the oblate-planet geometry in `planet`.
+    /// modules (`terra`/`luna`) or the triaxial planet geometry in `planet`.
     pub fn surface_position(self, latitude: f32, longitude: f32) -> Vec3 {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => {

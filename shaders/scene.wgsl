@@ -23,11 +23,11 @@ struct Uniforms {
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
     // Per-marker world position + visibility are per-instance (see vs_marker).
     marker: vec4<f32>,
-    // Rotation from Luna's body-fixed (selenographic) frame to world space:
-    // the ephemeris + IAU lunar orientation. Applied to the lunar mesh's
-    // positions and normals (a pure rotation, so normals need no transpose).
-    luna_rot: mat3x3<f32>,
-    // Luna center in the render frame (km).
+    // Luna center in the render frame (km). Luna itself draws through the
+    // shared body impostor (group 1); these group-0 params exist for the two
+    // passes that must know about Luna without drawing it: the solar-eclipse
+    // shadow on Terra (fs_main) and the atmosphere's Luna occlusion check
+    // (fs_atmosphere).
     luna_pos: vec3<f32>,
     // Eclipse-geometry params: x = Luna mean radius (km); y = Terra mean radius
     // (km); z = Sol's angular radius (rad), which sets the penumbra
@@ -49,7 +49,6 @@ struct Uniforms {
 @group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
 @group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
 @group(0) @binding(10) var stars_texture: texture_2d<f32>;
-@group(0) @binding(11) var luna_texture: texture_2d<f32>;
 
 // World space is kilometers, planet center at the origin. `position` is the
 // WGS84 ellipsoid surface point; `normal` is the outward geodetic unit
@@ -278,9 +277,10 @@ fn disk_overlap_fraction(sep: f32, r1: f32, r2: f32) -> f32 {
 // shadow shared by both directions: Luna shadowing Terra (solar
 // eclipse) and Terra shadowing Luna (lunar eclipse). 1 = fully lit, 0 =
 // total (umbral) shadow; the penumbra is soft because Sol has a finite
-// angular radius (`uniforms.luna_params.z`). Both bodies are spheres at this
-// scale - exact enough, since the penumbra dwarfs the triaxial/oblate detail.
-fn sol_visibility(p: vec3<f32>, sol: vec3<f32>, occ: vec3<f32>, occ_radius: f32) -> f32 {
+// angular radius `sol_ang` (radians, as seen from the shadowed body - passed
+// in because it differs per planetary system). Both bodies are spheres at
+// this scale - exact enough, since the penumbra dwarfs the triaxial detail.
+fn sol_visibility(p: vec3<f32>, sol: vec3<f32>, occ: vec3<f32>, occ_radius: f32, sol_ang: f32) -> f32 {
     let oc = occ - p;
     let t = dot(oc, sol);
     // The occluder must lie toward Sol to cast a shadow here.
@@ -290,7 +290,6 @@ fn sol_visibility(p: vec3<f32>, sol: vec3<f32>, occ: vec3<f32>, occ_radius: f32)
     let perp = length(oc - sol * t);
     let ang_sep = atan(perp / t);
     let ang_occ = atan(occ_radius / t);
-    let sol_ang = uniforms.luna_params.z;
     return 1.0 - disk_overlap_fraction(ang_sep, sol_ang, ang_occ);
 }
 
@@ -365,6 +364,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sol,
         uniforms.luna_pos,
         uniforms.luna_params.x,
+        uniforms.luna_params.z,
     );
     let sol_light = sol_transmittance(PLANET_RADIUS_KM + 0.1, cos_sol) * eclipse;
 
@@ -848,80 +848,29 @@ fn fs_path(in: PathOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(PATH_COLOR, alpha);
 }
 
-// Luna: the triaxial lunar mesh, oriented into world space by the
-// ephemeris + IAU lunar rotation (`uniforms.luna_rot`) and placed at its true
-// world position. Lit by the same Sol as Terra, but with no atmosphere
-// (a hard terminator) and its own eclipse shadow: Terra can block Sol
-// (lunar eclipse), darkening the lit disk and leaving a faint coppery glow from
-// sunlight refracted through Terra's atmosphere. Drawn with the depth buffer so
-// Terra correctly occludes it; Luna is always farther than Terra
-// from any near-Terra camera, so this is what hides it behind the planet.
-
-// Faint fill on the lunar night side (terrashine + scattered light), so the
-// unlit limb is not pure black.
-const LUNA_AMBIENT: f32 = 0.02;
-// Coppery glow on the eclipsed (umbral) Luna, from sunlight refracted through
-// Terra's atmosphere - the "blood-red Luna". Dim and red-biased.
-const LUNA_ECLIPSE_GLOW: vec3<f32> = vec3<f32>(0.06, 0.012, 0.004);
-
-struct LunaOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) world_pos: vec3<f32>,
-};
-
-@vertex
-fn vs_luna(in: VertexInput) -> LunaOutput {
-    var out: LunaOutput;
-    // Body-fixed mesh -> world: rotate by the lunar orientation, then translate
-    // to Luna's world center. The rotation is orthonormal, so it carries
-    // the normal too.
-    // luna_pos is already in the render frame, so the lunar mesh lands there.
-    let world = uniforms.luna_rot * in.position + uniforms.luna_pos;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
-    out.uv = in.uv;
-    out.normal = uniforms.luna_rot * in.normal;
-    out.world_pos = world;
-    return out;
-}
-
-@fragment
-fn fs_luna(in: LunaOutput) -> @location(0) vec4<f32> {
-    let albedo = textureSample(luna_texture, terra_sampler, in.uv).rgb;
-    let n = normalize(in.normal);
-    // The Sol direction at this lunar surface point (render-frame positions).
-    let sol = normalize(uniforms.sol_pos - in.world_pos);
-
-    // Hard (atmosphere-free) terminator: plain Lambert, with the slightest
-    // softening for edge antialiasing.
-    let sunlit = max(dot(n, sol), 0.0);
-
-    // Terra shadow on Luna (lunar eclipse): Terra can block Sol. The
-    // Luna only draws when orbiting the Terra/Luna, so Terra is at the render
-    // origin (vec3(0)). Soft penumbra from Sol's angular size.
-    let eclipse = sol_visibility(in.world_pos, sol, vec3<f32>(0.0), uniforms.luna_params.y);
-
-    var color = albedo * (LUNA_AMBIENT + sunlit * eclipse);
-    // Coppery umbral glow, only where Luna would otherwise be sunlit.
-    color += LUNA_ECLIPSE_GLOW * (1.0 - eclipse) * sunlit * albedo;
-
-    return vec4<f32>(color, 1.0);
-}
-
-// Each planet is drawn in its own pass with its own group-1 bind group
-// (per-planet uniform + texture), which keeps the seven planet textures out of
-// the shared group-0 layout (so its 9 sampled textures never grow toward the
-// portable 16-per-stage limit). The shared group-0 uniforms supply view_proj,
-// inv_view_proj, the camera position, and the Sol position.
+// Every non-Terra body - the seven planets AND Luna - is drawn in its own pass
+// with its own group-1 bind group (per-body uniform + texture), which keeps
+// the eight body textures out of the shared group-0 layout (so its 8 sampled
+// textures never grow toward the portable 16-per-stage limit). The shared
+// group-0 uniforms supply view_proj, inv_view_proj, the camera position, and
+// the Sol position.
 //
-// Every planet is drawn as a single shader IMPOSTOR: a camera-facing quad whose
-// fragment shader ray-traces the true oblate ellipsoid, samples the group-1
+// Every body is drawn as a single shader IMPOSTOR: a camera-facing quad whose
+// fragment shader ray-traces the true triaxial ellipsoid (Luna genuinely
+// triaxial, each planet an oblate spheroid with rx = rz), samples the group-1
 // albedo texture, and Lambert-lights it from Sol, so the silhouette,
 // rotation/libration, terminator, and texture stay faithful at any distance -
-// no mesh. The CPU (renderer `prepare`) projects the planet center to screen
+// no mesh. The CPU (renderer `prepare`) projects the body center to screen
 // space and packs the quad placement (NDC center + half-extent + depth) plus
 // the trace mode into PlanetUniform; the GPU draws the quad and traces.
+// Bodies have no atmosphere here, so the terminator is hard (plain Lambert).
+//
+// Mutual eclipses within a planetary system are analytic and generic: the CPU
+// packs the body's same-system neighbors as spherical occluders and the
+// fragment shader multiplies `sol_visibility` over them - Terra shadowing Luna
+// (the blood-red lunar eclipse) today, a future system's moons spotting their
+// planet the same way. (Luna shadowing Terra stays in fs_main: Terra is a
+// mesh, not an impostor.)
 //
 // The trace is DISTANCE-ADAPTIVE:
 // - PERSPECTIVE (eye-ray) for a near/orbited planet, so the foreshortened
@@ -938,33 +887,51 @@ fn fs_luna(in: LunaOutput) -> @location(0) vec4<f32> {
 // Either way the impostor writes per-fragment depth, so the depth buffer
 // resolves planet-vs-planet and Terra-vs-planet occlusion.
 
-// Faint fill on the planet night side, so the unlit limb is not pure black.
+// Faint fill on the body night side (for Luna: terrashine + scattered light),
+// so the unlit limb is not pure black.
 const PLANET_AMBIENT: f32 = 0.02;
+
+// Coppery glow on a fully eclipsed (umbral) body, from sunlight refracted
+// through the occluder's atmosphere - the "blood-red Luna". Dim and
+// red-biased; only active where an occluder shadows the disc, so bodies with
+// no occluders never see it.
+const ECLIPSE_GLOW: vec3<f32> = vec3<f32>(0.06, 0.012, 0.004);
+
+// Occluder slots per body (the fixed uniform-array bound; unused slots have
+// radius 0). Terra-Luna needs one; sized for a future moon system's worth.
+// Must match `MAX_OCCLUDERS` in the renderer.
+const MAX_OCCLUDERS: u32 = 4u;
 
 // The impostor quad spans the silhouette angular radius times this margin (the
 // orthographic offset coordinate runs [-MARGIN, MARGIN]); edge rays miss the
 // ellipse and discard. Must match `PLANET_QUAD_MARGIN` in the renderer.
 const PLANET_QUAD_MARGIN: f32 = 1.3;
 
-// Per-planet impostor placement + texture (one bound per planet draw).
+// Per-body impostor placement + texture (one bound per body draw).
 struct PlanetUniform {
-    // Body-fixed -> world rotation (ephemeris Earth orientation x IAU planet
+    // Body-fixed -> world rotation (ephemeris Earth orientation x IAU body
     // rotation); a pure rotation, so it carries the normal too.
     rot: mat3x3<f32>,
-    // Planet center in the RENDER FRAME (km) = relative to the camera target.
-    // Exactly zero for the orbited planet (its center IS the render origin).
+    // Body center in the RENDER FRAME (km) = relative to the camera target.
+    // Exactly zero for the orbited body (its center IS the render origin).
     pos: vec3<f32>,
+    // Sol's angular radius as seen from this body (rad): the penumbra softness
+    // of its eclipse shadows. Per body because it shrinks with Sol distance.
+    sol_angular_radius: f32,
     // Projected center in NDC (the quad center).
     ndc_center: vec2<f32>,
     // Quad half-extent in NDC (x, y), bounding the silhouette with margin.
     ndc_half_extent: vec2<f32>,
-    // Equatorial semi-axis (+X/+Z) in km - the oblate ellipsoid traced.
-    equatorial_radius_km: f32,
-    // Polar semi-axis (+Y, the rotation pole) in km.
-    polar_radius_km: f32,
+    // Triaxial semi-axes (km) in the body frame (+X east, +Y pole, +Z prime
+    // meridian) - the ellipsoid traced. rx = rz for a planet; Luna differs on
+    // all three.
+    radii: vec3<f32>,
     // Reversed-Z NDC depth of the center: the baseline frag depth for the
     // orthographic (distant) trace (perspective overrides it per fragment).
     depth: f32,
+    // Same-system eclipse occluders: xyz = center (render frame km), w =
+    // caster sphere radius (km; 0 = unused slot). Luna carries Terra here.
+    occluders: array<vec4<f32>, MAX_OCCLUDERS>,
     // 1.0 = perspective trace (near/orbited), 0.0 = orthographic (distant).
     perspective: f32,
 };
@@ -1014,19 +981,20 @@ struct PlanetFragment {
 
 @fragment
 fn fs_planet(in: PlanetOutput) -> PlanetFragment {
-    let req = planet.equatorial_radius_km;
-    let rpol = planet.polar_radius_km;
-    let radii = vec3<f32>(req, rpol, req);
+    let radii = planet.radii;
+    // Largest semi-axis: the silhouette bound the CPU sized the quad with, and
+    // the scale of the orthographic quad-corner offset (must agree with it).
+    let rmax = max(radii.x, max(radii.y, radii.z));
 
-    // Ray (origin + direction) in the render frame, relative to the planet
+    // Ray (origin + direction) in the render frame, relative to the body
     // center. Two branches keep the math f32-safe at every distance.
     var o_rel: vec3<f32>;
     var d_world: vec3<f32>;
     if planet.perspective > 0.5 {
         // Reconstruct the eye ray through this pixel from NDC via inv_view_proj
         // (two points on the ray, near and far in reversed-Z), then express the
-        // origin relative to the planet center. Safe because this branch is only
-        // selected for near planets, where `o_rel` is small.
+        // origin relative to the body center. Safe because this branch is only
+        // selected for near bodies, where `o_rel` is small.
         let near_h = uniforms.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
         let far_h = uniforms.inv_view_proj * vec4<f32>(in.ndc, 0.0, 1.0);
         let near_p = near_h.xyz / near_h.w;
@@ -1034,8 +1002,8 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
         o_rel = near_p - planet.pos;
         d_world = normalize(far_p - near_p);
     } else {
-        // Parallel rays along eye->planet. The perpendicular origin offset comes
-        // straight from the quad corner (km = offset * req), so the huge
+        // Parallel rays along eye->body. The perpendicular origin offset comes
+        // straight from the quad corner (km = offset * rmax), so the huge
         // eye-relative vector is never formed - the orthographic precision win.
         let dir = normalize(planet.pos - uniforms.camera_pos);
         var up_ref = vec3<f32>(0.0, 1.0, 0.0);
@@ -1044,7 +1012,7 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
         }
         let right = normalize(cross(up_ref, dir));
         let up = cross(dir, right);
-        o_rel = (in.offset.x * req) * right + (in.offset.y * req) * up;
+        o_rel = (in.offset.x * rmax) * right + (in.offset.y * rmax) * up;
         d_world = dir;
     }
 
@@ -1080,10 +1048,26 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
     let sol = normalize(uniforms.sol_pos - surf);
     let sunlit = max(dot(n, sol), 0.0);
 
+    // Mutual-eclipse shadow from the body's same-system neighbors: multiply
+    // the analytic visibility over every occluder the CPU packed (w = caster
+    // radius, 0 = unused). Terra shadowing Luna is the lunar eclipse; planets
+    // today carry no occluders, so vis stays exactly 1.
+    var vis = 1.0;
+    for (var i = 0u; i < MAX_OCCLUDERS; i += 1u) {
+        let occ = planet.occluders[i];
+        if occ.w > 0.0 {
+            vis *= sol_visibility(surf, sol, occ.xyz, occ.w, planet.sol_angular_radius);
+        }
+    }
+
+    var color = albedo * (PLANET_AMBIENT + sunlit * vis);
+    // Coppery umbral glow, only where the disc would otherwise be sunlit.
+    color += ECLIPSE_GLOW * (1.0 - vis) * sunlit * albedo;
+
     var out: PlanetFragment;
-    out.color = vec4<f32>(albedo * (PLANET_AMBIENT + sunlit), 1.0);
-    // Perspective: the true hit-point depth (reversed-Z), so a near planet's
-    // limb occludes correctly against Terra and other planets. Orthographic: the
+    out.color = vec4<f32>(color, 1.0);
+    // Perspective: the true hit-point depth (reversed-Z), so a near body's
+    // limb occludes correctly against Terra and other bodies. Orthographic: the
     // center's baseline depth (the distant disc is a sub-pixel-thin speck).
     if planet.perspective > 0.5 {
         let clip = uniforms.view_proj * vec4<f32>(surf, 1.0);

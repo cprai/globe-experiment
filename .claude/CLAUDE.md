@@ -51,18 +51,28 @@ simulation clock (1x-100x, plays from launch). Luna is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
 rotation (correct near side + libration), lit by Sol, with **mutual
 Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
-Luna"). The **seven planets** (`src/engine/planet.rs`) are oblate ellipsoids at true
+Luna"). The **seven planets** (`src/engine/planet.rs`) are triaxial ellipsoids
+(equal equatorial axes — their familiar oblate forms) at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
-sun-lit with simple Lambert. Each is drawn **as a single shader impostor** (no
-mesh): the CPU projects the planet center to screen space in `prepare` and the
-GPU draws one camera-facing quad whose fragment shader ray-traces the oblate
-ellipsoid (textured + Lambert-lit, writing per-fragment depth so planets occlude
-each other and Terra occludes them). The trace is **distance-adaptive**:
+sun-lit with simple Lambert. Every non-Terra body — the seven planets **and
+Luna** — is drawn **as a single shader impostor** (no
+mesh; Terra is the only meshed body): the CPU projects the body center to
+screen space in `prepare` and the
+GPU draws one camera-facing quad whose fragment shader ray-traces the triaxial
+ellipsoid (textured + Lambert-lit, writing per-fragment depth so bodies occlude
+each other and Terra/Luna occlude each other). The trace is
+**distance-adaptive**:
 perspective (eye-ray, reconstructed via `inv_view_proj`) for a near/orbited
-planet, orthographic (parallel-ray, f32-safe) for a distant one — classified per
-frame by apparent angular size. Because they sit millions-to-billions of km out
-(past f32 precision), **all rendering is done in a camera-target-local "render
-frame"**: positions are expressed relative to the camera target's center, so
+body, orthographic (parallel-ray, f32-safe) for a distant one — classified per
+frame by apparent angular size. **Same-system eclipse shadows are generic**:
+each impostor's uniform carries an occluder list filled from
+`CelestialBody::same_system` (today Terra shadows Luna — the blood-red lunar
+eclipse; a future moon system self-shadows with no renderer change), with a
+per-body Sol angular radius for the penumbra; the solar-eclipse spot on the
+Terra mesh stays in `fs_main`. Because bodies sit millions-to-billions of km
+out (past f32 precision), **all rendering is done in a camera-target-local
+"render frame"**: positions are expressed relative to the camera target's
+center, so
 the orbited body sits at a bit-exact zero and far planets do not jitter. The
 renderer derives every body's position/orientation from the frame's **time**
 (`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
@@ -121,8 +131,9 @@ textures (JPEG/TIFF verbatim: Terra x4, stars, Luna, + 7 planets — five 8K,
 two 2K), the JPL ephemeris (~98 MB), `EOP-All.csv`, the three IERS-2010
 tables, and the EGM96 gravity coefficients (~5.4 MB, for the numerical orbit
 propagator) into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
-`OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the seven native-res
-planet textures add ~686 MB; see `constraints.md`).
+`OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the eight native-res
+impostor-body textures — 7 planets + Luna, group 1 — total ~820 MB; see
+`constraints.md`).
 
 **WGSL is compiled by naga at runtime, not during `cargo build`.** Validate
 after every shader edit:

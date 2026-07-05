@@ -45,21 +45,26 @@ So P is consistent with every WGS84 helper and with every satkit result.
   sub-Terra point) -> +Z, +X = 90 deg east. `surface_position` scales the
   sphere direction per axis; `geodetic_normal` is the ellipsoid gradient
   (`x/rx^2, y/ry^2, z/rz^2`), not radial.
-- The mesh is built in this body frame and oriented into the world per frame by
-  `luna_rot` (ephemeris Earth orientation composed with the IAU lunar rotation;
-  see `simulation.md`). The `P^T` inside `luna_rot` converts the mesh's
+- Luna has NO mesh: it is drawn as a **shader impostor** like the planets -
+  `fs_planet` ray-traces this triaxial ellipsoid in the body frame and the
+  per-body uniform's `rot` (the lunar placement rotation: ephemeris Earth
+  orientation composed with the IAU lunar rotation; see `simulation.md`)
+  orients the traced point + normal into the world. The `P^T` inside that
+  rotation converts the body's
   project-convention axes into the standard (Z=pole) frame the IAU model uses.
 
 ## Planet body frames
 
 - `src/engine/planet.rs` is the multi-body twin of `terra.rs`/`luna.rs`: each of the 7
-  planets is an **oblate ellipsoid of revolution** (equatorial radius on +X/+Z,
-  polar radius on +Y) in the **same body convention** — +Y = north (rotation
+  planets is a **triaxial ellipsoid with equal +X/+Z axes** - its familiar
+  oblate spheroid (equatorial radius on +X/+Z,
+  polar radius on +Y), in the same triaxial formulation as Luna
+  (`radii_km() -> Vec3`) - in the **same body convention** — +Y = north (rotation
   pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`
   scales the sphere direction per axis; `geodetic_normal` is the gradient
-  (`x/req^2, y/rpol^2, z/req^2`), not radial. Planets are drawn as **shader
-  impostors** (no mesh): `fs_planet` ray-traces this same oblate ellipsoid
-  (`radii = vec3(req, rpol, req)`) and derives the geodetic normal + the
+  (`x/rx^2, y/ry^2, z/rz^2`), not radial. Planets are drawn as **shader
+  impostors** (no mesh): `fs_planet` ray-traces this same triaxial ellipsoid
+  (the uniform's `radii` vec3) and derives the geodetic normal + the
   equirectangular UV analytically, matching the convention above.
 - Oriented into the world per frame by `planet_rot` = `P * R_gcrf2itrf *
   iau_body_to_gcrf * P^T` (same `P^T` un-permute as Luna; see `simulation.md`);
@@ -67,7 +72,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Equirectangular UV mapping
 
-- Forward (Terra/Luna mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at
+- Forward (Terra mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at
   south. Sampler repeats on U (dateline wrap), clamps on V (poles). Seam column
   duplicated.
 - Inverse (`fs_stars` and `fs_planet`, by a body-frame point/direction): `u =

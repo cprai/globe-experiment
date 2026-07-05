@@ -96,10 +96,13 @@ Luna is positioned and oriented per frame in `CelestialSphere::at`:
   Terra *with* libration, not a rigid tidal lock. satkit exposes no lunar body
   frame, so this is implemented here. Time is TT days since J2000 via
   `as_jd_with_scale(TimeScale::TT)`.
-- `luna_rot` (uploaded to the shader) = `P * R_gcrf2itrf * M_body2gcrf * P^T`.
-  The `P^T` un-permutes the lunar *mesh's* project-convention axes (+Y north,
-  +Z sub-Terra) into the standard (Z=pole) frame `M_body2gcrf` expects, so the
-  mesh shares Terra's body convention. It is a pure rotation (normals need no
+- Luna's placement rotation = `P * R_gcrf2itrf * M_body2gcrf * P^T` (applied
+  by the renderer as the Luna impostor's per-body `rot`; there is no `luna_rot`
+  group-0 uniform anymore).
+  The `P^T` un-permutes the lunar *body frame's* project-convention axes (+Y
+  north,
+  +Z sub-Terra) into the standard (Z=pole) frame `M_body2gcrf` expects, so
+  Luna shares Terra's body convention. It is a pure rotation (normals need no
   transpose).
 - Luna is a **triaxial ellipsoid** (`src/engine/luna.rs`), the long axis toward
   Terra; the deviation from a sphere is ~1-3 km (imperceptible) but modeled.
@@ -121,7 +124,9 @@ the same DE440:
   constants in `src/engine/planet.rs` (`w_dot` negative for the retrograde rotators
   Venus, Uranus). `planet_rot = P * R_gcrf2itrf * iau_body_to_gcrf * P^T`, same
   `P^T` un-permute as Luna.
-- Planets are **oblate ellipsoids** (`src/engine/planet.rs`: equatorial vs polar radii;
+- Planets are **triaxial ellipsoids with rx = rz** - their familiar oblate
+  forms (`src/engine/planet.rs`: `radii_km() -> Vec3`, equatorial on +X/+Z vs
+  polar on +Y;
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
   `celestial_sphere` so `planet.rs` stays satkit-free (like `terra`/`luna`).

@@ -86,14 +86,16 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   Luna"). A depth buffer makes Terra correctly occlude the more distant Luna.
 - The whole solar system: the `solar_system` scenario draws the seven planets
   (Mercury through Neptune) at their true DE440 positions and scale, shaped as
-  oblate ellipsoids (Saturn and Jupiter visibly flattened), oriented by the IAU
+  triaxial ellipsoids with equal equatorial axes - their familiar oblate forms,
+  Saturn and Jupiter visibly flattened - oriented by the IAU
   planet rotation and lit by Sol with the correct phase. A body-selector
   panel (one key per body, ordered by distance from Sol) flies the camera to
-  and orbits any of Terra, Luna, or a planet. Every planet is drawn as a shader
-  impostor - a single camera-facing quad whose fragment shader ray-traces the
-  lit, textured oblate ellipsoid, with no mesh at all - so the silhouette,
+  and orbits any of Terra, Luna, or a planet. Every non-Terra body - the seven
+  planets and Luna alike - is drawn as a shader
+  impostor: a single camera-facing quad whose fragment shader ray-traces the
+  lit, textured triaxial ellipsoid, with no mesh at all - so the silhouette,
   rotation, terminator, and texture stay faithful; the trace adapts with
-  distance (a true perspective eye-ray for the close planet you are orbiting, a
+  distance (a true perspective eye-ray for the close body you are orbiting, a
   parallel-ray approximation for the far ones). Because the outer planets sit
   billions of km away - beyond single-precision range - the scene is rendered
   relative to the orbited body so it stays crisp. (Saturn's rings are not yet
