@@ -65,8 +65,10 @@ IERS-2010** GCRF<->ITRF transforms (`qgcrf2itrf`/`qitrf2gcrf`), not the
 
 Star map and Sol are **ephemeris-driven** — do not replace with a Sol-attached
 rotation:
-- `sol_dir`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF
-  (full `qgcrf2itrf`) -> world via P -> normalize.
+- `sol_pos_world`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF
+  (full `qgcrf2itrf`) -> world via P, /1000 for km. A true position (not a
+  Terra-relative direction) so every body lights from its own local Sol
+  direction; the solar-eclipse scenario normalizes it for day-side framing.
 - `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> equatorial celestial). This
   is the frame the camera rig is built from (see `camera.md`). As time
   advances, the celestial sphere rotates at the sidereal rate consistent with

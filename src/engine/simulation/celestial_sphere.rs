@@ -173,11 +173,6 @@ pub(crate) fn init_satkit_for_tests() {
 /// Sol direction and star-map orientation for one instant, in the renderer's
 /// world frame.
 pub struct CelestialSphere {
-    /// Unit vector toward Sol in the Earth-fixed (ECEF) world frame. Not part
-    /// of the render path (every lit pass derives its Sol direction from
-    /// `sol_pos_world` instead); kept for scenario-side uses such as the solar
-    /// eclipse's day-side launch framing.
-    pub sol_dir: Vec3,
     /// Sol position in the Earth-fixed (ECEF) world frame, km (true
     /// geocentric). The renderer uploads it (shifted into the render frame) as
     /// `sol_pos`, and every lit pass derives its Sol direction from it -
@@ -246,11 +241,9 @@ impl CelestialSphere {
         // ITRF (Earth-fixed) and permute into the world frame.
         let sol_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sol ephemeris lookup");
         let sol_itrf = qgcrf2itrf(time) * sol_gcrf;
-        // `sol_dir` keeps the exact pre-planet expression; `sol_pos_world` is
-        // the same vector scaled to km - the position every render pass lights
-        // from. Normalizing the unscaled vs /1000 vector would differ by
-        // ~1 ULP - hence not folded.
-        let sol_dir = (p * nvec(sol_itrf)).normalize();
+        // `sol_pos_world` is the position every render pass lights from; each
+        // body derives its own local Sol direction from it (there is no
+        // world-origin `sol_dir` - that would be a Terra-relative quantity).
         let sol_pos_world = p * (nvec(sol_itrf) / 1000.0);
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
@@ -331,7 +324,6 @@ impl CelestialSphere {
         }
 
         Self {
-            sol_dir,
             sol_pos_world,
             star_rot_inv,
             star_tex_rot_inv,

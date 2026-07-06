@@ -173,13 +173,14 @@ pub fn run() {
     let sim = SolarEclipseSimulation::new();
 
     // Frame the sunlit face (and Luna's shadow spot near the subsolar point)
-    // by looking along -sol_dir, computed from the ephemeris at the start
-    // instant. The view stays interactive afterward.
+    // by looking toward Sol, from the ephemeris at the start instant. Terra
+    // sits at the world origin, so the Terra->Sol direction is just the
+    // normalized Sol position. The view stays interactive afterward.
     let celestial = &sim.celestial_sphere;
     let camera = Camera::looking_toward(
         CameraTarget::terra(),
         celestial.star_rot_inv,
-        -celestial.sol_dir,
+        -celestial.sol_pos_world.normalize(),
         VIEW_DISTANCE_KM,
     );
 
