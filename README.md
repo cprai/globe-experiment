@@ -90,13 +90,15 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   Saturn and Jupiter visibly flattened - oriented by the IAU
   planet rotation and lit by Sol with the correct phase. A body-selector
   panel (one key per body, ordered by distance from Sol) flies the camera to
-  and orbits any of Terra, Luna, or a planet. Every non-Terra body - the seven
-  planets and Luna alike - is drawn as a shader
+  and orbits any of Terra, Luna, or a planet. Every body - Terra, the seven
+  planets, and Luna alike - is drawn as a shader
   impostor: a single camera-facing quad whose fragment shader ray-traces the
   lit, textured triaxial ellipsoid, with no mesh at all - so the silhouette,
   rotation, terminator, and texture stay faithful; the trace adapts with
   distance (a true perspective eye-ray for the close body you are orbiting, a
-  parallel-ray approximation for the far ones). Because the outer planets sit
+  parallel-ray approximation for the far ones), and the shading scales per
+  body from plain sun-lit texture up to Terra's full look (terrain relief,
+  ocean glint, city lights, atmosphere). Because the outer planets sit
   billions of km away - beyond single-precision range - the scene is rendered
   relative to the orbited body so it stays crisp. (Saturn's rings are not yet
   drawn.)

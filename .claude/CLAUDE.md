@@ -54,22 +54,26 @@ Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-
 Luna"). The **seven planets** (`src/engine/planet.rs`) are triaxial ellipsoids
 (equal equatorial axes — their familiar oblate forms) at true
 geocentric position/scale (DE440), oriented by the IAU planet rotation and
-sun-lit with simple Lambert. Every non-Terra body — the seven planets **and
-Luna** — is drawn **as a single shader impostor** (no
-mesh; Terra is the only meshed body): the CPU projects the body center to
-screen space in `prepare` and the
+sun-lit with simple Lambert. **EVERY body — Terra, the seven planets, and
+Luna — is drawn as a single shader impostor** (no mesh anywhere in the
+engine): the CPU projects the body center to screen space in `prepare` and the
 GPU draws one camera-facing quad whose fragment shader ray-traces the triaxial
-ellipsoid (textured + Lambert-lit, writing per-fragment depth so bodies occlude
-each other and Terra/Luna occlude each other). The trace is
-**distance-adaptive**:
+ellipsoid (Terra = the WGS84 spheroid), writing per-fragment depth so bodies
+occlude each other. Shading is **data-driven per body** (`planet::Maps` +
+feature flags in the per-body uniform): a bare-albedo body gets plain
+hard-terminator Lambert; Terra's row carries night/normal/specular maps +
+`has_atmosphere`, lighting up the full look (normal-map relief, GGX ocean
+glint, transmittance-tinted sunlight, emissive city lights) in the same
+`fs_planet`. The trace is **distance-adaptive**:
 perspective (eye-ray, reconstructed via `inv_view_proj`) for a near/orbited
 body, orthographic (parallel-ray, f32-safe) for a distant one — classified per
 frame by apparent angular size. **Same-system eclipse shadows are generic**:
 each impostor's uniform carries an occluder list filled from
-`CelestialBody::same_system` (today Terra shadows Luna — the blood-red lunar
-eclipse; a future moon system self-shadows with no renderer change), with a
-per-body Sol angular radius for the penumbra; the solar-eclipse spot on the
-Terra mesh stays in `fs_main`. Because bodies sit millions-to-billions of km
+`CelestialBody::same_system` (Terra shadows Luna — the blood-red lunar
+eclipse — and Luna shadows Terra — the solar-eclipse spot; a future moon
+system self-shadows with no renderer change), with a
+per-body Sol angular radius for the penumbra. Because bodies sit
+millions-to-billions of km
 out (past f32 precision), **all rendering is done in a camera-target-local
 "render frame"**: positions are expressed relative to the camera target's
 center, so
@@ -77,9 +81,11 @@ the orbited body sits at a bit-exact zero and far planets do not jitter. The
 renderer derives every body's position/orientation from the frame's **time**
 (`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
 camera target, and satellite markers. There is no Earth-fixed origin or
-`sol_dir` in the render path — every body is lit from Sol *position*. The Terra
-surface/atmosphere/Luna/markers draw only when orbiting Terra/Luna; orbiting a
-planet, only the planets + backdrop draw. For Terra/Luna (render origin at Terra)
+`sol_dir` in the render path — every body is lit from Sol *position*. All nine
+bodies draw from every vantage; the **atmosphere** (a screen quad, drawn when
+a `has_atmosphere` body sits at the render origin — Terra/Luna targets today)
+and the **satellite overlays** (orbit paths + markers, Terra-frame positions)
+are the only gated passes. For Terra/Luna (render origin at Terra)
 geometry stays bit-identical. A **reversed-Z depth buffer** (Depth32Float) makes
 Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
@@ -89,7 +95,7 @@ The crate builds **two binaries over one shared `src/engine/`** (no lib
 crate): `globe-experiment` (`src/main.rs`, the windowed app + scenarios) and
 `headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
 declare `mod engine;` (everything used to run the app: `application`, `camera`,
-`planet`, `renderer`, `simulation`, `terra`, `ui`); the trees differ
+`planet`, `renderer`, `simulation`, `ui`); the trees differ
 only at the top level — `scenarios` exists only in the main tree, `offscreen`
 only in the headless tree. The headless binary compiles (but never calls) the
 winit-bound `engine::application`; its crate-level `allow(dead_code)` covers
@@ -131,8 +137,9 @@ textures (JPEG/TIFF verbatim: Terra x4, stars, Luna, + 7 planets — five 8K,
 two 2K), the JPL ephemeris (~98 MB), `EOP-All.csv`, the three IERS-2010
 tables, and the EGM96 gravity coefficients (~5.4 MB, for the numerical orbit
 propagator) into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
-`OUT_DIR` to re-download it. **VRAM** is now ~1.5 GB (the eight native-res
-impostor-body textures — 7 planets + Luna, group 1 — total ~820 MB; see
+`OUT_DIR` to re-download it. **VRAM** is ~1.5 GB (the twelve native-res
+impostor-body maps — 9 albedos + Terra's night/normal/specular, all group 1 —
+total ~1.35 GB; group 0 keeps only the stars map + the 3 LUTs; see
 `constraints.md`).
 
 **WGSL is compiled by naga at runtime, not during `cargo build`.** Validate

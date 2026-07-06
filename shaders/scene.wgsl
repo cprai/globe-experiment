@@ -23,63 +23,49 @@ struct Uniforms {
     // x,y = viewport size in pixels; z = marker radius in pixels; w = unused.
     // Per-marker world position + visibility are per-instance (see vs_marker).
     marker: vec4<f32>,
-    // Luna center in the render frame (km). Luna itself draws through the
-    // shared body impostor (group 1); these group-0 params exist for the two
-    // passes that must know about Luna without drawing it: the solar-eclipse
-    // shadow on Terra (fs_main) and the atmosphere's Luna occlusion check
-    // (fs_atmosphere).
-    luna_pos: vec3<f32>,
-    // Eclipse-geometry params: x = Luna mean radius (km); y = Terra mean radius
-    // (km); z = Sol's angular radius (rad), which sets the penumbra
-    // softness; w = unused.
-    luna_params: vec4<f32>,
+    // Luna as an occluder for the atmosphere pass, the one pass that must
+    // know about Luna without drawing it (Luna itself draws through the
+    // shared body impostor, group 1): xyz = Luna center in the render frame
+    // (km), w = Luna mean radius (km). See fs_atmosphere.
+    luna_occluder: vec4<f32>,
     // Sol position in the render frame (km). Lights every body
     // (`normalize(sol_pos - surface)`) and aims the backdrop Sol disc.
     sol_pos: vec3<f32>,
+    // The atmosphere quad's screen placement, CPU-computed like an impostor's:
+    // xy = NDC center, zw = NDC half-extent (0,0,1,1 = full-screen, the usual
+    // case at current camera limits).
+    atmosphere_quad: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var day_texture: texture_2d<f32>;
-@group(0) @binding(2) var terra_sampler: sampler;
-@group(0) @binding(3) var night_texture: texture_2d<f32>;
-@group(0) @binding(4) var normal_texture: texture_2d<f32>;
-@group(0) @binding(5) var specular_texture: texture_2d<f32>;
-@group(0) @binding(6) var transmittance_lut: texture_2d<f32>;
-@group(0) @binding(7) var lut_sampler: sampler;
-@group(0) @binding(8) var inscatter_rayleigh_lut: texture_2d<f32>;
-@group(0) @binding(9) var inscatter_mie_lut: texture_2d<f32>;
-@group(0) @binding(10) var stars_texture: texture_2d<f32>;
+@group(0) @binding(1) var map_sampler: sampler;
+@group(0) @binding(2) var transmittance_lut: texture_2d<f32>;
+@group(0) @binding(3) var lut_sampler: sampler;
+@group(0) @binding(4) var inscatter_rayleigh_lut: texture_2d<f32>;
+@group(0) @binding(5) var inscatter_mie_lut: texture_2d<f32>;
+@group(0) @binding(6) var stars_texture: texture_2d<f32>;
 
-// World space is kilometers, planet center at the origin. `position` is the
-// WGS84 ellipsoid surface point; `normal` is the outward geodetic unit
-// normal (which the atmosphere/star passes also reuse as a sphere direction).
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-};
+// Two triangles covering [-1, 1]^2: the shared screen-space quad idiom (the
+// impostor/marker passes carry their own copies inside their vertex shaders).
+fn quad_corner(vertex_index: u32) -> vec2<f32> {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+    );
+    return corners[vertex_index];
+}
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) normal: vec3<f32>,
-    // World-space surface position (km), for the view vector.
-    @location(2) world_pos: vec3<f32>,
-};
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    // The Terra mesh is built at the world origin, which IS the render origin
-    // whenever the Terra surface draws (it only draws when orbiting the
-    // Terra/Luna), so its vertices are already in the render frame.
-    out.position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
-    out.uv = in.uv;
-    // The ellipsoid normal is supplied per vertex (it is no longer just the
-    // normalized position).
-    out.normal = in.normal;
-    out.world_pos = in.position;
-    return out;
+// Per-fragment view ray direction through an NDC point: unproject the
+// reversed-Z near (z=1) and far (z=0) planes and take the chord direction.
+// Exactly the eye ray the projection rasterizes through that pixel.
+fn view_ray_dir(ndc: vec2<f32>) -> vec3<f32> {
+    let near_h = uniforms.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+    let far_h = uniforms.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    return normalize(far_h.xyz / far_h.w - near_h.xyz / near_h.w);
 }
 
 const DAY_AMBIENT: f32 = 0.04;
@@ -293,123 +279,11 @@ fn sol_visibility(p: vec3<f32>, sol: vec3<f32>, occ: vec3<f32>, occ_radius: f32,
     return 1.0 - disk_overlap_fraction(ang_sep, sol_ang, ang_occ);
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let albedo = textureSample(day_texture, terra_sampler, in.uv).rgb;
-    let night = textureSample(night_texture, terra_sampler, in.uv).rgb;
-    let normal_sample = textureSample(normal_texture, terra_sampler, in.uv).xyz * 2.0 - 1.0;
-    let specular_mask = textureSample(specular_texture, terra_sampler, in.uv).r;
-
-    // Geometric (geodetic) surface normal. Unit length and with the same
-    // lat/lon direction a sphere would have, so the analytic tangent frame
-    // and the surface-anchored city-light noise below are unaffected by the
-    // ellipsoid shape.
-    let n_geo = normalize(in.normal);
-
-    // Analytic tangent frame of the equirectangular mapping: east along
-    // increasing u, north along the image's up direction.
-    let east = normalize(vec3<f32>(n_geo.z, 0.0, -n_geo.x));
-    let north = cross(n_geo, east);
-    let n = normalize(
-        east * normal_sample.x * NORMAL_STRENGTH
-            + north * normal_sample.y * NORMAL_STRENGTH
-            + n_geo * normal_sample.z,
-    );
-
-    // The Sol direction at this surface point (render-frame positions).
-    let sol = normalize(uniforms.sol_pos - in.world_pos);
-    let v = normalize(uniforms.camera_pos - in.world_pos);
-    let h = normalize(v + sol);
-
-    let n_dot_l = max(dot(n, sol), 0.0);
-    let n_dot_v = max(dot(n, v), 1e-4);
-    let n_dot_h = max(dot(n, h), 0.0);
-    let v_dot_h = max(dot(v, h), 0.0);
-
-    // Cook-Torrance GGX specular. The specular map marks water: smooth and
-    // more reflective, versus rough land.
-    let roughness = mix(LAND_ROUGHNESS, OCEAN_ROUGHNESS, specular_mask);
-    let f0 = mix(LAND_F0, OCEAN_F0, specular_mask);
-
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let d_denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    let d = a2 / (PI * d_denom * d_denom);
-
-    let k = a / 2.0;
-    let g = (n_dot_v / (n_dot_v * (1.0 - k) + k))
-        * (n_dot_l / (n_dot_l * (1.0 - k) + k));
-
-    let f = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
-
-    var specular = d * g * f / max(4.0 * n_dot_v * n_dot_l, 1e-4) * n_dot_l;
-
-    // Wave texture, water only: modulate the glint around its mean so
-    // the average brightness stays put.
-    let wave = wave_noise(in.uv);
-    let shimmer = 1.0 + WAVE_STRENGTH * (2.0 * wave - 1.0);
-    specular *= mix(1.0, shimmer, specular_mask);
-
-    // Sunlight reaching the surface is filtered by the atmosphere: near
-    // the terminator the blue is scattered away on the long grazing path
-    // and the remaining light turns orange.
-    let cos_sol = dot(n_geo, sol);
-    // Luna can eclipse Sol for this point (solar eclipse): darken the
-    // incoming sunlight by the analytic shadow. Multiplying the transmittance
-    // dims both the diffuse and specular Sol terms consistently; the small
-    // DAY_AMBIENT term is left untouched, so the umbra is dark but not black
-    // (as a real eclipse shadow, lit by scattered skylight, is not).
-    let eclipse = sol_visibility(
-        in.world_pos,
-        sol,
-        uniforms.luna_pos,
-        uniforms.luna_params.x,
-        uniforms.luna_params.z,
-    );
-    let sol_light = sol_transmittance(PLANET_RADIUS_KM + 0.1, cos_sol) * eclipse;
-
-    let day_lit = albedo
-        * (vec3<f32>(DAY_AMBIENT)
-            + (1.0 - DAY_AMBIENT) * n_dot_l * sol_light)
-        + specular * sol_light;
-
-    // Night side: the day map darkened by Sol geometry - no night
-    // texture as color. The geometric normal feeds the terminator so
-    // bump detail doesn't speckle the day/night edge.
-    let daylight = smoothstep(-0.12, 0.18, cos_sol);
-    let night_factor = mix(NIGHT_DARKNESS, 1.0, daylight);
-    var surface = day_lit * night_factor;
-
-    // City mask: a single uniform luminance threshold on the night map.
-    let night_brightness = dot(night, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let lit = smoothstep(
-        EMISSIVE_THRESHOLD,
-        EMISSIVE_THRESHOLD + EMISSIVE_SOFTNESS,
-        night_brightness,
-    );
-
-    // Dither-dissolve across the terminator. fade goes 0 deep on the
-    // night side (EMISSIVE_FADE_START) to 1 at EMISSIVE_FADE_END; when
-    // that end is positive the dissolve finishes on the daylit side, so
-    // lights linger a little past the terminator before fully clearing.
-    let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sol);
-
-    // Fixed-grain noise anchored to the 3D surface position: no crawl on
-    // zoom/rotate, and a stable per-pixel dissolve order under Sol
-    // motion. step() is a hard per-pixel dither - each pixel switches off
-    // when fade crosses its own noise value, so cities erode as a
-    // coherent wipe and survivors stay at full (uniform) brightness.
-    let dither = value_noise_3d(n_geo * DITHER_SCALE);
-    let keep = step(fade, dither);
-
-    surface += lit * keep * EMISSIVE_COLOR * EMISSIVE_STRENGTH;
-
-    return vec4<f32>(surface, 1.0);
-}
-
-// Atmospheric scattering, after Hillaire 2020: the same sphere mesh,
-// inflated to the top-of-atmosphere radius and rendered far-side-only
-// with additive blending after the body.
+// Atmospheric scattering, after Hillaire 2020: a screen-space quad sized by
+// the CPU to the top-of-atmosphere silhouette (full-screen when near - the
+// usual case), additively blended after the bodies. The fragment shader
+// ray-traces the spherical shell analytically (the quad only provides
+// coverage + a per-fragment eye ray), so no geometry is needed at all.
 //
 // Because the scene is a sphere viewed from outside, the inscatter
 // integral along any view ray is precomputed: a ray is identified by its
@@ -421,29 +295,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 struct AtmosphereOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) world_pos: vec3<f32>,
+    // This fragment's NDC (for the eye-ray reconstruction).
+    @location(0) ndc: vec2<f32>,
 };
 
 @vertex
-fn vs_atmosphere(in: VertexInput) -> AtmosphereOutput {
+fn vs_atmosphere(@builtin(vertex_index) vertex_index: u32) -> AtmosphereOutput {
+    // The quad's clip z is irrelevant: the pass neither tests nor writes
+    // depth (draw order layers it over the bodies).
+    let ndc = uniforms.atmosphere_quad.xy + quad_corner(vertex_index) * uniforms.atmosphere_quad.zw;
     var out: AtmosphereOutput;
-    // The scattering model is spherical: build the shell from the unit
-    // normal (not the ellipsoid position) so it is a true sphere at the
-    // top-of-atmosphere radius, in km.
-    // The atmosphere shell is centered on Terra at the world origin, which
-    // IS the render origin whenever it draws (only when orbiting the Terra/Luna).
-    let world = in.normal * ATMOSPHERE_TOP_KM;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
-    out.world_pos = world;
+    out.position = vec4<f32>(ndc, 0.0, 1.0);
+    out.ndc = ndc;
     return out;
 }
 
 @fragment
 fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
-    // Terra sits at the render origin whenever this draws, so render-frame
-    // positions are Earth-centered here. `camera_pos` is the eye in that frame.
+    // The atmosphere body (Terra) sits at the render origin whenever this
+    // pass draws (the CPU gate), so render-frame positions are Earth-centered
+    // here. `camera_pos` is the eye in that frame; the ray direction is
+    // reconstructed from the fragment's NDC - the same eye ray the old
+    // shell-mesh rasterization interpolated, without the mesh. Rays that miss
+    // the shell exit at the early-out below.
     let origin = uniforms.camera_pos;
-    let dir = normalize(in.world_pos - origin);
+    let dir = view_ray_dir(in.ndc);
     let sol = normalize(uniforms.sol_pos);
 
     let shell = ray_sphere(origin, dir, ATMOSPHERE_TOP_KM);
@@ -460,7 +336,7 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     // ray meets Luna in front of where it enters the atmosphere. (Luna is
     // ~384,000 km out, so from a Terra orbit it is always far beyond the
     // atmosphere and this never triggers.)
-    let luna = ray_sphere(origin - uniforms.luna_pos, dir, uniforms.luna_params.x);
+    let luna = ray_sphere(origin - uniforms.luna_occluder.xyz, dir, uniforms.luna_occluder.w);
     if luna.y > 0.0 && luna.x > 0.0 && luna.x < shell.x {
         return vec4<f32>(0.0);
     }
@@ -510,16 +386,12 @@ fn fs_atmosphere(in: AtmosphereOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, 1.0);
 }
 
-// Star backdrop: the same sphere mesh inflated into a shell centered on the
-// camera and rendered inside-out, before everything else. It reuses the mesh
-// UVs, so the equirectangular star map shares the terra texture's orientation
-// (celestial poles over the geographic poles).
+// Star backdrop: a full-screen quad drawn before everything else. The
+// backdrop is at infinity, so every fragment is a pure function of the
+// camera-relative view direction, reconstructed from the fragment's NDC -
+// which also makes it trivially camera-centered (required for non-Terra
+// targets: any shell anchored to the origin would exclude a Luna-orbit eye).
 
-// Shell radius, in km. The shell is centered on the camera (see vs_stars), so it
-// always encloses the eye whatever the orbit target; this radius only has to sit
-// between the near and far planes (the far plane is 500,000 km). ~35 mean Terra
-// radii.
-const STARS_RADIUS_KM: f32 = 222985.0;
 const STARS_BRIGHTNESS: f32 = 0.8;
 
 // The Sol disc, drawn into the backdrop along the Sol direction. The
@@ -533,51 +405,38 @@ const SOL_COLOR: vec3<f32> = vec3<f32>(1.0, 0.96, 0.9);
 
 struct StarsOutput {
     @builtin(position) position: vec4<f32>,
-    // Camera-relative view direction, rotated into the star map's base
-    // frame. The backdrop is at infinity, so everything on it is a
-    // function of view direction from the eye - anchoring it to the celestial
-    // sphere's surface instead would parallax against Sol.
-    @location(0) dir: vec3<f32>,
-    // The same view direction in the world frame, for Sol.
-    @location(1) view: vec3<f32>,
+    // This fragment's NDC (for the view-direction reconstruction).
+    @location(0) ndc: vec2<f32>,
 };
 
 @vertex
-fn vs_stars(in: VertexInput) -> StarsOutput {
+fn vs_stars(@builtin(vertex_index) vertex_index: u32) -> StarsOutput {
+    // Full-screen quad; clip z irrelevant (the backdrop neither tests nor
+    // writes depth, and everything else draws over it).
+    let corner = quad_corner(vertex_index);
     var out: StarsOutput;
-    // Inflate the unit normal into a km-scale shell centered on the CAMERA, not
-    // the Terra origin, so it encloses the eye at any orbit target - including
-    // Luna, ~384,000 km from the origin and far outside an origin-centered
-    // shell (which is why half the sky and Sol vanished from a Luna view).
-    // Centering on the camera also makes the camera-relative direction exactly
-    // the vertex normal direction (no camera_pos term), so the star/Sol lookup
-    // is a pure function of view direction - a true backdrop at infinity - and
-    // the Terra-orbit framing is unchanged (the eye was always inside the old
-    // shell, where the two formulations give the same per-pixel direction).
-    let relative = in.normal * STARS_RADIUS_KM;
-    // camera_pos is already in the render frame, so the shell is too.
-    let world = uniforms.camera_pos + relative;
-    out.position = uniforms.view_proj * vec4<f32>(world, 1.0);
-
-    // Linear in the vertex position, so interpolation is exact; both
-    // outputs are normalized per fragment.
-    out.dir = uniforms.star_rot_inv * relative;
-    out.view = relative;
+    out.position = vec4<f32>(corner, 0.0, 1.0);
+    out.ndc = corner;
     return out;
 }
 
 @fragment
 fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
+    // Camera-relative view direction through this pixel - a pure function of
+    // view direction, a true backdrop at infinity (anchoring the lookup to a
+    // celestial-sphere surface point instead would parallax against Sol).
+    let view = view_ray_dir(in.ndc);
+
     // Equirectangular lookup from the rotated direction. Computed per
     // fragment (not per vertex) so the dateline seam doesn't smear.
-    let d = normalize(in.dir);
+    let d = normalize(uniforms.star_rot_inv * view);
     let lon = atan2(d.x, d.z);
     let uv = vec2<f32>(
         lon / (2.0 * PI) + 0.5,
         acos(clamp(d.y, -1.0, 1.0)) / PI,
     );
 
-    let stars = textureSampleLevel(stars_texture, terra_sampler, uv, 0.0).rgb;
+    let stars = textureSampleLevel(stars_texture, map_sampler, uv, 0.0).rgb;
 
     // Sol, along the same camera-relative view direction as the
     // stars, so the two stay locked under rotation and zoom. The body
@@ -591,7 +450,6 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
     // lights from `sol_pos - world_pos`, the same direction). For Terra/Luna it
     // is the Terra->Sol direction. It is parallax-free under local orbit/zoom
     // (the render origin, hence `sol_pos`, is constant while orbiting one body).
-    let view = normalize(in.view);
     let sol = normalize(uniforms.sol_pos);
     let angle = acos(clamp(dot(view, sol), -1.0, 1.0));
 
@@ -848,29 +706,32 @@ fn fs_path(in: PathOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(PATH_COLOR, alpha);
 }
 
-// Every non-Terra body - the seven planets AND Luna - is drawn in its own pass
-// with its own group-1 bind group (per-body uniform + texture), which keeps
-// the eight body textures out of the shared group-0 layout (so its 8 sampled
-// textures never grow toward the portable 16-per-stage limit). The shared
-// group-0 uniforms supply view_proj, inv_view_proj, the camera position, and
-// the Sol position.
+// EVERY body - Terra, the seven planets, AND Luna - is drawn in its own pass
+// with its own group-1 bind group (per-body uniform + maps), which keeps the
+// body textures out of the shared group-0 layout (whose sampled textures
+// never grow toward the portable 16-per-stage limit). The shared group-0
+// uniforms supply view_proj, inv_view_proj, the camera position, and the Sol
+// position.
 //
 // Every body is drawn as a single shader IMPOSTOR: a camera-facing quad whose
 // fragment shader ray-traces the true triaxial ellipsoid (Luna genuinely
-// triaxial, each planet an oblate spheroid with rx = rz), samples the group-1
-// albedo texture, and Lambert-lights it from Sol, so the silhouette,
+// triaxial, Terra the WGS84 spheroid, each planet oblate with rx = rz),
+// samples the group-1 maps, and lights it from Sol, so the silhouette,
 // rotation/libration, terminator, and texture stay faithful at any distance -
-// no mesh. The CPU (renderer `prepare`) projects the body center to screen
-// space and packs the quad placement (NDC center + half-extent + depth) plus
-// the trace mode into PlanetUniform; the GPU draws the quad and traces.
-// Bodies have no atmosphere here, so the terminator is hard (plain Lambert).
+// no mesh anywhere. The CPU (renderer `prepare`) projects the body center to
+// screen space and packs the quad placement (NDC center + half-extent +
+// depth) plus the trace mode + the shading-feature flags into PlanetUniform;
+// the GPU draws the quad and traces. Shading is data-driven per body
+// (BODY_FLAG_*): plain hard-terminator Lambert for a bare-albedo body, up to
+// the full Terra look (normal map, GGX ocean, transmittance-tinted sunlight,
+// emissive city lights).
 //
 // Mutual eclipses within a planetary system are analytic and generic: the CPU
 // packs the body's same-system neighbors as spherical occluders and the
-// fragment shader multiplies `sol_visibility` over them - Terra shadowing Luna
-// (the blood-red lunar eclipse) today, a future system's moons spotting their
-// planet the same way. (Luna shadowing Terra stays in fs_main: Terra is a
-// mesh, not an impostor.)
+// fragment shader multiplies `sol_visibility` over them - Terra shadowing
+// Luna (the blood-red lunar eclipse) and Luna shadowing Terra (the
+// solar-eclipse spot) today; a future system's moons spot their planet the
+// same way.
 //
 // The trace is DISTANCE-ADAPTIVE:
 // - PERSPECTIVE (eye-ray) for a near/orbited planet, so the foreshortened
@@ -934,11 +795,25 @@ struct PlanetUniform {
     occluders: array<vec4<f32>, MAX_OCCLUDERS>,
     // 1.0 = perspective trace (near/orbited), 0.0 = orthographic (distant).
     perspective: f32,
+    // Shading-feature bits (BODY_FLAG_*): which optional maps/features this
+    // body applies. Data-driven from the body table; must match the renderer.
+    flags: u32,
 };
+
+// PlanetUniform.flags bits; must match the renderer's `BODY_FLAG_*` consts.
+const BODY_FLAG_NIGHT: u32 = 1u;
+const BODY_FLAG_NORMAL_MAP: u32 = 2u;
+const BODY_FLAG_SPECULAR: u32 = 4u;
+const BODY_FLAG_ATMO_LIT: u32 = 8u;
 
 @group(1) @binding(0) var<uniform> planet: PlanetUniform;
 @group(1) @binding(1) var planet_texture: texture_2d<f32>;
 @group(1) @binding(2) var planet_sampler: sampler;
+// Optional feature maps (a shared 1x1 dummy when the body has none; the
+// matching flag bit gates every sample).
+@group(1) @binding(3) var planet_night: texture_2d<f32>;
+@group(1) @binding(4) var planet_normal: texture_2d<f32>;
+@group(1) @binding(5) var planet_specular: texture_2d<f32>;
 
 struct PlanetOutput {
     @builtin(position) position: vec4<f32>,
@@ -1045,23 +920,86 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
     let p1 = o1 + t * d1; // point on the unit sphere
 
     // Body-frame geodetic normal (ellipsoid gradient) + equirectangular UV.
+    // The UV latitude comes from the NORMAL's y (geodetic latitude), not the
+    // hit point's: for a spheroid `n_body.y = sin(geodetic lat)`, which is
+    // the latitude the equirect maps (and the CPU-side geodetic
+    // `surface_position`) are addressed by. For a sphere the two coincide;
+    // for the triaxial Luna the longitude stays position-derived (a
+    // normal-derived longitude would warp with rx != rz).
     let n_body = normalize(p1 / radii);
     let uv = vec2<f32>(
         atan2(p1.x, p1.z) / (2.0 * PI) + 0.5,
-        acos(clamp(p1.y, -1.0, 1.0)) / PI,
+        acos(clamp(n_body.y, -1.0, 1.0)) / PI,
     );
 
     let albedo = textureSampleLevel(planet_texture, planet_sampler, uv, 0.0).rgb;
-    let n = normalize(planet.rot * n_body);
+    // Geometric (geodetic) normal in the world. The terminator, night-light
+    // fade, and dither anchoring all use it - never the bump-mapped normal.
+    let n_geo = normalize(planet.rot * n_body);
     // Surface point in the render frame, for lighting + the perspective depth.
     let surf = planet.pos + planet.rot * (p1 * radii);
     let sol = normalize(uniforms.sol_pos - surf);
-    let sunlit = max(dot(n, sol), 0.0);
+    let cos_sol = dot(n_geo, sol);
+
+    // Shading normal: the geometric normal, optionally perturbed by the
+    // body's tangent-space relief map. The analytic tangent frame of the
+    // equirectangular mapping (east along increasing u, north along the
+    // image's up) is built in the BODY frame - where the geodetic normal has
+    // the plain sphere lat/lon structure - then rotated out with the normal.
+    var n = n_geo;
+    if (planet.flags & BODY_FLAG_NORMAL_MAP) != 0u {
+        let normal_sample = textureSampleLevel(planet_normal, planet_sampler, uv, 0.0).xyz * 2.0 - 1.0;
+        let east = normalize(vec3<f32>(n_body.z, 0.0, -n_body.x));
+        let north = cross(n_body, east);
+        let n_local = normalize(
+            east * normal_sample.x * NORMAL_STRENGTH
+                + north * normal_sample.y * NORMAL_STRENGTH
+                + n_body * normal_sample.z,
+        );
+        n = normalize(planet.rot * n_local);
+    }
+    let n_dot_l = max(dot(n, sol), 0.0);
+
+    // Cook-Torrance GGX specular from the body's water mask (Terra's ocean
+    // glint), with the wave-noise shimmer. Gated: a maskless body must skip
+    // this entirely (a zero mask would still leave the land-level sheen).
+    var specular = 0.0;
+    if (planet.flags & BODY_FLAG_SPECULAR) != 0u {
+        let specular_mask = textureSampleLevel(planet_specular, planet_sampler, uv, 0.0).r;
+        let v = normalize(uniforms.camera_pos - surf);
+        let h = normalize(v + sol);
+        let n_dot_v = max(dot(n, v), 1e-4);
+        let n_dot_h = max(dot(n, h), 0.0);
+        let v_dot_h = max(dot(v, h), 0.0);
+
+        let roughness = mix(LAND_ROUGHNESS, OCEAN_ROUGHNESS, specular_mask);
+        let f0 = mix(LAND_F0, OCEAN_F0, specular_mask);
+
+        let ggx_a = roughness * roughness;
+        let ggx_a2 = ggx_a * ggx_a;
+        let d_denom = n_dot_h * n_dot_h * (ggx_a2 - 1.0) + 1.0;
+        let ggx_d = ggx_a2 / (PI * d_denom * d_denom);
+
+        let ggx_k = ggx_a / 2.0;
+        let ggx_g = (n_dot_v / (n_dot_v * (1.0 - ggx_k) + ggx_k))
+            * (n_dot_l / (n_dot_l * (1.0 - ggx_k) + ggx_k));
+
+        let ggx_f = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
+
+        specular = ggx_d * ggx_g * ggx_f / max(4.0 * n_dot_v * n_dot_l, 1e-4) * n_dot_l;
+
+        // Wave texture, water only: modulate the glint around its mean so
+        // the average brightness stays put.
+        let wave = wave_noise(uv);
+        let shimmer = 1.0 + WAVE_STRENGTH * (2.0 * wave - 1.0);
+        specular *= mix(1.0, shimmer, specular_mask);
+    }
 
     // Mutual-eclipse shadow from the body's same-system neighbors: multiply
     // the analytic visibility over every occluder the CPU packed (w = caster
-    // radius, 0 = unused). Terra shadowing Luna is the lunar eclipse; planets
-    // today carry no occluders, so vis stays exactly 1.
+    // radius, 0 = unused). Terra shadowing Luna is the lunar eclipse, Luna
+    // shadowing Terra the solar-eclipse spot; planets today carry no
+    // occluders, so vis stays exactly 1.
     var vis = 1.0;
     for (var i = 0u; i < MAX_OCCLUDERS; i += 1u) {
         let occ = planet.occluders[i];
@@ -1070,9 +1008,55 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
         }
     }
 
-    var color = albedo * (PLANET_AMBIENT + sunlit * vis);
-    // Coppery umbral glow, only where the disc would otherwise be sunlit.
-    color += ECLIPSE_GLOW * (1.0 - vis) * sunlit * albedo;
+    var color: vec3<f32>;
+    if (planet.flags & BODY_FLAG_ATMO_LIT) != 0u {
+        // Atmosphere-lit skeleton (Terra): sunlight reaching the surface is
+        // filtered by the atmosphere - near the terminator the blue is
+        // scattered away on the long grazing path and the remaining light
+        // turns orange. The eclipse visibility multiplies the transmittance
+        // so diffuse and specular dim together; the small DAY_AMBIENT term is
+        // left untouched, so the umbra is dark but not black (as a real
+        // eclipse shadow, lit by scattered skylight, is not). No ECLIPSE_GLOW
+        // on this path: the glow models refraction through the OCCLUDER's
+        // atmosphere, and this body's occluders (Luna) have none.
+        let sol_light = sol_transmittance(PLANET_RADIUS_KM + 0.1, cos_sol) * vis;
+        let day_lit = albedo
+            * (vec3<f32>(DAY_AMBIENT)
+                + (1.0 - DAY_AMBIENT) * n_dot_l * sol_light)
+            + specular * sol_light;
+
+        // Night side: the day map darkened by Sol geometry - no night
+        // texture as color. The geometric normal feeds the terminator so
+        // bump detail doesn't speckle the day/night edge.
+        let daylight = smoothstep(-0.12, 0.18, cos_sol);
+        let night_factor = mix(NIGHT_DARKNESS, 1.0, daylight);
+        color = day_lit * night_factor;
+    } else {
+        // Plain Lambert (no atmosphere - hard terminator), with the coppery
+        // umbral glow only where the disc would otherwise be sunlit.
+        color = albedo * (PLANET_AMBIENT + n_dot_l * vis);
+        color += ECLIPSE_GLOW * (1.0 - vis) * n_dot_l * albedo;
+    }
+
+    // Emissive city lights from the night map's luminance, dissolved across
+    // the terminator by surface-anchored noise (hard per-pixel dither: each
+    // pixel switches off when fade crosses its own noise value, so cities
+    // erode as a coherent wipe and survivors keep full brightness;
+    // the dither is anchored to the BODY-frame normal so it stays fixed to
+    // the surface under any body's rotation).
+    if (planet.flags & BODY_FLAG_NIGHT) != 0u {
+        let night = textureSampleLevel(planet_night, planet_sampler, uv, 0.0).rgb;
+        let night_brightness = dot(night, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let lit = smoothstep(
+            EMISSIVE_THRESHOLD,
+            EMISSIVE_THRESHOLD + EMISSIVE_SOFTNESS,
+            night_brightness,
+        );
+        let fade = smoothstep(EMISSIVE_FADE_START, EMISSIVE_FADE_END, cos_sol);
+        let dither = value_noise_3d(n_body * DITHER_SCALE);
+        let keep = step(fade, dither);
+        color += lit * keep * EMISSIVE_COLOR * EMISSIVE_STRENGTH;
+    }
 
     var out: PlanetFragment;
     out.color = vec4<f32>(color, 1.0);

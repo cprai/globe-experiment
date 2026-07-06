@@ -11,8 +11,9 @@ paths:
 - **WGS84 ellipsoid at origin; world space in km; +Y = north pole; lon0/lat0
   -> +Z; +X = 90 deg E.** This is ITRF/ECEF with axes permuted so north is
   +Y.
-- Constants and helpers in `src/engine/terra.rs` — single source of truth; mesh
-  and camera both call it.
+- Constants and helpers in `src/engine/planet.rs` (Terra is a row of the
+  shared per-body table; there is no terra module) — single source of truth;
+  the impostor renderer, the camera, and the satellite pipeline all call it.
 
 ## Axis permutation P (world <-> ECEF)
 
@@ -22,20 +23,28 @@ frame (Y = north). As a `glam::Mat3` it is `from_cols((0,0,1),(1,0,0),(0,1,0))`.
 
 Why: for geodetic `(lat, lon)` the standard ECEF unit vector is
 `(cos_lat*cos_lon, cos_lat*sin_lon, sin_lat)`; applying P gives
-`(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` = `terra::geodetic_normal(lat,lon)`.
+`(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` = `planet::geodetic_normal(TERRA, lat, lon)`.
 So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Surface geometry
 
-- Mesh carries explicit **geodetic normals** (not `normalize(position)` on an
-  ellipsoid). The normal at `(lat, lon)` is
-  `(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` — same direction as a sphere.
-- `terra::surface_position(lat, lon)` is the WGS84 ellipsoid point in km.
-- Atmosphere and star shells use the unit normal * their radii — spherical,
-  not ellipsoid position. Do not try to make the LUT model ellipsoidal.
-- Atmosphere spherical constants: `PLANET_RADIUS_KM 6360`, `ATMOSPHERE_TOP_KM
-  6460`. These must match between `build.rs mod atmosphere` and
-  `shaders/scene.wgsl`.
+- **Latitude convention is shape-driven** (`planet::surface_position` /
+  `geodetic_normal`): a spheroid of revolution (rx == rz — Terra and every
+  planet) treats latitude as **geodetic** (the WGS84 prime-vertical
+  formulation; for Terra this is bit-for-bit the old terra-module math, and
+  satellite geodetic coordinates land on the same ellipsoid), while the
+  triaxial body (Luna) uses parametric latitude. The geodetic normal at
+  `(lat, lon)` is `(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` — same
+  direction as a sphere — for spheroids; the ellipsoid gradient for Luna.
+- There is NO mesh anywhere: the impostor fragment shader ray-traces each
+  body's ellipsoid and derives the geodetic normal as the ellipsoid gradient
+  `normalize(p/radii)` in unit-sphere space (identical to the geodetic
+  definition for a spheroid).
+- The atmosphere is a SPHERE (radius `PLANET_RADIUS_KM 6360` /
+  `ATMOSPHERE_TOP_KM 6460`), traced analytically in `fs_atmosphere` — not the
+  WGS84 ellipsoid. Do not try to make the LUT model ellipsoidal. The geometric
+  constants must match across `build.rs mod atmosphere`, `shaders/scene.wgsl`,
+  and `renderer::ATMOSPHERE_TOP_KM` (the quad sizing twin).
 
 ## Luna body frame
 
@@ -57,7 +66,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Planet body frames
 
-- `src/engine/planet.rs` is the multi-body twin of `terra.rs`: each of the 7
+- In the same `src/engine/planet.rs` table: each of the 7
   planets is a **triaxial ellipsoid with equal +X/+Z axes** - its familiar
   oblate spheroid (equatorial radius on +X/+Z,
   polar radius on +Y), in the same triaxial formulation as Luna
@@ -101,15 +110,18 @@ that maps quad/screen offsets to world offsets, always use the order above.
 
 ## Equirectangular UV mapping
 
-- Forward (Terra mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at
-  south. Sampler repeats on U (dateline wrap), clamps on V (poles). Seam column
-  duplicated.
-- Inverse (`fs_stars` and `fs_planet`, by a body-frame point/direction): `u =
-  atan2(p.x, p.z)/(2*pi) + 0.5`, `v = acos(p.y)/pi`. Computed **per fragment** —
-  for the planet impostor the point comes from the ray-traced hit (so there is
-  no seam-interpolation smear); for `fs_stars` interpolating `u` across a
-  triangle crossing the +/-180 seam would smear the entire texture, so `d` is
-  the star texture's frame direction `d = star_tex_rot_inv * view_dir`. The
-  texture is drawn in **galactic** coordinates, so `star_tex_rot_inv` carries a
-  static galactic->equatorial offset on top of the equatorial orientation (see
-  `simulation.md`).
+- Inverse-only (there is no meshed forward mapping anymore), computed **per
+  fragment**:
+  - `fs_planet`: `u = atan2(p1.x, p1.z)/(2*pi) + 0.5` from the ray-traced hit
+    point (exact for every body; no seam-interpolation smear), and `v =
+    acos(n_body.y)/pi` from the GEODETIC NORMAL's y — for a spheroid
+    `n_body.y = sin(geodetic lat)`, so the texture latitude is geodetic,
+    matching the CPU-side `surface_position` convention (longitude stays
+    position-derived: a normal-derived longitude would warp on the triaxial
+    Luna).
+  - `fs_stars`: `d = star_tex_rot_inv * view_dir` per fragment, `u/v` from `d`
+    as above but with `v = acos(d.y)/pi` (a direction, not an ellipsoid). The
+    texture is drawn in **galactic** coordinates, so `star_tex_rot_inv`
+    carries a static galactic->equatorial offset on top of the equatorial
+    orientation (see `simulation.md`).
+- Sampler repeats on U (dateline wrap), clamps on V (poles).

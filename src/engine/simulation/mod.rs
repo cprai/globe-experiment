@@ -23,7 +23,7 @@ pub use body::CelestialBody;
 #[allow(unused_imports)]
 pub use clock::Clock;
 
-use crate::engine::terra;
+use crate::engine::planet;
 use crate::engine::ui::{
     Header, Instrument, InteractiveToggle, PanelAnchor, Toggle, UIDrawablePanel,
 };
@@ -34,7 +34,7 @@ use celestial_sphere::CelestialSphere;
 /// and look-at anchor are all scaled by the target's radius, so the free-point
 /// variant needs a fallback scale. Chosen as Terra's mean radius so the
 /// interaction feel matches the familiar default view.
-const COORDINATE_RADIUS_KM: f32 = terra::MEAN_RADIUS_KM;
+const COORDINATE_RADIUS_KM: f32 = planet::TERRA_MEAN_RADIUS_KM;
 
 /// What the orbital camera orbits: a celestial body (by identity) or a free
 /// world-space point. A pure **identity** - the body's moving world center is
@@ -143,7 +143,9 @@ impl CameraTarget {
     pub fn geodetic_normal(&self, latitude: f32, longitude: f32) -> Vec3 {
         match self {
             CameraTarget::Body(body) => body.geodetic_normal(latitude, longitude),
-            CameraTarget::Coordinate(_) => terra::geodetic_normal(latitude, longitude),
+            CameraTarget::Coordinate(_) => {
+                CelestialBody::TERRA.geodetic_normal(latitude, longitude)
+            }
         }
     }
 }
@@ -553,7 +555,7 @@ pub(crate) fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
 
     // Ray-sphere intersection of the line of sight with the Terra sphere.
     let b = dir.dot(eye);
-    let c = eye.length_squared() - terra::MEAN_RADIUS_KM * terra::MEAN_RADIUS_KM;
+    let c = eye.length_squared() - planet::TERRA_MEAN_RADIUS_KM * planet::TERRA_MEAN_RADIUS_KM;
     let disc = b * b - c;
     if disc < 0.0 {
         return false; // line of sight misses Terra entirely

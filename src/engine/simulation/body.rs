@@ -14,14 +14,13 @@
 //! (and carries no position), so the camera target and the body selectors can
 //! speak it directly; [`BodyState`] pairs that identity with a per-frame
 //! [`Placement`] for the render list. Body radii are NOT stored - they come
-//! from the identity via the single-source-of-truth geometry modules
-//! (WGS84 in `terra` for Terra; the shared triaxial table in `planet` for
-//! every other body, Luna included), exactly as before.
+//! from the identity via the single-source-of-truth geometry module (the
+//! shared triaxial table in `planet`, which covers every body - Terra's row
+//! is the WGS84 ellipsoid).
 
 use glam::{Mat3, Vec3};
 
 use crate::engine::planet;
-use crate::engine::terra;
 
 /// A member of the Terra system. Luna is named here rather than as a
 /// top-level body so the hierarchy reads as "the Terra system contains the
@@ -78,21 +77,6 @@ impl CelestialBody {
         }
     }
 
-    /// Characteristic mean radius (km). The camera scales its distance/zoom
-    /// limits, near plane, and pan rate by this so the interaction feel is the
-    /// same fraction of the body whichever one is targeted.
-    pub fn mean_radius_km(self) -> f32 {
-        match self {
-            CelestialBody::TerraSystem(TerraSystemEntity::Terra) => terra::MEAN_RADIUS_KM,
-            // Every other body: the axis-mean radius over the triaxial
-            // semi-axes (rx = rz for a planet, so this is the classic
-            // (2a + c) / 3; for Luna it also sets the eclipse caster/occlusion
-            // sphere, where the ~1.5 km triaxial spread is far below the
-            // penumbra softness).
-            _ => self.radii_km().element_sum() / 3.0,
-        }
-    }
-
     /// Whether two DISTINCT bodies belong to the same planetary system - the
     /// generic mutual-shadow rule. Bodies of one system eclipse each other
     /// (Terra <-> Luna today); bodies of different systems never do (their
@@ -112,27 +96,16 @@ impl CelestialBody {
     }
 
     /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
-    /// body frame (km). Delegates to the single-source-of-truth geometry:
-    /// WGS84 in `terra` for Terra, the shared triaxial table in `planet` for
-    /// every other body.
+    /// body frame (km). Delegates to the single-source-of-truth geometry
+    /// table in `planet` (Terra's row is the WGS84 ellipsoid).
     pub fn surface_position(self, latitude: f32, longitude: f32) -> Vec3 {
-        match self {
-            CelestialBody::TerraSystem(TerraSystemEntity::Terra) => {
-                terra::surface_position(latitude, longitude)
-            }
-            _ => planet::surface_position(self, latitude, longitude),
-        }
+        planet::surface_position(self, latitude, longitude)
     }
 
     /// Outward unit normal of the body surface at `(lat, lon)` (radians), in
     /// the body frame - the local "up" the eye offsets along.
     pub fn geodetic_normal(self, latitude: f32, longitude: f32) -> Vec3 {
-        match self {
-            CelestialBody::TerraSystem(TerraSystemEntity::Terra) => {
-                terra::geodetic_normal(latitude, longitude)
-            }
-            _ => planet::geodetic_normal(self, latitude, longitude),
-        }
+        planet::geodetic_normal(self, latitude, longitude)
     }
 }
 

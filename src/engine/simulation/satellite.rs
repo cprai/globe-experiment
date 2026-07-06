@@ -10,8 +10,8 @@
 //!
 //! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
 //! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
-//! world-space point via the project's WGS84 helpers (`terra`), so the marker
-//! lands on exactly the same ellipsoid the Terra mesh is built from.
+//! world-space point via the project's WGS84 helpers (`planet`), so the marker
+//! lands on exactly the same WGS84 ellipsoid the Terra impostor traces.
 //!
 //! Besides the single-time marker state, [`orbit_path_inertial`] propagates
 //! one full period ahead for the renderer's predicted orbit path. It
@@ -44,7 +44,8 @@ use satkit::sgp4::sgp4;
 use satkit::tle::TLE;
 use satkit::{Duration, Instant, Kepler, Vector3};
 
-use crate::engine::terra;
+use crate::engine::planet;
+use crate::engine::simulation::body::CelestialBody;
 
 /// An instantaneous orbital state vector in the GCRF frame: the initial
 /// conditions for numerical propagation. Deliberately a plain-data type (no
@@ -130,7 +131,7 @@ impl Satellite {
 /// Recomputed on demand rather than stored on [`Satellite`].
 pub struct SatelliteState {
     /// Position in the renderer's world frame: kilometers, planet center at
-    /// the origin, same axes as the Terra mesh.
+    /// the origin, same axes as the Terra body frame.
     pub position_km: Vec3,
     /// Sub-satellite geodetic latitude, degrees.
     pub latitude_deg: f32,
@@ -207,8 +208,8 @@ fn state_from_itrf(itrf: &Vector3, orbit: OrbitState) -> SatelliteState {
     let longitude = lon_rad as f32;
     let altitude_km = (hae_m / 1000.0) as f32;
 
-    let position_km = terra::surface_position(latitude, longitude)
-        + terra::geodetic_normal(latitude, longitude) * altitude_km;
+    let position_km = planet::surface_position(CelestialBody::TERRA, latitude, longitude)
+        + planet::geodetic_normal(CelestialBody::TERRA, latitude, longitude) * altitude_km;
 
     SatelliteState {
         position_km,
@@ -291,7 +292,7 @@ pub fn orbit_shape(state: &OrbitState) -> Option<OrbitShape> {
         [state.vel_gcrf_m_s.z],
     ]);
     let kepler = Kepler::from_pv(pos, vel).ok()?;
-    let mean_radius_m = f64::from(terra::MEAN_RADIUS_KM) * 1000.0;
+    let mean_radius_m = f64::from(planet::TERRA_MEAN_RADIUS_KM) * 1000.0;
     Some(OrbitShape {
         apoapsis_alt_km: (kepler.a * (1.0 + kepler.eccen) - mean_radius_m) / 1000.0,
         periapsis_alt_km: (kepler.a * (1.0 - kepler.eccen) - mean_radius_m) / 1000.0,
@@ -447,7 +448,7 @@ mod tests {
         crate::engine::simulation::celestial_sphere::init_satkit_for_tests();
 
         let (state, t0) = circular_leo();
-        let alt_km = (RADIUS_M - f64::from(terra::MEAN_RADIUS_KM) * 1000.0) / 1000.0;
+        let alt_km = (RADIUS_M - f64::from(planet::TERRA_MEAN_RADIUS_KM) * 1000.0) / 1000.0;
 
         let shape = orbit_shape(&state).expect("circular orbit is elliptic");
         assert!(

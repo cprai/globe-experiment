@@ -15,5 +15,4 @@ pub mod camera;
 pub mod planet;
 pub mod renderer;
 pub mod simulation;
-pub mod terra;
 pub mod ui;

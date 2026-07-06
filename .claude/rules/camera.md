@@ -87,8 +87,8 @@ Coordinate(Vec3)`, defined in `simulation`, a sanctioned `simulation`->
 NOT store the body's center. The position-dependent accessors take the sphere
 (`center_world(&celestial)`, `render_origin(&celestial)`) and look the center up
 from the ephemeris; the static ones (`mean_radius_km`, `surface_position`,
-`geodetic_normal`) delegate through the `CelestialBody` identity to `terra` /
-`planet` with no sphere. For `Body`, the identity is `TerraSystem(Terra)`,
+`geodetic_normal`) delegate through the `CelestialBody` identity to `planet`
+(the shared per-body table, Terra's row included) with no sphere. For `Body`, the identity is `TerraSystem(Terra)`,
 `TerraSystem(Luna)`, or a planet; orbiting Luna is `TerraSystem(Luna)`. The
 `Coordinate` variant orbits a free world point with synthetic geometry (a
 Terra-radius scale + a center look-at anchor) — future-proof scaffolding, not
@@ -126,7 +126,7 @@ parallax between Sol and stars (a fixed bug).
 **There is no Earth-fixed `sol_dir` in the render path.** Every lit pass derives
 its Sol direction from `uniforms.sol_pos` (Sol in the render frame =
 relative to the camera target): surfaces use `normalize(sol_pos - world_pos)`
-(Terra `fs_main`; every impostor body incl. Luna `fs_planet`), and the backdrop Sol disc
+(every body's impostor, `fs_planet`), and the backdrop Sol disc
 (`fs_stars`) uses `normalize(sol_pos)` (the camera target's own direction to the
 Sol). Sol is a solar-system object, so from a distant planet it is in a
 wholly different direction than from Terra (e.g. ~160 deg away at Jupiter), and
@@ -135,15 +135,12 @@ parallax-free under local orbit/zoom (`sol_pos` is constant while orbiting one
 body). For Terra/Luna it is the Terra->Sol direction as before (< 1 LSB diff,
 position-derived vs the old precomputed unit `sol_dir`).
 
-The star shell (`vs_stars`) is **centered on the camera** (`world = camera_pos +
-normal * STARS_RADIUS_KM`), so it always encloses the eye and the camera-relative
-direction is exactly the vertex normal — independent of camera position. This is
-load-bearing for **non-Terra targets**: orbiting Luna puts the camera
-~384,000 km from the Terra origin, far outside an origin-centered shell, which
-dropped half the sky and Sol. For a Terra orbit the eye was always inside
-the old origin-centered shell, where both formulations give the same per-pixel
-direction, so the change is a no-op there (a re-render diff is < 1 LSB on a
-handful of pixels).
+The star backdrop (`vs_stars`/`fs_stars`) is a **full-screen quad** whose
+fragment shader reconstructs the per-pixel view direction from NDC via
+`inv_view_proj` — trivially camera-centered and independent of camera
+position. This is load-bearing for **non-Terra targets**: any origin-anchored
+shell would exclude a Luna-orbit eye (~384,000 km from the Terra origin),
+which dropped half the sky and Sol.
 
 ## Luna occludes Terra's atmosphere
 
@@ -173,8 +170,8 @@ The **projection** constants live in `renderer` (the renderer rebuilds
 - `renderer::NEAR_PLANE_RADII = 0.01`, scaled by the target's mean radius
 - `renderer::FAR_PLANE_KM = 500_000` — the **floor** of the far plane, NOT a
   fixed far plane. It covers the Terra-Luna system (Luna at apogee ~406,700 km +
-  camera distance; orbiting Luna, Terra ~384,400 km) and the camera-centered
-  star shell (222,985 km). But `prepare` computes the actual far plane as
+  camera distance; orbiting Luna, Terra ~384,400 km). But `prepare` computes
+  the actual far plane as
   `max(FAR_PLANE_KM, |camera_pos| + 2*radius)` so it always encloses the orbited
   body even when that body is large: a gas giant at max zoom-out has an
   eye-to-center of ~770,000 km (Jupiter), well past 500,000 km, and a fixed far

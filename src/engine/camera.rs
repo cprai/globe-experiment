@@ -1,8 +1,7 @@
 use glam::{Mat3, Quat, Vec3};
 
-use crate::engine::simulation::CameraTarget;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::terra;
+use crate::engine::simulation::{CameraTarget, CelestialBody};
 
 /// Orbital camera that lives in the **inertial (star-fixed) frame** and orbits
 /// a chosen subject (the [`CameraTarget`] - Terra, Luna, a planet, or a free
@@ -47,7 +46,7 @@ impl Default for Camera {
             longitude: 0.0,
             latitude: 0.0,
             // ~2 Terra radii above the surface: the whole body in view.
-            distance: Self::DEFAULT_DISTANCE_RADII * terra::MEAN_RADIUS_KM,
+            distance: Self::DEFAULT_DISTANCE_RADII * CelestialBody::TERRA.mean_radius_km(),
             tilt: 0.0,
             target: CameraTarget::terra(),
         }

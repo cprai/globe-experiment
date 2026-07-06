@@ -6,13 +6,13 @@
 - **`Features::empty()`** — no optional GPU features. Textures upload
   **uncompressed** (`Rgba8Unorm`/`Rgba8UnormSrgb`). Do not re-add
   `TEXTURE_COMPRESSION_BC` — it panics on Apple Silicon (Metal exposes only
-  ASTC/ETC2, not BC/S3TC). The 8 impostor-body textures are likewise uploaded
-  uncompressed `Rgba8UnormSrgb`, no feature.
+  ASTC/ETC2, not BC/S3TC). The impostor-body maps are likewise uploaded
+  uncompressed (`Rgba8UnormSrgb` color / `Rgba8Unorm` data), no feature.
 - **Sampled-texture count stays portable.** `max_sampled_textures_per_shader_stage
-  = 16` (default). Group 0 holds 8; the impostor-body textures (7 planets +
-  Luna) live in a dedicated
-  group-1 bind group (one per body draw), so no shader stage exceeds 16. Don't
-  fold body textures into group 0. See `constraints.md`.
+  = 16` (default). Group 0 holds 4; every body map (Terra's four included)
+  lives in the dedicated per-body group-1 bind groups (4 texture slots, one
+  bound per body draw), so the worst shader stage sees 8. Don't fold body
+  maps into group 0. See `constraints.md`.
 - **No host-arch or OS assumptions in the build.** `build.rs` and deps must
   compile natively on all six targets (including aarch64). No single-arch
   prebuilt build tools or platform-gated link flags without owner sign-off.

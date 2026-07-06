@@ -8,11 +8,13 @@ paths:
 
 ## Constants that MUST stay in sync
 
-**Atmosphere medium + geometry constants exist in TWO places:**
+**Atmosphere medium + geometry constants exist in THREE places:**
 1. `build.rs mod atmosphere` (LUT bake, CPU side)
 2. `shaders/scene.wgsl` (geometric twins + `MIE_G`)
+3. `src/engine/renderer/mod.rs` (`ATMOSPHERE_TOP_KM` only — sizes the
+   atmosphere quad's silhouette in `prepare`)
 
-Change one, change the other. A mismatch silently corrupts the atmosphere —
+Change one, change the others. A mismatch silently corrupts the atmosphere —
 there is no compile-time or runtime check.
 
 **Inscatter LUT parameterization** (split row mapping, reference-point choice,
@@ -44,11 +46,14 @@ Bruneton (r, mu) parameterization — resolution concentrates near the horizon:
   `d = -r*mu + sqrt(r^2*(mu^2-1) + Ra^2)`, `d_min = Ra - r`,
   `d_max = rho + H_top`
 - Returns 0 when mu is below the geometric horizon cosine (planet shadow).
-- `fs_main` uses `T(Rp + 0.1, cos_sol)` as the color of sunlight at ground.
+- `fs_planet`'s ATMO_LIT path uses `T(Rp + 0.1, cos_sol)` as the color of
+  sunlight at ground.
 
 ### Inscatter LUTs (2 x 256x128)
 
-Split row mapping (implemented identically in bake and fs_atmosphere):
+Split row mapping (implemented identically in bake and fs_atmosphere; the
+pass is a CPU-sized screen quad whose fragment shader traces the spherical
+shell analytically from a per-pixel `inv_view_proj` eye ray — geometry-free):
 - Lower half (ground-hitting rays, b < Rp): `v = 0.5 * clamp(b/Rp)`
 - Upper half (limb rays): `v = 0.5 + 0.5 * clamp((b-Rp)/(Ra-Rp))`
 - x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = Sol cosine at reference

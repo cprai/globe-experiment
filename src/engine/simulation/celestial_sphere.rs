@@ -14,7 +14,7 @@
 //! Frame note: satkit uses standard ECEF/GCRF (Z = pole); this project's
 //! world frame is permuted (Y = north, Z = prime meridian, X = 90 deg E). The
 //! permutation `p` maps (x,y,z) -> (y,z,x) - the same permutation the
-//! satellite path expresses via `terra::surface_position`/`geodetic_normal`.
+//! satellite path expresses via `planet::surface_position`/`geodetic_normal`.
 //!
 //! Star-map frame note: the embedded star texture
 //! (`8k_stars_milky_way.jpg`) is drawn in *galactic* coordinates - the Milky

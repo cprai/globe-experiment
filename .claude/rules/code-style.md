@@ -46,8 +46,6 @@ module (no lib crate) plus their own top-level extra (`scenarios` for main,
   `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
   panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
   straight into the bare instrument structs).
-- **`terra`** — WGS84 constants + helpers. Single source of truth for all
-  geometry; mesh and camera both call it.
 
 The top-level (non-engine) modules:
 - **`offscreen`** — `OffscreenRenderer` (`src/offscreen.rs`): the headless
@@ -71,7 +69,9 @@ The top-level (non-engine) modules:
 - **Atmosphere medium constants**: `build.rs mod atmosphere` (bake) AND
   `shaders/scene.wgsl` (shader twins) — both must stay in sync.
 - **Input feel constants**: `src/engine/application/input.rs` top.
-- **Terra physical constants + helpers**: `src/engine/terra.rs`.
+- **All body physical constants + helpers (Terra included)**:
+  `src/engine/planet.rs` (the per-body table; WGS84 consts live beside
+  Terra's row).
 - **Camera limits**: `Camera` associated consts in `src/engine/camera.rs`
   — the distance/default limits are radius *ratios* (`*_RADII`), scaled at use by
   the orbit target's `mean_radius_km()`. **Projection** consts live in `renderer`

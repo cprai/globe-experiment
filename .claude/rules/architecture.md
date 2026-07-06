@@ -141,27 +141,39 @@ src/engine/ui/spec.rs           the serde-deserialized headless --scene `ui` ove
                          so each element clones into an inert boxed Instrument.
                          Constructed only by the headless bin's tree (main tree
                          allows dead_code on the module)
-src/engine/terra.rs             WGS84 constants + surface_position / geodetic_normal helpers
-src/engine/planet.rs            every non-Terra body's data (the 7 planets + Luna;
-                         there is NO separate luna module), hung off the
-                         CelestialBody variants: ALL[CelestialBody;7]
+src/engine/planet.rs            EVERY body's data (Terra + the 7 planets + Luna;
+                         there is NO separate terra or luna module), hung off
+                         the CelestialBody variants: ALL[CelestialBody;7]
                          + data-driven table (triaxial radii via radii_km() -
-                         rx = rz for a planet's familiar oblate form, Luna
-                         genuinely triaxial; the simple IAU rotation constants,
-                         Some for planets / None for Luna, whose full lunar
-                         series lives in celestial_sphere; texture file)
+                         rx = rz spheroids for Terra (WGS84) and the planets,
+                         Luna genuinely triaxial; mean_radius_km() in f64; the
+                         simple IAU rotation constants, Some for planets /
+                         None for the Terra system (Terra's body frame IS the
+                         world frame; Luna's full lunar series lives in
+                         celestial_sphere); a Maps struct (albedo + optional
+                         night/normal/specular) + has_atmosphere)
                          accessed via impl CelestialBody
-                         + surface_position / geodetic_normal free fns. satkit-
-                         free, like terra; references simulation::body for
-                         the CelestialBody type
+                         + surface_position / geodetic_normal free fns
+                         (shape-driven latitude: geodetic for spheroids -
+                         bit-for-bit the old WGS84 math for Terra - and
+                         parametric for triaxial Luna) + the WGS84 defining
+                         consts and TERRA_MEAN_RADIUS_KM. satkit-free;
+                         references simulation::body for the CelestialBody
+                         type
 src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into BOTH
-                         binaries: SceneRenderer (6 pipelines: Terra surface,
-                         atmosphere, stars, markers, the predicted orbit path
-                         (mitered screen-space line strip, depth test-no-write),
-                         and a single body impostor shared by the 7 planets AND
-                         Luna (triaxial ray trace + generic same-system eclipse
-                         occluders, IMPOSTOR_BODIES slot order);
-                         reversed-Z Depth32Float buffer) + the shared device/
+                         binaries: SceneRenderer (5 pipelines: stars (full-
+                         screen quad), the single body impostor shared by ALL
+                         NINE bodies - Terra + 7 planets + Luna - (triaxial
+                         ray trace + data-driven shading flags + generic
+                         same-system eclipse occluders, IMPOSTOR_BODIES slot
+                         order; the scene's only depth-writing pass), the
+                         atmosphere (CPU-sized screen quad, gated on a
+                         has_atmosphere body at the render origin), the
+                         predicted orbit path (mitered screen-space line
+                         strip, depth test-no-write), and markers;
+                         reversed-Z Depth32Float buffer; NO meshes or vertex
+                         buffers anywhere - every pass builds its geometry
+                         from the vertex index) + the shared device/
                          depth helpers (request_adapter_device,
                          create_depth_view, depth_attachment, DEPTH_FORMAT) +
                          UiFrame + the projection consts/view_proj_reversed_z.
@@ -169,18 +181,16 @@ src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into 
                          CelestialSphere::at and rebuilds view_proj from the
                          camera rig; SGP4-propagates each marker's TLE one
                          period ahead (satellite::orbit_path_inertial) for the
-                         path. Impostor bodies use a separate group-1 bind group
-                         (per-body impostor uniform + texture). Gfx does NOT
-                         live here anymore (it is winit-bound ->
-                         application/gfx.rs)
+                         path. Impostor bodies use a separate group-1 bind
+                         group (per-body impostor uniform + albedo + optional
+                         night/normal/specular maps, shared 1x1 dummies when
+                         absent). Gfx does NOT live here anymore (it is
+                         winit-bound -> application/gfx.rs)
 src/offscreen.rs         OffscreenRenderer: surfaceless Rgba8Unorm offscreen
                          render + readback (+ matching depth buffer) around the
                          shared SceneRenderer; owns MAX_FRAME_DIMENSION. The
                          headless bin's presenter (its tree only; the windowed
                          twin is application/gfx.rs)
-src/engine/renderer/mesh.rs     generic ellipsoid mesh generator (km, geodetic normals);
-                         wgs84_ellipsoid only (Terra is the sole meshed body -
-                         Luna + planets are impostors)
 src/engine/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
                          enum (TerraSystem(TerraSystemEntity Terra|Luna), then
                          each planet Mercury..Neptune as its own variant) +
@@ -231,12 +241,15 @@ src/engine/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km con
                          (osculating apo/peri/speed, None for e >= 1); plus a
                          render-free circular-LEO unit test of that pipeline
 src/engine/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
-shaders/scene.wgsl       ALL shader code (7 passes in one module: a single
-                         distance-adaptive planet impostor (perspective/
-                         orthographic ray trace, writes frag_depth); the orbit
-                         path (vs_path/fs_path, mitered constant-pixel-width
-                         line); analytic
-                         eclipse shadows). Planet uniform/texture are group 1
+shaders/scene.wgsl       ALL shader code (5 passes in one module: a single
+                         distance-adaptive body impostor for all 9 bodies
+                         (perspective/orthographic ray trace, writes
+                         frag_depth, data-driven BODY_FLAG_* shading up to the
+                         full Terra look); the atmosphere + stars as screen
+                         quads (per-fragment eye ray via inv_view_proj); the
+                         orbit path (vs_path/fs_path, mitered constant-pixel-
+                         width line); markers; analytic eclipse shadows).
+                         Planet uniform/maps are group 1
 OUT_DIR/                 gitignored; include_bytes!'d: 13 textures (11 JPEG +
                          2 TIFF: Terra x4, stars, Luna, 7 planets) + 3 f16 LUT
                          KTX2 + DE440 ephemeris + EOP-All.csv + 3 IERS tables +
@@ -253,31 +266,30 @@ main (bin globe-experiment) -> engine, scenarios (NO offscreen/headless code)
 headless (bin headless)     -> engine, offscreen (NO scenarios; compiles
                                        # engine::application dead - covered by
                                        # its crate-level allow(dead_code))
-engine      = application, camera, planet, renderer, simulation, terra,
-                                       # ui - declared identically by both roots
+engine      = application, camera, planet, renderer, simulation, ui
+                                       # - declared identically by both roots
 application -> camera, simulation (incl. CelestialSphere, to resolve the camera
-                                       # target's center), renderer, ui, terra,
+                                       # target's center), renderer, ui,
                                        # (winit, egui, egui_winit, glam).
                                        # Contains gfx.rs (the windowed Gfx
                                        # presenter around renderer's
                                        # SceneRenderer)
-camera      -> simulation (CameraTarget + CelestialSphere), terra,
+camera      -> simulation (CameraTarget + CelestialSphere),
                                        # renderer::FOV_Y_DEG, (glam)  # winit-free
 offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
                                        # simulation (RenderState), (wgpu,
                                        # egui_wgpu, image)  # headless tree only
 ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState + CelestialSphere::at), terra,
+renderer    -> simulation (RenderState + CelestialSphere::at),
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
                                        # winit-free (Gfx moved to application);
                                        # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-simulation  -> terra, planet, ui, (satkit, egui via ui, glam)  # selector
+simulation  -> planet, ui, (satkit, egui via ui, glam)  # selector
                                        # panel builders use ui; NO winit/wgpu/Camera
-terra       -> (glam)
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
-                                       # every non-Terra body's data (7 planets
+                                       # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with simulation::body)
 scenarios   -> simulation, ui, application, camera

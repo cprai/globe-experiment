@@ -12,7 +12,7 @@ paths:
 | **TEME** | True Equator Mean Equinox; SGP4's native quasi-inertial frame | SGP4 output (satellite) |
 | **GCRF/ICRF** | Geocentric Celestial Reference Frame; inertial; Z = celestial pole, X ~ vernal equinox | JPL ephemeris output; star (celestial) frame |
 | **ITRF** | Standard Earth-fixed ECEF: X = equator+prime-meridian, Y = 90°E, Z = north pole | Output of GCRF/TEME->Terra rotations |
-| **world** | Project frame: Y = north, Z = prime meridian, X = 90°E; km; origin = Terra center | Renderer (mesh, camera, uniforms) |
+| **world** | Project frame: Y = north, Z = prime meridian, X = 90°E; km; origin = Terra center | Renderer (impostors, camera, uniforms) |
 | **celestial** | GCRF re-permuted to Y-up (equatorial); pole = celestial pole | Camera inertial rig (`star_rot_inv`) |
 | **galactic** | celestial rotated by the static galactic->equatorial offset, so the galactic-drawn texture lines up with the equatorial equirect lookup | Star map sampling (`star_tex_rot_inv`) |
 
@@ -130,7 +130,7 @@ the same DE440:
   polar on +Y;
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
-  `celestial_sphere` so `planet.rs` stays satkit-free (like `terra`).
+  `celestial_sphere` so `planet.rs` stays satkit-free.
 - **f32 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
   errors in range — `Result::Ok` for every planet). `nvec` then converts to f32,
   which at planetary distance quantizes the *absolute* position to ~6 km
@@ -152,9 +152,10 @@ Pipeline per frame (in `state_at`):
 1. `sgp4(&mut tle, &[time])` -> `DMatrix<f64>` 3xN, **meters, TEME**.
 2. `qteme2itrf(&time) * teme` -> standard ECEF, meters (full transform, sub-arcsec with real EOP).
 3. `ITRFCoord::from_vector(&itrf).to_geodetic_rad()` -> (lat, lon, hae).
-4. `terra::surface_position(lat,lon) + terra::geodetic_normal(lat,lon) * alt_km`
-   -> world-space km. (Goes through WGS84 helpers to guarantee the marker
-   lands on the exact same ellipsoid the mesh uses.)
+4. `planet::surface_position(TERRA, lat, lon) + planet::geodetic_normal(TERRA,
+   lat, lon) * alt_km` -> world-space km. (Goes through the WGS84 helpers to
+   guarantee the marker lands on the exact same ellipsoid the Terra impostor
+   traces.)
 
 **Predicted orbit path (`orbit_path_inertial`)** — the renderer's one-period
 twin, called from `SceneRenderer::prepare` with each marker's
@@ -185,7 +186,7 @@ marker: ALL inertial samples rotate through ONE current-time rotation (the
 star-fixed inertial ellipse, not the per-sample-rotation ground-track curve),
 then map ITRF -> world by the plain P permutation
 (`world (x,y,z) = ITRF (y,z,x)`) — no geodetic round trip, which exists on
-the marker only to land it on the exact mesh ellipsoid. Fast enough to
+the marker only to land it on the exact WGS84 ellipsoid. Fast enough to
 recompute every frame (no caching).
 
 **TLE-free manual-control pipeline** (`satellite.rs`, all sharing the
