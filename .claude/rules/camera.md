@@ -88,7 +88,7 @@ NOT store the body's center. The position-dependent accessors take the sphere
 (`center_world(&celestial)`, `render_origin(&celestial)`) and look the center up
 from the ephemeris; the static ones (`mean_radius_km`, `surface_position`,
 `geodetic_normal`) delegate through the `CelestialBody` identity to `terra` /
-`luna` / `planet` with no sphere. For `Body`, the identity is `TerraSystem(Terra)`,
+`planet` with no sphere. For `Body`, the identity is `TerraSystem(Terra)`,
 `TerraSystem(Luna)`, or a planet; orbiting Luna is `TerraSystem(Luna)`. The
 `Coordinate` variant orbits a free world point with synthetic geometry (a
 Terra-radius scale + a center look-at anchor) — future-proof scaffolding, not

@@ -104,7 +104,8 @@ Luna is positioned and oriented per frame in `CelestialSphere::at`:
   +Z sub-Terra) into the standard (Z=pole) frame `M_body2gcrf` expects, so
   Luna shares Terra's body convention. It is a pure rotation (normals need no
   transpose).
-- Luna is a **triaxial ellipsoid** (`src/engine/luna.rs`), the long axis toward
+- Luna is a **triaxial ellipsoid** (its entry in the shared per-body table in
+  `src/engine/planet.rs`; no separate luna module), the long axis toward
   Terra; the deviation from a sphere is ~1-3 km (imperceptible) but modeled.
 - Test: `luna_near_side_faces_terra` asserts the sub-Terra point faces Terra
   within the optical libration (~8 deg), validating the model render-free.
@@ -129,7 +130,7 @@ the same DE440:
   polar on +Y;
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
-  `celestial_sphere` so `planet.rs` stays satkit-free (like `terra`/`luna`).
+  `celestial_sphere` so `planet.rs` stays satkit-free (like `terra`).
 - **f32 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
   errors in range — `Result::Ok` for every planet). `nvec` then converts to f32,
   which at planetary distance quantizes the *absolute* position to ~6 km

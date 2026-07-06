@@ -5,11 +5,10 @@ use wgpu::util::DeviceExt;
 
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::engine::luna;
 use crate::engine::planet;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite;
-use crate::engine::simulation::{CelestialBody, RenderState, TerraSystemEntity};
+use crate::engine::simulation::{CelestialBody, RenderState};
 use crate::engine::terra;
 use mesh::Vertex;
 
@@ -336,21 +335,6 @@ struct PlanetGpu {
     /// group-1 bind group: this body's uniform + texture + the shared
     /// sampler.
     bind_group: wgpu::BindGroup,
-}
-
-/// Triaxial semi-axes (km) of an impostor body, in the shared body-frame
-/// convention (+X 90 deg east, +Y the rotation pole, +Z the prime meridian).
-/// Luna's come from its geometry module (genuinely triaxial - the long axis
-/// faces Terra), the planets' from theirs (oblate: rx = rz).
-fn impostor_radii_km(body: CelestialBody) -> Vec3 {
-    match body {
-        CelestialBody::TerraSystem(TerraSystemEntity::Luna) => Vec3::new(
-            luna::RADIUS_ALONGORBIT_KM as f32,
-            luna::RADIUS_POLAR_KM as f32,
-            luna::RADIUS_SUBTERRA_KM as f32,
-        ),
-        _ => body.radii_km(),
-    }
 }
 
 /// One on-screen satellite marker, as instance data for the marker pipeline.
@@ -837,54 +821,23 @@ impl SceneRenderer {
 
         // The embedded body albedo maps, in IMPOSTOR_BODIES order. The
         // literal include_bytes! paths must match `CelestialBody::texture_file()`
-        // for the planets (the single source of the planet<->file mapping) plus
-        // Luna's map last; build.rs downloads exactly these names into OUT_DIR.
-        let planet_texture_bytes: [(&str, &[u8]); 8] = [
-            (
-                "8k_mercury.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
-            ),
-            (
-                "8k_venus_surface.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_venus_surface.jpg")),
-            ),
-            (
-                "8k_mars.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_mars.jpg")),
-            ),
-            (
-                "8k_jupiter.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_jupiter.jpg")),
-            ),
-            (
-                "8k_saturn.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_saturn.jpg")),
-            ),
-            (
-                "2k_uranus.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/2k_uranus.jpg")),
-            ),
-            (
-                "2k_neptune.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/2k_neptune.jpg")),
-            ),
-            (
-                "8k_moon.jpg",
-                include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
-            ),
+        // (the single source of the body<->file mapping), which is also the
+        // upload label below; build.rs downloads exactly these names into
+        // OUT_DIR.
+        let planet_texture_bytes: [&[u8]; 8] = [
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mercury.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_venus_surface.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_mars.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_jupiter.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_saturn.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/2k_uranus.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/2k_neptune.jpg")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/8k_moon.jpg")),
         ];
-        debug_assert_eq!(planet_texture_bytes.len(), IMPOSTOR_BODIES.len());
-        // Sanity-tie the planet slots to their texture_file mapping (Luna, the
-        // extra last slot, has no planet_data entry to check against).
-        debug_assert!(
-            planet::ALL
-                .iter()
-                .zip(&planet_texture_bytes)
-                .all(|(body, (file, _))| body.texture_file() == *file)
-        );
-        let planet_views: Vec<wgpu::TextureView> = planet_texture_bytes
+        let planet_views: Vec<wgpu::TextureView> = IMPOSTOR_BODIES
             .par_iter()
-            .map(|&(label, bytes)| upload_image(device, queue, label, bytes, true))
+            .zip(planet_texture_bytes.par_iter())
+            .map(|(body, &bytes)| upload_image(device, queue, body.texture_file(), bytes, true))
             .collect();
 
         let planets: Vec<PlanetGpu> = planet_views
@@ -1337,10 +1290,10 @@ impl SceneRenderer {
         // Luna's placement feeds the group-0 uniforms for the two passes that
         // must know about Luna without drawing it (the solar-eclipse shadow in
         // fs_main, the atmosphere's occlusion check); its shadow-caster radius
-        // is implied by the identity (`luna::MEAN_RADIUS_KM`). Luna itself
-        // draws through the shared body impostor below.
+        // comes from the identity (`mean_radius_km`), like any other body.
+        // Luna itself draws through the shared body impostor below.
         let luna_pos_world = celestial
-            .body(CelestialBody::TerraSystem(TerraSystemEntity::Luna))
+            .body(CelestialBody::LUNA)
             .map_or(Vec3::ZERO, |state| state.placement.pos_world);
 
         let uniforms = Uniforms {
@@ -1355,7 +1308,7 @@ impl SceneRenderer {
             luna_pos: (luna_pos_world - origin).to_array(),
             _pad2: 0.0,
             luna_params: [
-                luna::MEAN_RADIUS_KM,
+                CelestialBody::LUNA.mean_radius_km(),
                 terra::MEAN_RADIUS_KM,
                 SOL_ANGULAR_RADIUS_RAD,
                 0.0,
@@ -1390,10 +1343,10 @@ impl SceneRenderer {
             else {
                 continue;
             };
-            // Luna is part of the Terra system: orbiting a planet it is a
-            // sub-pixel speck next to the skipped Terra, so it is skipped with
-            // the rest of the system (same gate as the Terra surface).
-            if body == CelestialBody::LUNA && !self.draw_terra_system {
+            // Terra-system members (today: Luna) draw only with the rest of
+            // the Terra system: orbiting a planet they are a sub-pixel speck
+            // next to the skipped Terra (same gate as the Terra surface).
+            if body.same_system(CelestialBody::TERRA) && !self.draw_terra_system {
                 continue;
             }
             let pos_render = state.placement.pos_world - origin;
@@ -1405,7 +1358,7 @@ impl SceneRenderer {
             // Largest semi-axis: bounds the silhouette from any view direction
             // (sizes the quad; also the orthographic offset scale in the
             // shader, which must agree).
-            let radii = impostor_radii_km(body);
+            let radii = body.radii_km();
             let rmax = radii.max_element();
 
             // Project the center; skip bodies behind the camera (a planet on

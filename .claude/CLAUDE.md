@@ -89,7 +89,7 @@ The crate builds **two binaries over one shared `src/engine/`** (no lib
 crate): `globe-experiment` (`src/main.rs`, the windowed app + scenarios) and
 `headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
 declare `mod engine;` (everything used to run the app: `application`, `camera`,
-`luna`, `planet`, `renderer`, `simulation`, `terra`, `ui`); the trees differ
+`planet`, `renderer`, `simulation`, `terra`, `ui`); the trees differ
 only at the top level — `scenarios` exists only in the main tree, `offscreen`
 only in the headless tree. The headless binary compiles (but never calls) the
 winit-bound `engine::application`; its crate-level `allow(dead_code)` covers

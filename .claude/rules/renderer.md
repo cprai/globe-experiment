@@ -112,7 +112,7 @@ without drawing it - the solar-eclipse shadow on Terra (`fs_main`) and the
 atmosphere's Luna occlusion check (`fs_atmosphere`) - sourced in `prepare`
 from the Luna entry of the derived `CelestialSphere::at(time).bodies`
 (`TerraSystem(Luna)`), the shadow-caster radius from the identity
-(`luna::MEAN_RADIUS_KM`).
+(`CelestialBody::LUNA.mean_radius_km()`).
 
 **Impostor bodies (group 1) — the 7 planets + Luna, single shader impostor,
 no mesh.** Each body has a

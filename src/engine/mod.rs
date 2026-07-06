@@ -12,7 +12,6 @@
 
 pub mod application;
 pub mod camera;
-pub mod luna;
 pub mod planet;
 pub mod renderer;
 pub mod simulation;

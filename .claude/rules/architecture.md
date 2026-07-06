@@ -36,7 +36,7 @@ src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          overlay (build_ui_frame)
 src/engine/mod.rs        the engine module root, declared identically by BOTH
                          bin roots: everything used to run the app (application,
-                         camera, luna, planet, renderer, simulation, terra, ui).
+                         camera, planet, renderer, simulation, terra, ui).
                          The top level keeps only the bin roots, scenarios
                          (main tree), and offscreen (headless tree)
 src/scenarios/mod.rs     scenario registry
@@ -142,16 +142,17 @@ src/engine/ui/spec.rs           the serde-deserialized headless --scene `ui` ove
                          Constructed only by the headless bin's tree (main tree
                          allows dead_code on the module)
 src/engine/terra.rs             WGS84 constants + surface_position / geodetic_normal helpers
-src/engine/luna.rs              lunar constants (triaxial ellipsoid radii, mean radius)
-                         + surface_position / geodetic_normal (body-fixed frame);
-                         the Terra-style single source of truth for Luna geometry
-src/engine/planet.rs            the 7 planets' data, hung off the CelestialBody planet
-                         variants (no separate Planet enum): ALL[CelestialBody;7]
-                         + data-driven table (triaxial radii with rx = rz - the
-                         familiar oblate forms - via radii_km(), IAU rotation
-                         constants, texture file) accessed via impl CelestialBody
+src/engine/planet.rs            every non-Terra body's data (the 7 planets + Luna;
+                         there is NO separate luna module), hung off the
+                         CelestialBody variants: ALL[CelestialBody;7]
+                         + data-driven table (triaxial radii via radii_km() -
+                         rx = rz for a planet's familiar oblate form, Luna
+                         genuinely triaxial; the simple IAU rotation constants,
+                         Some for planets / None for Luna, whose full lunar
+                         series lives in celestial_sphere; texture file)
+                         accessed via impl CelestialBody
                          + surface_position / geodetic_normal free fns. satkit-
-                         free, like terra/luna; references simulation::body for
+                         free, like terra; references simulation::body for
                          the CelestialBody type
 src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into BOTH
                          binaries: SceneRenderer (6 pipelines: Terra surface,
@@ -252,7 +253,7 @@ main (bin globe-experiment) -> engine, scenarios (NO offscreen/headless code)
 headless (bin headless)     -> engine, offscreen (NO scenarios; compiles
                                        # engine::application dead - covered by
                                        # its crate-level allow(dead_code))
-engine      = application, camera, luna, planet, renderer, simulation, terra,
+engine      = application, camera, planet, renderer, simulation, terra,
                                        # ui - declared identically by both roots
 application -> camera, simulation (incl. CelestialSphere, to resolve the camera
                                        # target's center), renderer, ui, terra,
@@ -266,19 +267,19 @@ offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
                                        # simulation (RenderState), (wgpu,
                                        # egui_wgpu, image)  # headless tree only
 ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState + CelestialSphere::at), terra, luna,
+renderer    -> simulation (RenderState + CelestialSphere::at), terra,
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
                                        # winit-free (Gfx moved to application);
                                        # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-simulation  -> terra, luna, planet, ui, (satkit, egui via ui, glam)  # selector
+simulation  -> terra, planet, ui, (satkit, egui via ui, glam)  # selector
                                        # panel builders use ui; NO winit/wgpu/Camera
 terra       -> (glam)
-luna        -> (glam)
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
-                                       # the 7 planets' data off the CelestialBody
-                                       # variants (mutual ref with simulation::body)
+                                       # every non-Terra body's data (7 planets
+                                       # + Luna) off the CelestialBody variants
+                                       # (mutual ref with simulation::body)
 scenarios   -> simulation, ui, application, camera
 ```
 
@@ -432,7 +433,7 @@ submodule path.
   body's moving center; the center is resolved from the `CelestialSphere` on
   demand via `center_world(&sphere)` / `render_origin(&sphere)`, with the
   static geometry accessors delegating through the identity to
-  `terra`/`luna`/`planet`. The scenario→application *camera* channel is the
+  `terra`/`planet`. The scenario→application *camera* channel is the
   `Simulation::camera_target` return value, so the application still owns all
   camera mechanics.)
 - **`renderer` is winit-free (by convention, kept by review).** The windowed

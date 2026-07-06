@@ -39,10 +39,12 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Luna body frame
 
-- `src/engine/luna.rs` is the lunar twin of `terra.rs`: a **triaxial** ellipsoid
+- Luna is an entry in the shared per-body table (`src/engine/planet.rs` -
+  there is no separate luna module): a **triaxial** ellipsoid
   (semi-axes ~1737.4 / 1735.7 / 1734.5 km) in the **same body convention** as
   Terra — +Y = north (rotation pole), selenographic lon0/lat0 (the mean
-  sub-Terra point) -> +Z, +X = 90 deg east. `surface_position` scales the
+  sub-Terra point) -> +Z, +X = 90 deg east. The shared `surface_position`
+  scales the
   sphere direction per axis; `geodetic_normal` is the ellipsoid gradient
   (`x/rx^2, y/ry^2, z/rz^2`), not radial.
 - Luna has NO mesh: it is drawn as a **shader impostor** like the planets -
@@ -55,7 +57,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
 
 ## Planet body frames
 
-- `src/engine/planet.rs` is the multi-body twin of `terra.rs`/`luna.rs`: each of the 7
+- `src/engine/planet.rs` is the multi-body twin of `terra.rs`: each of the 7
   planets is a **triaxial ellipsoid with equal +X/+Z axes** - its familiar
   oblate spheroid (equatorial radius on +X/+Z,
   polar radius on +Y), in the same triaxial formulation as Luna

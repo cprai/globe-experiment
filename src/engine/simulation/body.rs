@@ -15,12 +15,13 @@
 //! speak it directly; [`BodyState`] pairs that identity with a per-frame
 //! [`Placement`] for the render list. Body radii are NOT stored - they come
 //! from the identity via the single-source-of-truth geometry modules
-//! (`terra`/`luna`/`planet`), exactly as before.
+//! (WGS84 in `terra` for Terra; the shared triaxial table in `planet` for
+//! every other body, Luna included), exactly as before.
 
 use glam::{Mat3, Vec3};
 
 use crate::engine::planet;
-use crate::engine::{luna, terra};
+use crate::engine::terra;
 
 /// A member of the Terra system. Luna is named here rather than as a
 /// top-level body so the hierarchy reads as "the Terra system contains the
@@ -83,9 +84,11 @@ impl CelestialBody {
     pub fn mean_radius_km(self) -> f32 {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => terra::MEAN_RADIUS_KM,
-            CelestialBody::TerraSystem(TerraSystemEntity::Luna) => luna::MEAN_RADIUS_KM,
-            // Planets: IAU volumetric-ish mean radius over the triaxial axes
-            // (rx = rz for a planet, so this is the classic (2a + c) / 3).
+            // Every other body: the axis-mean radius over the triaxial
+            // semi-axes (rx = rz for a planet, so this is the classic
+            // (2a + c) / 3; for Luna it also sets the eclipse caster/occlusion
+            // sphere, where the ~1.5 km triaxial spread is far below the
+            // penumbra softness).
             _ => self.radii_km().element_sum() / 3.0,
         }
     }
@@ -109,15 +112,13 @@ impl CelestialBody {
     }
 
     /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
-    /// body frame (km). Delegates to the single-source-of-truth geometry
-    /// modules (`terra`/`luna`) or the triaxial planet geometry in `planet`.
+    /// body frame (km). Delegates to the single-source-of-truth geometry:
+    /// WGS84 in `terra` for Terra, the shared triaxial table in `planet` for
+    /// every other body.
     pub fn surface_position(self, latitude: f32, longitude: f32) -> Vec3 {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => {
                 terra::surface_position(latitude, longitude)
-            }
-            CelestialBody::TerraSystem(TerraSystemEntity::Luna) => {
-                luna::surface_position(latitude, longitude)
             }
             _ => planet::surface_position(self, latitude, longitude),
         }
@@ -129,9 +130,6 @@ impl CelestialBody {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => {
                 terra::geodetic_normal(latitude, longitude)
-            }
-            CelestialBody::TerraSystem(TerraSystemEntity::Luna) => {
-                luna::geodetic_normal(latitude, longitude)
             }
             _ => planet::geodetic_normal(self, latitude, longitude),
         }

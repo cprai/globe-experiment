@@ -203,7 +203,7 @@ pub struct CelestialSphere {
     /// orientation), then the **seven planets** in `planet::ALL` order
     /// (true geocentric DE440 positions + IAU orientation). Luna's
     /// placement also drives the analytic eclipse shadows; its radius comes
-    /// from the identity (`luna::MEAN_RADIUS_KM`), not stored here. A
+    /// from the identity (`mean_radius_km`), not stored here. A
     /// scenario takes the subset it draws - the Terra system
     /// (Terra + Luna), or all of them.
     pub bodies: Vec<BodyState>,
@@ -342,7 +342,7 @@ impl CelestialSphere {
 
 /// The satkit ephemeris body for one of our planets. Kept here (not in
 /// `planet`) so that module stays free of any satkit dependency, exactly like
-/// `terra`/`luna`. Called only on the planet variants (from the `planet::ALL`
+/// `terra`. Called only on the planet variants (from the `planet::ALL`
 /// loop); the Terra/Luna are positioned separately.
 fn planet_body(planet: CelestialBody) -> SolarSystem {
     match planet {

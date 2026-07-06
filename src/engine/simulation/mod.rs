@@ -16,7 +16,7 @@ pub mod satellite;
 use glam::Vec3;
 use satkit::Instant;
 
-pub use body::{CelestialBody, TerraSystemEntity};
+pub use body::CelestialBody;
 // Only the main binary's scenarios name this re-export; the headless bin tree
 // compiles this module with no `Clock` consumer, so the import would warn
 // there (its crate-level allow covers `dead_code`, not `unused_imports`).
