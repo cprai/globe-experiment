@@ -1005,13 +1005,23 @@ fn fs_planet(in: PlanetOutput) -> PlanetFragment {
         // Parallel rays along eye->body. The perpendicular origin offset comes
         // straight from the quad corner (km = offset * rmax), so the huge
         // eye-relative vector is never formed - the orthographic precision win.
+        // The offset basis must map the quad's screen axes to the SAME world
+        // directions the real projection does, or the disc renders rotated or
+        // mirrored (terminator on the wrong side, snapping at the
+        // perspective/orthographic switch). So take the camera's world right
+        // from view_proj (row 0 = a positive multiple of the view right) and
+        // re-orthogonalize against this body's ray direction; right x dir then
+        // gives screen up. Never nearly parallel: a drawn body is within the
+        // field of view of the camera forward axis, and right is perpendicular
+        // to that axis.
         let dir = normalize(planet.pos - uniforms.camera_pos);
-        var up_ref = vec3<f32>(0.0, 1.0, 0.0);
-        if abs(dir.y) > 0.999 {
-            up_ref = vec3<f32>(1.0, 0.0, 0.0);
-        }
-        let right = normalize(cross(up_ref, dir));
-        let up = cross(dir, right);
+        let cam_right = vec3<f32>(
+            uniforms.view_proj[0].x,
+            uniforms.view_proj[1].x,
+            uniforms.view_proj[2].x,
+        );
+        let right = normalize(cam_right - dir * dot(cam_right, dir));
+        let up = cross(right, dir);
         o_rel = (in.offset.x * rmax) * right + (in.offset.y * rmax) * up;
         d_world = dir;
     }

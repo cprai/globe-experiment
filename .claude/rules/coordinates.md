@@ -72,6 +72,33 @@ So P is consistent with every WGS84 helper and with every satkit result.
   iau_body_to_gcrf * P^T` (same `P^T` un-permute as Luna; see `simulation.md`);
   the impostor applies it as `planet.rot` to the traced surface point + normal.
 
+## View & screen handedness (camera basis, screen-aligned quads)
+
+Everything is **right-handed**: the world frame above, glam's cross products,
+and the view space built by `Mat4::look_at_rh` (camera looks down **-Z** in
+view space). With `forward = normalize(look_at - eye)` and `up` the camera up:
+
+- **screen-right (world direction that maps to NDC +x) = `cross(forward, up)`**
+- **screen-up = `cross(right, forward)`**
+
+`cross(up, forward)` is the **negative** of screen-right — a left-handed basis
+that renders any screen-space-constructed image **horizontally mirrored**.
+This exact bug shipped in `fs_planet`'s orthographic branch (fixed 2026-07-06:
+every distant impostor body drew flipped, terminator on the wrong side, and
+the perspective<->orthographic switch visibly snapped). When building a basis
+that maps quad/screen offsets to world offsets, always use the order above.
+
+- **NDC**: +x right, +y up (wgpu), depth **reversed-Z** (near = 1, far = 0;
+  see `shader.md`).
+- The reversed-Z flip touches only rows 2/3 of `view_proj`, and
+  `perspective_rh` scales rows 0/1 by positive factors, so **row 0 xyz is a
+  positive multiple of the camera's world right, row 1 of its up**. This is
+  how a shader can recover the true camera basis with no extra uniform —
+  `fs_planet`'s orthographic branch takes row 0, re-orthogonalizes it against
+  the body's ray direction, and takes `up = cross(right, dir)`. Do not
+  substitute a world-Y-derived reference basis: it rolls the image whenever
+  the camera up is not north-aligned.
+
 ## Equirectangular UV mapping
 
 - Forward (Terra mesh): `u = (lon+180)/360`, `v = 0` at north -> `v = 1` at
