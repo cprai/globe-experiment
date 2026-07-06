@@ -18,11 +18,14 @@ use crate::engine::simulation::{CameraTarget, CelestialBody};
 /// eye pinned to Luna (look axis is always `-c2w * radial`, toward Luna
 /// center) while it tracks Luna's moving ephemeris position.
 ///
-/// World space is in kilometers with the Terra center at the origin; the
-/// surface anchor and the distance/near/pan limits are scaled by the *target's*
-/// mean radius (see [`CameraTarget::mean_radius_km`]), so the interaction feel
-/// is the same fraction of whichever body is orbited. For a Terra target the
-/// center is the origin, so the rig is identical to the original Terra-only
+/// World space is in kilometers; the `CelestialSphere` frame is heliocentric
+/// (Sol at the origin), but the rig is always built in the target-local render
+/// frame (`world_frame_relative` subtracts `render_origin`), so its absolute
+/// origin choice is invisible here. The surface anchor and the distance/near/
+/// pan limits are scaled by the *target's* mean radius (see
+/// [`CameraTarget::mean_radius_km`]), so the interaction feel is the same
+/// fraction of whichever body is orbited. For a Terra target the render origin
+/// is Terra's center, so the rig is identical to the original Terra-only
 /// camera.
 #[derive(Clone, Copy)]
 pub struct Camera {
@@ -196,15 +199,20 @@ impl Camera {
             self.distance = self.default_distance();
             self.tilt = 0.0;
 
-            // Aim at the body: for an off-origin target (Luna or a planet)
-            // look toward its center from the camera, the same mapping
-            // `looking_toward` uses with a world look direction of +center. An
-            // Terra target keeps the existing longitude/latitude (any inertial
-            // direction frames Terra at the origin).
-            let center = self.target.center_world(celestial);
-            if center != Vec3::ZERO {
+            // Aim at the body: for an off-Terra target (Luna or a planet) look
+            // toward it along the GEOCENTRIC (Terra-relative) direction, the
+            // same mapping `looking_toward` uses. A Terra target keeps the
+            // existing longitude/latitude (any inertial direction frames Terra
+            // at its own center). The direction is Terra-relative, not the raw
+            // heliocentric `center_world`, so it is frame-agnostic: Terra ->
+            // zero (skip), Luna/planets -> the Terra->body direction.
+            let terra = celestial.center_world(CelestialBody::TERRA);
+            // Geocentric-scale difference, so f32 is precise; cast down before
+            // the f32 star-frame rotation.
+            let aim = (self.target.center_world(celestial) - terra).as_vec3();
+            if aim != Vec3::ZERO {
                 let star_rot_inv = celestial_to_world.transpose();
-                let radial = -(star_rot_inv * center.normalize_or_zero());
+                let radial = -(star_rot_inv * aim.normalize_or_zero());
                 self.longitude = radial.x.atan2(radial.z).to_degrees();
                 self.latitude = radial.y.clamp(-1.0, 1.0).asin().to_degrees();
             }
@@ -229,7 +237,11 @@ impl Camera {
         celestial_to_world: Mat3,
     ) -> (Vec3, Vec3, Vec3) {
         let (eye, target, up) = self.frame();
-        let shift = self.target.center_world(celestial) - self.target.render_origin(celestial);
+        // Geocentric-scale difference (zero for the orbited body), so f32 is
+        // precise; the f64 subtraction cancels the ~1.5e8 km heliocentric Sol
+        // offset before the cast down.
+        let shift =
+            (self.target.center_world(celestial) - self.target.render_origin(celestial)).as_vec3();
         (
             shift + celestial_to_world * eye,
             shift + celestial_to_world * target,

@@ -3,10 +3,17 @@
 //! simulation time, from satkit's JPL Development Ephemerides (DE440) and
 //! Earth-orientation transforms.
 //!
-//! Geocentric frame: every body's position is computed in the Earth-fixed
-//! (ECEF) frame. Positions come from the ephemeris (GCRF, inertial); Terra's
-//! orientation (the GCRF<->ITRF rotation) maps them into the Earth-fixed
-//! frame and rotates the star backdrop. We use the full
+//! Frame origin: HELIOCENTRIC. Positions come from the ephemeris (GCRF,
+//! inertial, geocentric) and Terra's orientation (the GCRF<->ITRF rotation)
+//! maps them into the Earth-fixed axes and rotates the star backdrop; then
+//! every body position is shifted by `- sol_geo` so Sol sits at the origin
+//! (Terra lands at `-sol_geo`). The AXES stay Earth-fixed - this is an
+//! origin-only translation, so orientations and the rendered output are
+//! unchanged (the renderer/camera consume every position as `X -
+//! render_origin`, and `render_origin` tracks Terra's heliocentric center, so
+//! the Terra-local render frame is identical). Satellites and WGS84 surface
+//! positions remain GEOCENTRIC (Terra-relative); the renderer bridges them
+//! into the render frame with Terra's center. We use the full
 //! IERS-2010 transforms (sub-arcsec, matching the satellite path), which read
 //! the embedded EOP table plus the embedded IERS nutation/CIO tables (seeded
 //! in `init_satkit`) - no runtime data file is needed.
@@ -26,7 +33,7 @@
 //! shader-facing matrix), leaving `star_rot_inv` as the equatorial frame the
 //! inertial camera rig is built from.
 
-use glam::{Mat3, Vec3};
+use glam::{DVec3, Mat3, Vec3};
 use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf, qitrf2gcrf};
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
@@ -173,13 +180,18 @@ pub(crate) fn init_satkit_for_tests() {
 /// Sol direction and star-map orientation for one instant, in the renderer's
 /// world frame.
 pub struct CelestialSphere {
-    /// Sol position in the Earth-fixed (ECEF) world frame, km (true
-    /// geocentric). The renderer uploads it (shifted into the render frame) as
-    /// `sol_pos`, and every lit pass derives its Sol direction from it -
-    /// `normalize(sol_pos - surface)` for surfaces, `normalize(sol_pos)` for
-    /// the backdrop disc - so a far planet is lit by the Sol direction *at the
-    /// planet*, which differs from Terra's.
-    pub sol_pos_world: Vec3,
+    /// Sol position in the world frame, km. The frame is now HELIOCENTRIC (Sol
+    /// at the origin, Earth-fixed axes), so this is exactly `DVec3::ZERO`. It
+    /// is kept as a field because the renderer uploads it (shifted into the
+    /// render frame) as `sol_pos` via `sol_pos - render_origin` and every
+    /// lit pass derives its Sol direction from that - `normalize(sol_pos -
+    /// surface)` for surfaces, `normalize(sol_pos)` for the backdrop disc -
+    /// so a far planet is lit by the Sol direction *at the planet*, which
+    /// differs from Terra's. For a Terra-relative Sol direction, subtract
+    /// Terra's center: `sol_pos_world - center_world(TERRA)`. f64 to match
+    /// the body positions (heliocentric magnitudes overflow f32; see
+    /// [`crate::engine::simulation::body::Placement::pos_world`]).
+    pub sol_pos_world: DVec3,
     /// Rotation taking world (ECEF) view directions into the *equatorial*
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
     /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
@@ -192,11 +204,12 @@ pub struct CelestialSphere {
     /// re-orientation does not move existing scenarios' camera framing.
     pub star_tex_rot_inv: Mat3,
     /// Every renderable body's world-frame placement this frame, as a flat list
-    /// (identity + center + orientation): the **Terra** (at the origin,
-    /// identity orientation - the world frame *is* Earth-fixed), the
-    /// **Luna** (true scale/distance ~384,400 km out, IAU lunar
-    /// orientation), then the **seven planets** in `planet::ALL` order
-    /// (true geocentric DE440 positions + IAU orientation). Luna's
+    /// (identity + center + orientation), all HELIOCENTRIC (Sol at the origin,
+    /// Earth-fixed axes): **Terra** (at `-sol_geo`, identity orientation - its
+    /// body frame *is* the Earth-fixed axes), **Luna** (true scale/distance
+    /// ~384,400 km from Terra, IAU lunar orientation), then the **seven
+    /// planets** in `planet::ALL` order (true DE440 positions + IAU
+    /// orientation). Luna's
     /// placement also drives the analytic eclipse shadows; its radius comes
     /// from the identity (`mean_radius_km`), not stored here. A
     /// scenario takes the subset it draws - the Terra system
@@ -217,12 +230,13 @@ impl CelestialSphere {
             .expect("Luna present in the celestial sphere")
     }
 
-    /// The world-frame center (km) of one body this frame; `ZERO` for Terra
-    /// (the origin). Used by the body selectors to fill a [`CameraTarget`].
-    pub fn center_world(&self, body: CelestialBody) -> Vec3 {
+    /// The world-frame center (km) of one body this frame. Heliocentric, so
+    /// Terra sits at `-sol_geo` (not the origin). f64, like the underlying
+    /// placement. Used by the body selectors and by `render_origin`.
+    pub fn center_world(&self, body: CelestialBody) -> DVec3 {
         self.body(body)
             .map(|state| state.placement.pos_world)
-            .unwrap_or(Vec3::ZERO)
+            .unwrap_or(DVec3::ZERO)
     }
 }
 
@@ -238,13 +252,17 @@ impl CelestialSphere {
         );
 
         // Sol position relative to Terra in GCRF (inertial), meters; rotate to
-        // ITRF (Earth-fixed) and permute into the world frame.
+        // ITRF (Earth-fixed) and permute into the world frame. This geocentric
+        // Sol position is the HELIOCENTRIC ORIGIN: every body's `pos_world`
+        // below is expressed relative to Sol by subtracting `sol_geo` (so Sol
+        // itself lands at the origin and `sol_pos_world` is ZERO), while the
+        // axes stay Earth-fixed. The subtraction is a pure origin translation -
+        // orientations and the render output are unaffected because the
+        // renderer/camera consume every position as `X - render_origin`, and
+        // `render_origin` tracks Terra's (now heliocentric) center.
         let sol_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sol ephemeris lookup");
         let sol_itrf = qgcrf2itrf(time) * sol_gcrf;
-        // `sol_pos_world` is the position every render pass lights from; each
-        // body derives its own local Sol direction from it (there is no
-        // world-origin `sol_dir` - that would be a Terra-relative quantity).
-        let sol_pos_world = p * (nvec(sol_itrf) / 1000.0);
+        let sol_geo = p * (nvec(sol_itrf) / 1000.0);
 
         // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
         // back to Y-up, so the equirectangular lookup's pole tracks the
@@ -286,28 +304,34 @@ impl CelestialSphere {
         );
         let luna_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
 
-        // The render list, in a fixed order: Terra (at the origin, identity
-        // orientation - the world frame is Earth-fixed), then Luna, then the
-        // seven planets. Luna and planet placements reuse the exact
-        // expressions above/below; only the container differs from the
-        // pre-refactor fields, so the rendered output is unchanged.
+        // The render list, in a fixed order: Terra, then Luna, then the seven
+        // planets. Positions are HELIOCENTRIC (relative to Sol, i.e. minus
+        // `sol_geo`) in Earth-fixed axes, so Terra - the world origin - sits at
+        // `-sol_geo`, not at zero. The shift is computed in f64
+        // (`geocentric_f32.as_dvec3() - sol_geo.as_dvec3()`): the geocentric
+        // value stays bit-for-bit what the pre-heliocentric build stored, and
+        // widening to f64 before subtracting Sol is what lets the renderer
+        // recover it exactly (`pos_world - render_origin` cancels the ~1.5e8 km
+        // Sol offset with no f32 cancellation). Orientations (rot) are
+        // frame-invariant and unchanged.
         let mut bodies = Vec::with_capacity(2 + planet::ALL.len());
         bodies.push(BodyState {
             body: CelestialBody::TERRA,
             placement: Placement {
-                pos_world: Vec3::ZERO,
+                pos_world: -sol_geo.as_dvec3(),
                 rot: Mat3::IDENTITY,
             },
         });
         bodies.push(BodyState {
             body: CelestialBody::LUNA,
             placement: Placement {
-                pos_world: luna_pos_world,
+                pos_world: luna_pos_world.as_dvec3() - sol_geo.as_dvec3(),
                 rot: luna_rot,
             },
         });
 
-        // The planets: true geocentric position from the same DE440 ephemeris,
+        // The planets: true geocentric position from the same DE440 ephemeris
+        // (then shifted to heliocentric by `- sol_geo`, like Terra/Luna above),
         // and a body->world rotation built like Luna's but from the IAU
         // planet rotation (axial tilt + spin, no libration series). Same `P^T`
         // un-permute of the mesh's project-convention axes into the standard
@@ -315,7 +339,8 @@ impl CelestialSphere {
         for &planet in &planet::ALL {
             let body_gcrf =
                 geocentric_pos(planet_body(planet), time).expect("planet ephemeris lookup");
-            let pos_world = p * (nvec(q_gcrf2itrf * body_gcrf) / 1000.0);
+            let pos_geo = p * (nvec(q_gcrf2itrf * body_gcrf) / 1000.0);
+            let pos_world = pos_geo.as_dvec3() - sol_geo.as_dvec3();
             let rot = p * r_gcrf2itrf * iau_body_to_gcrf(planet.rotation(), time) * p.transpose();
             bodies.push(BodyState {
                 body: planet,
@@ -324,7 +349,8 @@ impl CelestialSphere {
         }
 
         Self {
-            sol_pos_world,
+            // Sol is the frame origin, so its own position is exactly zero.
+            sol_pos_world: DVec3::ZERO,
             star_rot_inv,
             star_tex_rot_inv,
             bodies,
@@ -548,8 +574,10 @@ mod tests {
         // Outward normal at the sub-Terra point in world space.
         let luna = sphere.luna().placement;
         let sub_terra = luna.rot * Vec3::Z;
-        // Direction from Luna back toward Terra (Terra is at the origin).
-        let toward_terra = (-luna.pos_world).normalize();
+        // Direction from Luna back toward Terra. The frame is heliocentric, so
+        // Terra is at `center_world(TERRA)` (not the origin), not zero.
+        let terra = sphere.center_world(CelestialBody::TERRA);
+        let toward_terra = (terra - luna.pos_world).as_vec3().normalize();
 
         let angle = sub_terra
             .dot(toward_terra)

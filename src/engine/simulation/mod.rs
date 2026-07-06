@@ -13,7 +13,7 @@ pub mod celestial_sphere;
 pub mod clock;
 pub mod satellite;
 
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 use satkit::Instant;
 
 pub use body::CelestialBody;
@@ -50,13 +50,14 @@ const COORDINATE_RADIUS_KM: f32 = planet::TERRA_MEAN_RADIUS_KM;
 /// [`render_origin`]: CameraTarget::render_origin
 #[derive(Clone, Copy, Debug)]
 pub enum CameraTarget {
-    /// Orbit a celestial body, named by identity. Its world center (`ZERO` for
-    /// Terra, the live ephemeris center for Luna/the planets) is resolved from
-    /// the `CelestialSphere` on demand. Because a planet's center can be
-    /// billions of km out - far past f32 precision in world-km - a planet
-    /// target renders with a floating origin (the scene is drawn relative to
-    /// `render_origin`; see [`CameraTarget::render_origin`]). Terra/Luna keep
-    /// the origin at Terra.
+    /// Orbit a celestial body, named by identity. Its world center (the live
+    /// heliocentric ephemeris center - `-sol_geo` for Terra, its own position
+    /// for Luna/the planets) is resolved from the `CelestialSphere` on demand.
+    /// Because those centers are ~1.5e8 km (Terra/Luna) to billions of km out -
+    /// far past f32 precision in world-km - a target renders with a floating
+    /// origin (the scene is drawn relative to `render_origin`; see
+    /// [`CameraTarget::render_origin`]). Terra/Luna keep the origin at Terra's
+    /// center, so their render frame stays Terra-local (unchanged output).
     Body(CelestialBody),
     /// Orbit a fixed world-frame point (km). The camera treats it like a planet
     /// target: its own floating origin sits at the point, with synthetic body
@@ -87,30 +88,39 @@ impl CameraTarget {
     }
 
     /// The orbit center in the world frame (km), resolved from the celestial
-    /// sphere this frame. Terra is the origin; a coordinate target is its own
-    /// center.
-    pub fn center_world(&self, celestial: &CelestialSphere) -> Vec3 {
+    /// sphere this frame. Heliocentric (Terra is at `-sol_geo`, not the
+    /// origin); a coordinate target is its own center. f64, like the
+    /// placement it comes from.
+    pub fn center_world(&self, celestial: &CelestialSphere) -> DVec3 {
         match self {
             CameraTarget::Body(body) => celestial.center_world(*body),
-            CameraTarget::Coordinate(point) => *point,
+            CameraTarget::Coordinate(point) => point.as_dvec3(),
         }
     }
 
     /// The world-space origin the scene is rendered relative to for this target
-    /// (the "floating origin"). Terra and Luna are close enough to the Terra
-    /// origin that f32 world-km is precise, so they keep the origin at Terra
-    /// (`ZERO`) - which makes their render output bit-identical to the
-    /// pre-planet renderer. A planet (or a free coordinate) sits too far out
-    /// for that, so the origin shifts to its own center, keeping the orbited
-    /// subject near the numerical origin where f32 precision is restored.
-    pub fn render_origin(&self, celestial: &CelestialSphere) -> Vec3 {
+    /// (the "floating origin"). Terra and Luna are close enough to Terra's
+    /// center that f32 world-km is precise, so they keep the origin at Terra's
+    /// center - which makes their render output bit-identical to the pre-planet
+    /// renderer. A planet (or a free coordinate) sits too far out for that, so
+    /// the origin shifts to its own center, keeping the orbited subject near
+    /// the numerical origin where f32 precision is restored.
+    ///
+    /// Terra's center is looked up from the sphere (not hard-coded `ZERO`) so
+    /// this is frame-agnostic: the `CelestialSphere` is heliocentric, so
+    /// Terra's center is `-sol_geo`, and using it here is exactly what
+    /// keeps the Terra render frame (and every `X - origin` subtraction
+    /// downstream) unchanged.
+    pub fn render_origin(&self, celestial: &CelestialSphere) -> DVec3 {
         match self {
-            // Terra/Luna: origin stays at Terra.
-            CameraTarget::Body(CelestialBody::TerraSystem(_)) => Vec3::ZERO,
+            // Terra/Luna: origin stays at Terra's center.
+            CameraTarget::Body(CelestialBody::TerraSystem(_)) => {
+                celestial.center_world(CelestialBody::TERRA)
+            }
             // Any planet: too far out for the Terra origin, so the scene is
             // drawn relative to its own center.
             CameraTarget::Body(body) => celestial.center_world(*body),
-            CameraTarget::Coordinate(point) => *point,
+            CameraTarget::Coordinate(point) => point.as_dvec3(),
         }
     }
 

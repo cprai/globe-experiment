@@ -175,7 +175,11 @@ pub fn run() {
     // eye on its Terra-facing side, so Terra is behind the camera and never
     // occludes the disc - no limb nudge needed.
     let celestial = &sim.celestial_sphere;
-    let center = celestial.luna().placement.pos_world;
+    // The Terra->Luna direction. The celestial sphere is heliocentric, so this
+    // is Luna's center minus Terra's center, not Luna's raw position.
+    let center = (celestial.luna().placement.pos_world
+        - celestial.center_world(CelestialBody::TERRA))
+    .as_vec3();
     let camera = Camera::looking_toward(
         CameraTarget::Body(CelestialBody::LUNA),
         celestial.star_rot_inv,

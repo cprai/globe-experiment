@@ -53,7 +53,7 @@ rotation (correct near side + libration), lit by Sol, with **mutual
 Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
 Luna"). The **seven planets** (`src/engine/planet.rs`) are triaxial ellipsoids
 (equal equatorial axes — their familiar oblate forms) at true
-geocentric position/scale (DE440), oriented by the IAU planet rotation and
+position/scale (DE440, heliocentric-framed), oriented by the IAU planet rotation and
 sun-lit with simple Lambert. **EVERY body — Terra, the seven planets, and
 Luna — is drawn as a single shader impostor** (no mesh anywhere in the
 engine): the CPU projects the body center to screen space in `prepare` and the
@@ -77,7 +77,12 @@ millions-to-billions of km
 out (past f32 precision), **all rendering is done in a camera-target-local
 "render frame"**: positions are expressed relative to the camera target's
 center, so
-the orbited body sits at a bit-exact zero and far planets do not jitter. The
+the orbited body sits at a bit-exact zero and far planets do not jitter. (The
+`CelestialSphere` itself is **heliocentric** — Sol at the origin, Terra at
+`-sol_geo` — and stores body centers as **f64** `DVec3`; the renderer subtracts
+`render_origin`, Terra's center for a Terra/Luna target, in f64 and casts to f32,
+so the Terra render frame is bit-identical to the old geocentric one. f64 is
+required: an f32 heliocentric-minus-origin cancels catastrophically.) The
 renderer derives every body's position/orientation from the frame's **time**
 (`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
 camera target, and satellite markers. There is no Earth-fixed origin or

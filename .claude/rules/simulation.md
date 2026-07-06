@@ -12,12 +12,20 @@ paths:
 | **TEME** | True Equator Mean Equinox; SGP4's native quasi-inertial frame | SGP4 output (satellite) |
 | **GCRF/ICRF** | Geocentric Celestial Reference Frame; inertial; Z = celestial pole, X ~ vernal equinox | JPL ephemeris output; star (celestial) frame |
 | **ITRF** | Standard Earth-fixed ECEF: X = equator+prime-meridian, Y = 90°E, Z = north pole | Output of GCRF/TEME->Terra rotations |
-| **world** | Project frame: Y = north, Z = prime meridian, X = 90°E; km; origin = Terra center | Renderer (impostors, camera, uniforms) |
+| **world (heliocentric)** | Project axes (Y = north, Z = prime meridian, X = 90°E); km; **origin = Sol** (`CelestialSphere` body positions, **f64** `DVec3`) | Celestial-sphere body centers + Sol |
+| **world (geocentric)** | Same axes; **origin = Terra center** (Terra sits at `-sol_geo` in the heliocentric frame) | Satellites, WGS84 surface positions, and the render frame for a Terra target |
 | **celestial** | GCRF re-permuted to Y-up (equatorial); pole = celestial pole | Camera inertial rig (`star_rot_inv`) |
 | **galactic** | celestial rotated by the static galactic->equatorial offset, so the galactic-drawn texture lines up with the equatorial equirect lookup | Star map sampling (`star_tex_rot_inv`) |
 
-The **world** frame is ITRF with axes permuted: `world (X,Y,Z) = ITRF (Y,Z,X)`.
-See `P` in `coordinates.md`.
+Both **world** frames are ITRF with axes permuted: `world (X,Y,Z) = ITRF
+(Y,Z,X)`; they differ only by the origin (Sol vs Terra), a pure translation.
+See `P` in `coordinates.md`. The `CelestialSphere` is heliocentric (positions
+are `geocentric_f32.as_dvec3() - sol_geo.as_dvec3()`, so **f64** - heliocentric
+magnitudes overflow f32 when the renderer subtracts the render origin to recover
+a Terra-local offset); the renderer/camera then subtract
+`render_origin` (Terra's center for a Terra/Luna target) in f64 and cast to f32,
+landing back in the Terra-centered render frame with the pre-heliocentric output
+**bit-identical** (verified AE=0 across Terra/Luna/eclipse/planet A/B renders).
 
 ## init_satkit — must seed all four (do not drop any seed)
 
@@ -65,10 +73,13 @@ IERS-2010** GCRF<->ITRF transforms (`qgcrf2itrf`/`qitrf2gcrf`), not the
 
 Star map and Sol are **ephemeris-driven** — do not replace with a Sol-attached
 rotation:
-- `sol_pos_world`: `geocentric_pos(SolarSystem::Sun, time)` -> GCRF -> ITRF
-  (full `qgcrf2itrf`) -> world via P, /1000 for km. A true position (not a
-  Terra-relative direction) so every body lights from its own local Sol
-  direction; the solar-eclipse scenario normalizes it for day-side framing.
+- `sol_pos_world`: Sol is the frame origin, so this is **`DVec3::ZERO`**. (Its
+  geocentric position `sol_geo = geocentric_pos(SolarSystem::Sun, time)` -> GCRF
+  -> ITRF (full `qgcrf2itrf`) -> world via P, /1000 for km is the origin-shift
+  every body position subtracts.) The renderer still uploads it as
+  `sol_pos = sol_pos_world - render_origin` so every body lights from its own
+  local Sol direction; the solar-eclipse scenario frames the day side from the
+  Terra-relative Sol direction `sol_pos_world - center_world(TERRA)`.
 - `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> equatorial celestial). This
   is the frame the camera rig is built from (see `camera.md`). As time
   advances, the celestial sphere rotates at the sidereal rate consistent with
@@ -89,9 +100,10 @@ IERS nutation/CIO tables. This matches the satellite's full `qteme2itrf`.
 
 Luna is positioned and oriented per frame in `CelestialSphere::at`:
 - **Position**: `geocentric_pos(SolarSystem::Moon, time)` (GCRF, meters) ->
-  ITRF via the same `qgcrf2itrf` as Sol -> world via `P`, /1000 for km.
-  Rendered at true scale/distance (~384,400 km), so it shows real angular size
-  and Terra must occlude it via the depth buffer (`renderer.md`).
+  ITRF via the same `qgcrf2itrf` as Sol -> world via `P`, /1000 for km, then
+  **heliocentric** (`- sol_geo` in f64). Rendered at true scale/distance
+  (~384,400 km from Terra), so it shows real angular size and Terra must occlude
+  it via the depth buffer (`renderer.md`).
 - **Orientation** (`lunar_body_to_gcrf`): the full **IAU/IAG 2009/2015 lunar
   rotation** series — pole `alpha0(T)`/`delta0(T)` + prime-meridian `W(d)` with
   the 13 libration arguments `E1..E13`. This gives the correct near side facing
@@ -119,8 +131,9 @@ assembles the seven planets into the `bodies: Vec<BodyState>` render list
 (after Terra + Luna entries, in `planet::ALL` order), each per frame from
 the same DE440:
 - **Position**: `geocentric_pos(SolarSystem::X, time)` -> ITRF via the same
-  `qgcrf2itrf` -> world via `P`, /1000 for km. True geocentric, so the outer
-  planets are billions of km out (hence the **floating origin**, see `camera.md`).
+  `qgcrf2itrf` -> world via `P`, /1000 for km, then **heliocentric** (`- sol_geo`
+  in f64, stored as `DVec3`). The outer planets are billions of km out (hence
+  the **floating origin**, see `camera.md`).
 - **Orientation** (`iau_body_to_gcrf`, the planet twin of `lunar_body_to_gcrf`
   without the libration series, sharing the `body_basis` helper): pole
   `alpha0(T)`/`delta0(T)` + prime meridian `W = W0 + W_dot*d` from the IAU
@@ -133,15 +146,18 @@ the same DE440:
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
   `celestial_sphere` so `planet.rs` stays satkit-free.
-- **f32 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
-  errors in range — `Result::Ok` for every planet). `nvec` then converts to f32,
-  which at planetary distance quantizes the *absolute* position to ~6 km
-  (Mercury) up to ~93 km (Saturn); Neptune's f32 ulp is ~539 km. This does NOT
-  cause jitter: the renderer draws everything **relative to the camera target**
-  (see `camera.md`/`renderer.md`), and the orbited body's relative position is a
-  bit-exact zero because `render_origin` reuses the *same* f32 value. Far bodies
-  are sub-pixel specks, so their position error is invisible. No f64 positions
-  are needed.
+- **f64 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
+  errors in range — `Result::Ok` for every planet). The per-body geocentric
+  position is computed in f32 exactly as before (`nvec` -> `P` -> /1000), then
+  widened to f64 and shifted to heliocentric (`- sol_geo.as_dvec3()`); the
+  stored `pos_world` is a **`DVec3`**. The f64 is load-bearing: the heliocentric
+  magnitude is ~1.5e8 km (Terra/Luna) to billions (planets), and the renderer
+  recovers a Terra-local offset via `pos_world - render_origin`. In f32 that
+  subtraction cancels catastrophically (Luna would shift ~16 km, ~12k px); in
+  f64 it is exact, then cast to f32 only after landing in the small render
+  frame - so the orbited body's relative position is still a **bit-exact zero**
+  and Terra/Luna output is bit-identical. Far bodies are sub-pixel specks
+  regardless.
 
 ## Satellite pipeline (satellite.rs)
 

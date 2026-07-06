@@ -10,7 +10,16 @@ paths:
 
 - **WGS84 ellipsoid at origin; world space in km; +Y = north pole; lon0/lat0
   -> +Z; +X = 90 deg E.** This is ITRF/ECEF with axes permuted so north is
-  +Y.
+  +Y. This is the **geocentric** world frame (Terra at the origin), used by the
+  WGS84 surface helpers and the satellite pipeline.
+- **The `CelestialSphere` uses the same axes but a HELIOCENTRIC origin** (Sol at
+  the origin; Terra sits at `-sol_geo`). Its body centers are **f64** (`DVec3`)
+  because the heliocentric magnitudes overflow f32 when the renderer recovers a
+  Terra-local offset. The two frames differ only by the translation
+  `center_world(TERRA)`; the renderer/camera subtract `render_origin` (Terra's
+  center for a Terra/Luna target) in f64 and cast to f32, so the Terra render
+  frame is bit-identical to the pre-heliocentric geocentric frame. See
+  `simulation.md` (Reference frames).
 - Constants and helpers in `src/engine/planet.rs` (Terra is a row of the
   shared per-body table; there is no terra module) — single source of truth;
   the impostor renderer, the camera, and the satellite pipeline all call it.

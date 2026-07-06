@@ -81,8 +81,10 @@ position before upload, so the GPU never sees an absolute world position (the
 far-planet f32-jitter fix). There is **no `render_origin` uniform and no
 `sol_dir`** — the shader is purely local and derives every Sol direction from
 `sol_pos`. The orbited body's position is a bit-exact zero (`pos - origin`), so
-it draws in local coordinates. For Terra/Luna (`render_origin == 0`) the render
-frame is the absolute frame. `prepare` also rebuilds `view_proj` (and its
+it draws in local coordinates. For Terra/Luna (`render_origin` = Terra's
+heliocentric center) the render frame is the Terra-centered (old geocentric)
+frame - the `CelestialSphere` is heliocentric, but subtracting Terra's center
+undoes that, keeping the Terra render frame bit-identical. `prepare` also rebuilds `view_proj` (and its
 inverse) from the camera rig via `view_proj_reversed_z`.
 
 ## Uniforms struct layout (must match Rust `Uniforms` and WGSL `Uniforms`)

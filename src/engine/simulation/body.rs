@@ -18,7 +18,7 @@
 //! shared triaxial table in `planet`, which covers every body - Terra's row
 //! is the WGS84 ellipsoid).
 
-use glam::{Mat3, Vec3};
+use glam::{DVec3, Mat3, Vec3};
 
 use crate::engine::planet;
 
@@ -115,8 +115,15 @@ impl CelestialBody {
 /// per-frame data the renderer needs.
 #[derive(Clone, Copy, Debug)]
 pub struct Placement {
-    /// Body center in the absolute world (Earth-fixed ECEF) frame, km.
-    pub pos_world: Vec3,
+    /// Body center in the absolute world frame (heliocentric origin,
+    /// Earth-fixed axes), km. **f64** because heliocentric magnitudes
+    /// (~1.5e8 km for Terra/Luna, billions for the outer planets) overflow
+    /// f32's precision when the renderer subtracts the render origin to
+    /// recover a small Terra-local offset (catastrophic cancellation): the
+    /// subtraction is done in f64 and cast to f32 only after it lands in
+    /// the small render frame. See `celestial_sphere` (frame note) and
+    /// `CameraTarget::render_origin`.
+    pub pos_world: DVec3,
     /// Rotation taking a vector in the body-fixed frame into the world frame.
     /// Pure rotation, so it carries normals too.
     pub rot: Mat3,

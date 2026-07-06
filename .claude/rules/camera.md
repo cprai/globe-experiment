@@ -49,7 +49,7 @@ A planet sits millions-to-billions of km from Terra — past f32 precision in
 world-km, where forming an absolute position jitters/facets the body and the
 camera swims. So **everything the GPU sees is in the render frame: positions
 relative to the camera target's center** (`CameraTarget::render_origin()` — the
-planet's center, or `Vec3::ZERO` for Terra/Luna). The GPU never handles an
+planet's center, or Terra's center for Terra/Luna). The GPU never handles an
 absolute world position.
 
 - The renderer computes the origin as
@@ -72,9 +72,11 @@ absolute world position.
   `center == render_origin`, so the rig is just `c2w*offset`. The renderer then
   builds `view_proj` from the rig's eye + look-at point + up
   (`renderer::view_proj_reversed_z`).
-- For Terra/Luna (`render_origin == 0`) the render frame **is** the absolute
-  frame, so the camera geometry is **bit-identical** to the pre-planet renderer
-  (verified: AE=0 headless A/B for Terra/Luna/eclipse). Passing the look-at
+- For Terra/Luna (`render_origin` = Terra's center) the render frame is the
+  Terra-centered frame (the old geocentric world frame - the `CelestialSphere`
+  is now heliocentric, but subtracting Terra's center undoes that), so the
+  camera geometry is **bit-identical** to the pre-planet renderer (verified:
+  AE=0 headless A/B for Terra/Luna/eclipse). Passing the look-at
   *point* (not a re-normalized forward vector) is what preserves the bit
   identity. (Lighting differs by < 1 LSB: every pass derives the Sol direction
   from Sol *position* rather than a precomputed `sol_dir`.)

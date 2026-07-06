@@ -1,12 +1,12 @@
 use rayon::prelude::*;
 use wgpu::util::DeviceExt;
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{DVec3, Mat4, Vec3, Vec4};
 
 use crate::engine::planet;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite;
-use crate::engine::simulation::{CelestialBody, RenderState};
+use crate::engine::simulation::{CameraTarget, CelestialBody, RenderState};
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
@@ -1244,6 +1244,14 @@ impl SceneRenderer {
         // origin (its absolute center IS the origin, a bit-exact zero), which is
         // what keeps far planets from jittering.
         let origin = render.camera_target.render_origin(&celestial);
+        // Terra's heliocentric center, used to bridge the Terra-frame
+        // (geocentric ECEF) satellite overlays into the render frame: a
+        // Terra-relative point `q` is at `terra_center + q` in the heliocentric
+        // world frame, so its render-frame coordinate is `terra_center + q -
+        // origin`. Satellite overlays only draw for a Terra-system target,
+        // where `origin == terra_center`, so this reduces to `q`; today
+        // (`terra_center == origin == 0`) it is a bit-exact no-op.
+        let terra_center = celestial.center_world(CelestialBody::TERRA);
 
         // Rebuild the view-projection from the camera rig (position + direction).
         // The near plane scales with the orbited body's radius; the eye is
@@ -1284,7 +1292,7 @@ impl SceneRenderer {
         // a group-0 uniform.)
         let luna_pos_world = celestial
             .body(CelestialBody::LUNA)
-            .map_or(Vec3::ZERO, |state| state.placement.pos_world);
+            .map_or(DVec3::ZERO, |state| state.placement.pos_world);
 
         // The atmosphere gate + quad. The pass draws when a body with an
         // atmosphere sits exactly at the render origin (the camera target is
@@ -1327,21 +1335,26 @@ impl SceneRenderer {
             }),
             marker: [width, height, MARKER_RADIUS_PX, 0.0],
             luna_occluder: {
-                let p = luna_pos_world - origin;
+                let p = (luna_pos_world - origin).as_vec3();
                 [p.x, p.y, p.z, CelestialBody::LUNA.mean_radius_km()]
             },
-            sol_pos: (celestial.sol_pos_world - origin).to_array(),
+            sol_pos: (celestial.sol_pos_world - origin).as_vec3().to_array(),
             _pad4: 0.0,
             atmosphere_quad,
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         // The satellite overlays (orbit paths + markers) render only when
-        // orbiting Terra or Luna, i.e. the render origin is at Terra: their
-        // world positions are Terra-frame. (The bodies themselves all draw as
-        // impostors from every vantage; the atmosphere has its own gate
+        // orbiting Terra or Luna, whose render origin is Terra's center: their
+        // world positions are Terra-frame. Keyed off the camera target's
+        // identity rather than `origin == ZERO`, because in the heliocentric
+        // frame Terra's center is no longer zero. (The bodies themselves all
+        // draw as impostors from every vantage; the atmosphere has its own gate
         // above.)
-        self.draw_satellite_overlays = origin == Vec3::ZERO;
+        self.draw_satellite_overlays = matches!(
+            render.camera_target,
+            CameraTarget::Body(CelestialBody::TerraSystem(_))
+        );
 
         // One impostor uniform per body visible this frame (the planets +
         // Luna). The CPU projects each body's center to screen space (NDC
@@ -1362,7 +1375,7 @@ impl SceneRenderer {
             else {
                 continue;
             };
-            let pos_render = state.placement.pos_world - origin;
+            let pos_render = (state.placement.pos_world - origin).as_vec3();
             let rel = pos_render - render.camera_pos;
             let dist = rel.length();
             if dist <= f32::EPSILON {
@@ -1433,7 +1446,7 @@ impl SceneRenderer {
                 if !body.same_system(other.body) {
                     continue;
                 }
-                let occ_pos = other.placement.pos_world - origin;
+                let occ_pos = (other.placement.pos_world - origin).as_vec3();
                 occluders[occluder_count] =
                     [occ_pos.x, occ_pos.y, occ_pos.z, other.body.mean_radius_km()];
                 occluder_count += 1;
@@ -1442,7 +1455,11 @@ impl SceneRenderer {
             // Sol's angular radius from this body sets its penumbra softness -
             // per body, so an outer system's smaller Sol sharpens its shadows
             // automatically.
-            let sol_dist = (celestial.sol_pos_world - state.placement.pos_world).length();
+            // Distance is done in f64 (heliocentric magnitudes) then cast down;
+            // the ~1.5e8 km value is far coarser than f32's ulp there, but it
+            // only feeds an asin for penumbra softness, so the cast is exact
+            // enough (sub-pixel).
+            let sol_dist = (celestial.sol_pos_world - state.placement.pos_world).length() as f32;
             let sol_angular_radius = (SOL_RADIUS_KM / sol_dist.max(SOL_RADIUS_KM)).asin();
 
             let rot_cols = state.placement.rot.to_cols_array_2d();
@@ -1474,7 +1491,10 @@ impl SceneRenderer {
             .markers
             .iter()
             .map(|m| MarkerInstance {
-                position: m.position_km.to_array(),
+                // Terra-frame ECEF -> render frame (see `terra_center` above).
+                position: (terra_center + m.position_km.as_dvec3() - origin)
+                    .as_vec3()
+                    .to_array(),
                 visible: if m.visible { 1.0 } else { 0.0 },
             })
             .collect();
@@ -1492,9 +1512,10 @@ impl SceneRenderer {
         // ahead and turn the sample
         // points into per-segment instances with a fading tail. Recomputed
         // every frame - a paused app renders zero frames, so idle stays free.
-        // Gated like the markers (Terra-system only); the origin subtraction
-        // is a bit-exact no-op there (origin == 0) but keeps the render-frame
-        // convention that the GPU never sees absolute positions.
+        // Gated like the markers (Terra-system only); the `terra_center -
+        // origin` bridge is a bit-exact no-op there (origin == terra_center)
+        // but keeps the render-frame convention that the GPU never sees
+        // absolute positions.
         self.path_count = 0;
         if self.draw_satellite_overlays && !render.markers.is_empty() {
             // Circumscribe the orbit instead of inscribing it: a chord between
@@ -1513,7 +1534,8 @@ impl SceneRenderer {
                     PATH_SEGMENTS,
                 )
                 .into_iter()
-                .map(|p| p * lift - origin)
+                // Terra-frame ECEF -> render frame (see `terra_center` above).
+                .map(|p| ((p * lift).as_dvec3() + terra_center - origin).as_vec3())
                 .collect();
                 // A manually-controlled satellite burned to escape (e >= 1)
                 // has no period, so its path comes back empty - no line.

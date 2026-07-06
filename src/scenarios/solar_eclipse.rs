@@ -12,7 +12,7 @@ use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::Camera;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::{
-    self, CameraTarget, Clock, RenderState, Simulation, TargetSelector,
+    self, CameraTarget, CelestialBody, Clock, RenderState, Simulation, TargetSelector,
 };
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
@@ -173,14 +173,16 @@ pub fn run() {
     let sim = SolarEclipseSimulation::new();
 
     // Frame the sunlit face (and Luna's shadow spot near the subsolar point)
-    // by looking toward Sol, from the ephemeris at the start instant. Terra
-    // sits at the world origin, so the Terra->Sol direction is just the
-    // normalized Sol position. The view stays interactive afterward.
+    // by looking toward Sol, from the ephemeris at the start instant. The
+    // celestial sphere is heliocentric, so the Terra->Sol direction is Sol's
+    // position minus Terra's center (not just the Sol position). The view stays
+    // interactive afterward.
     let celestial = &sim.celestial_sphere;
+    let terra_to_sol = celestial.sol_pos_world - celestial.center_world(CelestialBody::TERRA);
     let camera = Camera::looking_toward(
         CameraTarget::terra(),
         celestial.star_rot_inv,
-        -celestial.sol_pos_world.normalize(),
+        -terra_to_sol.as_vec3().normalize(),
         VIEW_DISTANCE_KM,
     );
 
