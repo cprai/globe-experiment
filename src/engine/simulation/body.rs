@@ -18,7 +18,7 @@
 //! shared triaxial table in `planet`, which covers every body - Terra's row
 //! is the WGS84 ellipsoid).
 
-use glam::{DVec3, Mat3, Vec3};
+use glam::{DMat3, DVec3};
 
 use crate::engine::planet;
 
@@ -98,13 +98,13 @@ impl CelestialBody {
     /// Look-at anchor on the body surface at `(lat, lon)` (radians), in the
     /// body frame (km). Delegates to the single-source-of-truth geometry
     /// table in `planet` (Terra's row is the WGS84 ellipsoid).
-    pub fn surface_position(self, latitude: f32, longitude: f32) -> Vec3 {
+    pub fn surface_position(self, latitude: f64, longitude: f64) -> DVec3 {
         planet::surface_position(self, latitude, longitude)
     }
 
     /// Outward unit normal of the body surface at `(lat, lon)` (radians), in
     /// the body frame - the local "up" the eye offsets along.
-    pub fn geodetic_normal(self, latitude: f32, longitude: f32) -> Vec3 {
+    pub fn geodetic_normal(self, latitude: f64, longitude: f64) -> DVec3 {
         planet::geodetic_normal(self, latitude, longitude)
     }
 }
@@ -125,8 +125,9 @@ pub struct Placement {
     /// `CameraTarget::render_origin`.
     pub pos_world: DVec3,
     /// Rotation taking a vector in the body-fixed frame into the world frame.
-    /// Pure rotation, so it carries normals too.
-    pub rot: Mat3,
+    /// Pure rotation, so it carries normals too. f64 like the position; cast
+    /// to f32 only when packed into the impostor uniform.
+    pub rot: DMat3,
 }
 
 /// One renderable body for one frame: its identity plus its placement. Element

@@ -134,9 +134,10 @@ impl Gfx {
     }
 
     /// The surface size in pixels (width, height). The caller uses it to build
-    /// the camera's projection aspect and to scale input.
-    pub fn viewport(&self) -> (f32, f32) {
-        (self.config.width as f32, self.config.height as f32)
+    /// the camera's projection aspect and to scale input. f64 to match the
+    /// camera/renderer math (a pixel count is exact in either float width).
+    pub fn viewport(&self) -> (f64, f64) {
+        (f64::from(self.config.width), f64::from(self.config.height))
     }
 
     /// Renders one frame: applies egui's texture-set deltas, writes the

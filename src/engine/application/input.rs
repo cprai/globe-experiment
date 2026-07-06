@@ -6,74 +6,74 @@ use winit::window::CursorIcon;
 use crate::engine::camera::Camera;
 
 /// Minimum release speed, in px/s, for a drag to keep coasting.
-const FLICK_SPEED: f32 = 50.0;
+const FLICK_SPEED: f64 = 50.0;
 /// Coasting stops once it decays below this speed, in px/s.
-const STOP_SPEED: f32 = 15.0;
+const STOP_SPEED: f64 = 15.0;
 /// Coasting velocity halves every this many seconds.
-const HALF_LIFE: f32 = 0.3;
+const HALF_LIFE: f64 = 0.3;
 /// A release later than this after the last cursor move is a hold, not a
 /// flick, in seconds.
-const FLICK_TIMEOUT: f32 = 0.1;
+const FLICK_TIMEOUT: f64 = 0.1;
 /// Bounds on the zoom glide's half-life, in seconds. The glide adapts to
 /// the wheel-event cadence: its half-life tracks the smoothed gap between
 /// recent events, so dense events (active trackpad scrolling) zoom
 /// near-instantly while sparse ones (a trackpad's synthesized momentum
 /// tail, single mouse-wheel notches) are interpolated across the gap that
 /// would otherwise show as a step.
-const ZOOM_HALF_LIFE_MIN: f32 = 0.01;
-const ZOOM_HALF_LIFE_MAX: f32 = 0.1;
+const ZOOM_HALF_LIFE_MIN: f64 = 0.01;
+const ZOOM_HALF_LIFE_MAX: f64 = 0.1;
 /// Cap on a wheel-event gap sample, in seconds; longer pauses just mean
 /// "fresh scroll", not an extremely slow cadence.
-const WHEEL_GAP_CAP: f32 = 0.25;
+const WHEEL_GAP_CAP: f64 = 0.25;
 /// The zoom coast velocity halves every this many seconds once wheel
 /// events stop feeding it.
-const ZOOM_COAST_HALF_LIFE: f32 = 0.15;
+const ZOOM_COAST_HALF_LIFE: f64 = 0.15;
 /// Coasting stops below this zoom rate, in natural-log distance per
 /// second (0.1 ~ 10% of the camera distance per second).
-const ZOOM_STOP_RATE: f32 = 0.1;
+const ZOOM_STOP_RATE: f64 = 0.1;
 
 /// Translates window mouse events into camera motion: left-drag pan with
 /// flick inertia, right-drag tilt, and wheel zoom.
 #[derive(Default)]
 pub struct Controller {
-    cursor: Option<(f32, f32)>,
+    cursor: Option<(f64, f64)>,
     drag: Option<Drag>,
     inertia: Option<Inertia>,
     zoom: Option<Zoom>,
     last_wheel: Option<Instant>,
     /// Smoothed gap between recent wheel events, in seconds.
-    wheel_gap: f32,
+    wheel_gap: f64,
 }
 
 struct Drag {
     button: MouseButton,
-    last: (f32, f32),
+    last: (f64, f64),
     /// Smoothed cursor velocity, in px/s.
-    velocity: (f32, f32),
+    velocity: (f64, f64),
     moved_at: Instant,
 }
 
 struct Inertia {
     /// Remaining pan velocity, in px/s.
-    velocity: (f32, f32),
+    velocity: (f64, f64),
     tick: Instant,
 }
 
 struct Zoom {
     /// Camera distance the glide is heading toward, in kilometers.
-    target: f32,
+    target: f64,
     /// The glide's current half-life, in seconds; follows the wheel
     /// cadence at the time of the last event.
-    half_life: f32,
+    half_life: f64,
     /// Smoothed rate at which wheel events move the target, in
     /// natural-log distance per second. Keeps the target advancing
     /// between and after events, so the motion never pauses while the
     /// device (or its momentum tail) is between deliveries.
-    velocity: f32,
+    velocity: f64,
     /// Log-distance the target has been advanced by `velocity` since the
     /// last wheel event. The next event repays it, so bridged motion is
     /// never counted twice.
-    bridged: f32,
+    bridged: f64,
     tick: Instant,
 }
 
@@ -84,7 +84,7 @@ impl Controller {
         &mut self,
         event: &WindowEvent,
         camera: &mut Camera,
-        viewport_height: f32,
+        viewport_height: f64,
     ) -> bool {
         match event {
             WindowEvent::MouseInput {
@@ -129,7 +129,7 @@ impl Controller {
                     let speed = vx.hypot(vy);
                     let held = Instant::now()
                         .saturating_duration_since(drag.moved_at)
-                        .as_secs_f32();
+                        .as_secs_f64();
 
                     if speed > FLICK_SPEED && held < FLICK_TIMEOUT {
                         self.inertia = Some(Inertia {
@@ -144,7 +144,7 @@ impl Controller {
                 false
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let position = (position.x as f32, position.y as f32);
+                let position = (position.x, position.y);
                 self.cursor = Some(position);
 
                 let Some(drag) = self.drag.as_mut() else {
@@ -158,7 +158,7 @@ impl Controller {
                 let now = Instant::now();
                 let dt = now
                     .saturating_duration_since(drag.moved_at)
-                    .as_secs_f32()
+                    .as_secs_f64()
                     .max(1e-4);
                 drag.moved_at = now;
 
@@ -185,14 +185,14 @@ impl Controller {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let ticks = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(position) => position.y as f32 / 60.0,
+                    MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+                    MouseScrollDelta::PixelDelta(position) => position.y / 60.0,
                 };
 
                 let now = Instant::now();
                 let gap = self.last_wheel.map_or(WHEEL_GAP_CAP, |last| {
                     now.saturating_duration_since(last)
-                        .as_secs_f32()
+                        .as_secs_f64()
                         .min(WHEEL_GAP_CAP)
                 });
                 self.last_wheel = Some(now);
@@ -207,7 +207,7 @@ impl Controller {
                 // toward it each frame, paced to the event cadence. An
                 // in-flight glide keeps its clock: resetting it per event
                 // would stall the glide between dense events.
-                let delta = ticks * 0.9f32.ln();
+                let delta = ticks * 0.9f64.ln();
 
                 match self.zoom.as_mut() {
                     Some(zoom) => {
@@ -265,7 +265,7 @@ impl Controller {
     /// Advances one frame of camera animation: flick coasting and the
     /// zoom glide. Call from the redraw handler; returns true while
     /// another frame is needed.
-    pub fn tick(&mut self, camera: &mut Camera, viewport_height: f32) -> bool {
+    pub fn tick(&mut self, camera: &mut Camera, viewport_height: f64) -> bool {
         let coasting = self.tick_coast(camera, viewport_height);
         let zooming = self.tick_zoom(camera);
 
@@ -273,7 +273,7 @@ impl Controller {
     }
 
     /// Integrates one frame of flick coasting.
-    fn tick_coast(&mut self, camera: &mut Camera, viewport_height: f32) -> bool {
+    fn tick_coast(&mut self, camera: &mut Camera, viewport_height: f64) -> bool {
         let Some(inertia) = self.inertia.as_mut() else {
             return false;
         };
@@ -281,7 +281,7 @@ impl Controller {
         let now = Instant::now();
         let dt = now
             .saturating_duration_since(inertia.tick)
-            .as_secs_f32()
+            .as_secs_f64()
             .min(0.1);
         inertia.tick = now;
 
@@ -289,7 +289,7 @@ impl Controller {
         let (vx, vy) = inertia.velocity;
         camera.pan(-vx * dt * scale, vy * dt * scale);
 
-        let decay = 0.5f32.powf(dt / HALF_LIFE);
+        let decay = 0.5f64.powf(dt / HALF_LIFE);
         inertia.velocity = (vx * decay, vy * decay);
 
         if vx.hypot(vy) * decay < STOP_SPEED {
@@ -308,7 +308,7 @@ impl Controller {
         let now = Instant::now();
         let dt = now
             .saturating_duration_since(zoom.tick)
-            .as_secs_f32()
+            .as_secs_f64()
             .min(0.1);
         zoom.tick = now;
 
@@ -318,7 +318,7 @@ impl Controller {
         // momentum-tail event - without it the glide drains its target
         // and visibly stalls there. The advance is logged in `bridged`
         // and repaid by the next event, so nothing is counted twice.
-        zoom.velocity *= 0.5f32.powf(dt / ZOOM_COAST_HALF_LIFE);
+        zoom.velocity *= 0.5f64.powf(dt / ZOOM_COAST_HALF_LIFE);
         if zoom.velocity.abs() > ZOOM_STOP_RATE {
             let step = zoom.velocity * dt;
             zoom.target = camera.clamp_distance(zoom.target * step.exp());
@@ -329,7 +329,7 @@ impl Controller {
 
         // Exponential approach in log space - zoom is multiplicative, so
         // this keeps the glide's perceived speed uniform at any altitude.
-        let blend = 1.0 - 0.5f32.powf(dt / zoom.half_life);
+        let blend = 1.0 - 0.5f64.powf(dt / zoom.half_life);
         let ratio = zoom.target / camera.distance;
         camera.distance *= ratio.powf(blend);
 

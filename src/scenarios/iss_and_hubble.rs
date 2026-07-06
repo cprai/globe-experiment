@@ -3,7 +3,7 @@
 //! original default scene, now expressed as a named scenario (CLI:
 //! `globe-experiment scenario iss_and_hubble`).
 
-use glam::Vec3;
+use glam::DVec3;
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
@@ -95,7 +95,7 @@ impl Simulation for IssAndHubbleSimulation {
         &self.celestial_sphere
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         let now = self.clock.now();
 
         let mut markers = Vec::with_capacity(self.satellites.len());
@@ -120,9 +120,9 @@ impl Simulation for IssAndHubbleSimulation {
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),
-                latitude_deg: state.latitude_deg,
-                longitude_deg: state.longitude_deg,
-                altitude_km: state.altitude_km,
+                latitude_deg: state.latitude_deg as f32,
+                longitude_deg: state.longitude_deg as f32,
+                altitude_km: state.altitude_km as f32,
             });
         }
 

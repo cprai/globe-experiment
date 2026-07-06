@@ -5,7 +5,7 @@
 //! list; its clock starts directly from the eclipse datetime rather than a TLE
 //! epoch, and it draws no markers.
 
-use glam::Vec3;
+use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
@@ -21,7 +21,7 @@ use crate::engine::ui::{
 
 /// Eye distance for the day-side framing (km): Terra fills most of the
 /// frame with Luna's umbral shadow spot centered near the subsolar point.
-const VIEW_DISTANCE_KM: f32 = 22000.0;
+const VIEW_DISTANCE_KM: f64 = 22000.0;
 
 /// Empty solar-eclipse simulation: just the clock + celestial sphere; no
 /// satellites. Carries a [`TargetSelector`] so the view can be switched
@@ -79,7 +79,7 @@ impl Simulation for SolarEclipseSimulation {
         self.selector.resolve()
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         // No satellites: an empty marker list. The renderer derives the Terra
         // system from the frame's time; the selector's target (Terra or Luna)
         // keeps the origin at Terra either way.
@@ -182,7 +182,7 @@ pub fn run() {
     let camera = Camera::looking_toward(
         CameraTarget::terra(),
         celestial.star_rot_inv,
-        -terra_to_sol.as_vec3().normalize(),
+        -terra_to_sol.normalize(),
         VIEW_DISTANCE_KM,
     );
 

@@ -86,9 +86,10 @@ paths:
   `render_origin` uniform and no `world - render_origin` in any vertex shader.
   The orbited body's `pos` is a bit-exact zero, so it is drawn in pure local
   coordinates (the f32-jitter fix). For Terra/Luna (`render_origin` = Terra's
-  center) the render frame is the Terra-centered (old geocentric) frame, so
-  geometry is bit-identical (the `CelestialSphere` is heliocentric, but the
-  subtraction cancels Terra's center - done in f64 to dodge f32 cancellation).
+  center) the render frame is the Terra-centered (old geocentric) frame (the
+  `CelestialSphere` is heliocentric, but the subtraction cancels Terra's
+  center - done in f64, like all of `prepare`'s math, to dodge f32
+  cancellation; f32 appears only in the uniform layouts themselves).
   There is
   **no `sol_dir`**: every lit pass
   derives its Sol direction from `sol_pos` (`normalize(sol_pos - world_pos)` for

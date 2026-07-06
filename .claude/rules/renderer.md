@@ -84,7 +84,9 @@ far-planet f32-jitter fix). There is **no `render_origin` uniform and no
 it draws in local coordinates. For Terra/Luna (`render_origin` = Terra's
 heliocentric center) the render frame is the Terra-centered (old geocentric)
 frame - the `CelestialSphere` is heliocentric, but subtracting Terra's center
-undoes that, keeping the Terra render frame bit-identical. `prepare` also rebuilds `view_proj` (and its
+undoes that, keeping the Terra render frame Terra-local. All of `prepare`'s
+math runs in **f64** (`DMat4` view/projection included); values are cast to
+f32 only when packed into the f32 uniform/instance layouts below. `prepare` also rebuilds `view_proj` (and its
 inverse) from the camera rig via `view_proj_reversed_z`.
 
 ## Uniforms struct layout (must match Rust `Uniforms` and WGSL `Uniforms`)

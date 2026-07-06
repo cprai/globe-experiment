@@ -61,9 +61,9 @@ absolute world position.
   `render_origin` is **not** a shader uniform — the shader is purely local.
 - The orbited body's center IS the origin, so its uploaded position is a
   **bit-exact zero** (`pos - origin == 0`): it is drawn in pure local
-  coordinates, which is what kills the jitter. (Even the f64->f32 ephemeris
-  rounding cancels here, since the renderer re-derives the same `CelestialSphere`
-  the camera target's center came from, the *same* f32 value.)
+  coordinates, which is what kills the jitter. (The renderer re-derives the
+  same `CelestialSphere` the camera target's center came from - the *same* f64
+  value - so the subtraction cancels exactly.)
 - `Camera::world_rig(celestial, c2w)` builds the rig via `world_frame_relative`:
   `(center - render_origin) + c2w*offset`, where `center` /`render_origin` are
   resolved from the passed `&CelestialSphere` — it never forms the absolute eye
@@ -74,17 +74,17 @@ absolute world position.
   (`renderer::view_proj_reversed_z`).
 - For Terra/Luna (`render_origin` = Terra's center) the render frame is the
   Terra-centered frame (the old geocentric world frame - the `CelestialSphere`
-  is now heliocentric, but subtracting Terra's center undoes that), so the
-  camera geometry is **bit-identical** to the pre-planet renderer (verified:
-  AE=0 headless A/B for Terra/Luna/eclipse). Passing the look-at
-  *point* (not a re-normalized forward vector) is what preserves the bit
-  identity. (Lighting differs by < 1 LSB: every pass derives the Sol direction
-  from Sol *position* rather than a precomputed `sol_dir`.)
+  is now heliocentric, but subtracting Terra's center undoes that). The whole
+  rig is **f64** (`DVec3`/`DQuat`; the `Camera` fields themselves are f64) and
+  the renderer builds view/projection in `DMat4`, casting to f32 only at
+  uniform upload. Keep passing the look-at *point* (not a re-normalized
+  forward vector) so the renderer's `look_at_rh` reproduces exactly the view
+  the camera implied.
 
 ## Camera target (orbit Terra, Luna, a planet, or a free point)
 
 The camera orbits a **`CameraTarget`** (an enum `Body(CelestialBody) |
-Coordinate(Vec3)`, defined in `simulation`, a sanctioned `simulation`->
+Coordinate(DVec3)`, defined in `simulation`, a sanctioned `simulation`->
 `application` data edge like `RenderState`). It is a pure **identity**: it does
 NOT store the body's center. The position-dependent accessors take the sphere
 (`center_world(&celestial)`, `render_origin(&celestial)`) and look the center up

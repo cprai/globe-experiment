@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use wgpu::util::DeviceExt;
 
-use glam::{DVec3, Mat4, Vec3, Vec4};
+use glam::{DMat4, DVec3, DVec4};
 
 use crate::engine::planet;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
@@ -36,11 +36,11 @@ pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 /// Top-of-atmosphere shell radius (km), the CPU twin of `ATMOSPHERE_TOP_KM`
 /// in scene.wgsl (and `build.rs mod atmosphere`) - all three must stay in
 /// sync. `prepare` sizes the atmosphere quad's silhouette from it.
-const ATMOSPHERE_TOP_KM: f32 = 6460.0;
+const ATMOSPHERE_TOP_KM: f64 = 6460.0;
 
 /// Sol's physical radius (km): the per-body Sol angular radius uploaded with
 /// each impostor is `asin(SOL_RADIUS_KM / distance-to-Sol)`.
-const SOL_RADIUS_KM: f32 = 695_700.0;
+const SOL_RADIUS_KM: f64 = 695_700.0;
 
 /// Eclipse-occluder slots in each impostor's uniform (unused slots have
 /// radius 0). One suffices for the Terra system (Terra shadowing Luna); sized
@@ -76,12 +76,12 @@ const IMPOSTOR_BODIES: [CelestialBody; 9] = {
 /// comfortably below the orbited body's size (even at max zoom-out a planet
 /// subtends tens of thousands of arcsec), so whichever planet is orbited always
 /// gets the perspective trace. ~0.5 deg.
-const PLANET_PERSPECTIVE_MIN_ARCSEC: f32 = 1800.0;
+const PLANET_PERSPECTIVE_MIN_ARCSEC: f64 = 1800.0;
 
 /// The impostor quad spans the silhouette's angular radius times this margin,
 /// so the full disc (corners included) lands inside the quad; edge fragments
 /// that miss the ellipse discard. Mirrors the old billboard's margin.
-const PLANET_QUAD_MARGIN: f32 = 1.3;
+const PLANET_QUAD_MARGIN: f64 = 1.3;
 
 /// Smallest reversed-Z depth (just in front of the far plane) a planet impostor
 /// is placed at. A non-orbited planet is often billions of km out - far beyond
@@ -93,21 +93,21 @@ const PLANET_QUAD_MARGIN: f32 = 1.3;
 /// true solar-system distance subtends well under a pixel - like the old
 /// billboards - so this is mostly a correctness safety net, not a visible
 /// speck.)
-const PLANET_MIN_DEPTH: f32 = 1e-6;
+const PLANET_MIN_DEPTH: f64 = 1e-6;
 
 /// Vertical field of view, degrees. The projection authority for the scene; the
 /// camera's pan math scales by the same value (`renderer::FOV_Y_DEG`).
-pub const FOV_Y_DEG: f32 = 45.0;
+pub const FOV_Y_DEG: f64 = 45.0;
 
 /// Near clip plane as a fraction of the orbit target's mean radius. The
 /// renderer scales it by `RenderState::camera_target.mean_radius_km()` when it
 /// rebuilds the projection, so the near plane tracks whichever body is orbited.
-pub const NEAR_PLANE_RADII: f32 = 0.01;
+pub const NEAR_PLANE_RADII: f64 = 0.01;
 
 /// Far clip plane, km - a fixed value, NOT a radius multiple. It must enclose
 /// Luna at apogee (~406,700 km) plus the camera distance, and - orbiting Luna -
 /// Terra ~384,400 km away; the star shell (222,985 km) sits well inside it.
-pub const FAR_PLANE_KM: f32 = 500_000.0;
+pub const FAR_PLANE_KM: f64 = 500_000.0;
 
 /// Builds the reversed-Z view-projection matrix for an eye at `eye` looking at
 /// `look_at` with up `up` (all in the floating-origin render frame). Reversed-Z
@@ -116,25 +116,26 @@ pub const FAR_PLANE_KM: f32 = 500_000.0;
 /// near/far span so Terra still occludes the far-off Luna. Lives here, not on
 /// the camera, because the renderer now rebuilds the projection from
 /// `RenderState`'s camera rig (the camera only emits eye / look-at / up).
-/// Taking the look-at point directly (not a forward vector) keeps this
-/// bit-identical to the camera's previous `view_proj`.
+/// Taking the look-at point directly (not a forward vector) keeps the view
+/// exactly the one the camera implied (a re-normalized forward would drift).
+/// Built entirely in f64; callers cast to f32 only at uniform upload.
 pub fn view_proj_reversed_z(
-    eye: Vec3,
-    look_at: Vec3,
-    up: Vec3,
-    aspect: f32,
-    near: f32,
-    far: f32,
-) -> Mat4 {
-    let view = Mat4::look_at_rh(eye, look_at, up);
-    let proj = Mat4::perspective_rh(FOV_Y_DEG.to_radians(), aspect.max(0.01), near, far);
+    eye: DVec3,
+    look_at: DVec3,
+    up: DVec3,
+    aspect: f64,
+    near: f64,
+    far: f64,
+) -> DMat4 {
+    let view = DMat4::look_at_rh(eye, look_at, up);
+    let proj = DMat4::perspective_rh(FOV_Y_DEG.to_radians(), aspect.max(0.01), near, far);
 
     // `z_clip' = w_clip - z_clip`: negate the proj Z row and add the W row.
-    let reverse_z = Mat4::from_cols(
-        Vec4::new(1.0, 0.0, 0.0, 0.0),
-        Vec4::new(0.0, 1.0, 0.0, 0.0),
-        Vec4::new(0.0, 0.0, -1.0, 0.0),
-        Vec4::new(0.0, 0.0, 1.0, 1.0),
+    let reverse_z = DMat4::from_cols(
+        DVec4::new(1.0, 0.0, 0.0, 0.0),
+        DVec4::new(0.0, 1.0, 0.0, 0.0),
+        DVec4::new(0.0, 0.0, -1.0, 0.0),
+        DVec4::new(0.0, 0.0, 1.0, 1.0),
     );
 
     reverse_z * proj * view
@@ -1225,7 +1226,7 @@ impl SceneRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         render: &RenderState,
-        viewport: (f32, f32),
+        viewport: (f64, f64),
     ) {
         let (width, height) = viewport;
         let aspect = width / height.max(1.0);
@@ -1309,7 +1310,7 @@ impl SceneRenderer {
             .bodies
             .iter()
             .any(|s| s.body.has_atmosphere() && s.placement.pos_world == origin);
-        let mut atmosphere_quad = [0.0, 0.0, 1.0, 1.0];
+        let mut atmosphere_quad = [0.0f64, 0.0, 1.0, 1.0];
         if self.draw_atmosphere {
             // The shell center is the render origin, so the camera's distance
             // to it is just |camera_pos|.
@@ -1317,7 +1318,7 @@ impl SceneRenderer {
             if dist > ATMOSPHERE_TOP_KM * 1.05 {
                 let ang_radius = (ATMOSPHERE_TOP_KM / dist).min(0.999).asin();
                 let arcsec = 2.0 * ang_radius.to_degrees() * 3600.0;
-                let clip = view_proj * Vec3::ZERO.extend(1.0);
+                let clip = view_proj * DVec3::ZERO.extend(1.0);
                 if arcsec < PLANET_PERSPECTIVE_MIN_ARCSEC && clip.w > 0.0 {
                     let half_y = (ang_radius * PLANET_QUAD_MARGIN).tan() / tan_half_fov;
                     atmosphere_quad = [clip.x / clip.w, clip.y / clip.w, half_y / aspect, half_y];
@@ -1325,22 +1326,29 @@ impl SceneRenderer {
             }
         }
 
+        // All the math above ran in f64; the casts here are the GPU boundary
+        // (the uniform layout is f32).
         let uniforms = Uniforms {
-            view_proj: view_proj.to_cols_array(),
-            inv_view_proj: inv_view_proj.to_cols_array(),
-            camera_pos: render.camera_pos.to_array(),
+            view_proj: view_proj.as_mat4().to_cols_array(),
+            inv_view_proj: inv_view_proj.as_mat4().to_cols_array(),
+            camera_pos: render.camera_pos.as_vec3().to_array(),
             _pad0: 0.0,
             star_rot_inv: std::array::from_fn(|c| {
-                [star_cols[c][0], star_cols[c][1], star_cols[c][2], 0.0]
+                [
+                    star_cols[c][0] as f32,
+                    star_cols[c][1] as f32,
+                    star_cols[c][2] as f32,
+                    0.0,
+                ]
             }),
-            marker: [width, height, MARKER_RADIUS_PX, 0.0],
+            marker: [width as f32, height as f32, MARKER_RADIUS_PX, 0.0],
             luna_occluder: {
                 let p = (luna_pos_world - origin).as_vec3();
-                [p.x, p.y, p.z, CelestialBody::LUNA.mean_radius_km()]
+                [p.x, p.y, p.z, CelestialBody::LUNA.mean_radius_km() as f32]
             },
             sol_pos: (celestial.sol_pos_world - origin).as_vec3().to_array(),
             _pad4: 0.0,
-            atmosphere_quad,
+            atmosphere_quad: atmosphere_quad.map(|v| v as f32),
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
@@ -1375,10 +1383,10 @@ impl SceneRenderer {
             else {
                 continue;
             };
-            let pos_render = (state.placement.pos_world - origin).as_vec3();
+            let pos_render = state.placement.pos_world - origin;
             let rel = pos_render - render.camera_pos;
             let dist = rel.length();
-            if dist <= f32::EPSILON {
+            if dist <= f64::EPSILON {
                 continue;
             }
             // Largest semi-axis: bounds the silhouette from any view direction
@@ -1436,7 +1444,8 @@ impl SceneRenderer {
             // every OTHER body of this body's planetary system casts an
             // analytic sphere shadow on it - Terra shadowing Luna is the lunar
             // eclipse. Cross-system shadows are astronomically negligible, so
-            // planets get all slots zeroed today.
+            // planets get all slots zeroed today. Cast to f32 only here, after
+            // the f64 render-frame subtraction.
             let mut occluders = [[0.0f32; 4]; MAX_OCCLUDERS];
             let mut occluder_count = 0;
             for other in &celestial.bodies {
@@ -1447,30 +1456,39 @@ impl SceneRenderer {
                     continue;
                 }
                 let occ_pos = (other.placement.pos_world - origin).as_vec3();
-                occluders[occluder_count] =
-                    [occ_pos.x, occ_pos.y, occ_pos.z, other.body.mean_radius_km()];
+                occluders[occluder_count] = [
+                    occ_pos.x,
+                    occ_pos.y,
+                    occ_pos.z,
+                    other.body.mean_radius_km() as f32,
+                ];
                 occluder_count += 1;
             }
 
             // Sol's angular radius from this body sets its penumbra softness -
             // per body, so an outer system's smaller Sol sharpens its shadows
-            // automatically.
-            // Distance is done in f64 (heliocentric magnitudes) then cast down;
-            // the ~1.5e8 km value is far coarser than f32's ulp there, but it
-            // only feeds an asin for penumbra softness, so the cast is exact
-            // enough (sub-pixel).
-            let sol_dist = (celestial.sol_pos_world - state.placement.pos_world).length() as f32;
+            // automatically. f64 like every distance here (heliocentric
+            // magnitudes); the uniform cast happens at the pack below.
+            let sol_dist = (celestial.sol_pos_world - state.placement.pos_world).length();
             let sol_angular_radius = (SOL_RADIUS_KM / sol_dist.max(SOL_RADIUS_KM)).asin();
 
+            // The uniform layout is f32: every cast below is the GPU boundary.
             let rot_cols = state.placement.rot.to_cols_array_2d();
             let planet_uniform = PlanetUniform {
-                rot: std::array::from_fn(|c| [rot_cols[c][0], rot_cols[c][1], rot_cols[c][2], 0.0]),
-                pos: pos_render.to_array(),
-                sol_angular_radius,
-                ndc_center,
-                ndc_half_extent,
-                radii: radii.to_array(),
-                depth,
+                rot: std::array::from_fn(|c| {
+                    [
+                        rot_cols[c][0] as f32,
+                        rot_cols[c][1] as f32,
+                        rot_cols[c][2] as f32,
+                        0.0,
+                    ]
+                }),
+                pos: pos_render.as_vec3().to_array(),
+                sol_angular_radius: sol_angular_radius as f32,
+                ndc_center: ndc_center.map(|v| v as f32),
+                ndc_half_extent: ndc_half_extent.map(|v| v as f32),
+                radii: radii.as_vec3().to_array(),
+                depth: depth as f32,
                 occluders,
                 perspective: if perspective { 1.0 } else { 0.0 },
                 flags: body_shading_flags(body),
@@ -1492,9 +1510,7 @@ impl SceneRenderer {
             .iter()
             .map(|m| MarkerInstance {
                 // Terra-frame ECEF -> render frame (see `terra_center` above).
-                position: (terra_center + m.position_km.as_dvec3() - origin)
-                    .as_vec3()
-                    .to_array(),
+                position: (terra_center + m.position_km - origin).as_vec3().to_array(),
                 visible: if m.visible { 1.0 } else { 0.0 },
             })
             .collect();
@@ -1525,17 +1541,18 @@ impl SceneRenderer {
             // Radially lifting every sample by sec(pi/N) puts the chord
             // MIDPOINTS on the true curve (endpoints half a sagitta out,
             // sub-pixel), so the polyline never falsely dips behind the limb.
-            let lift = 1.0 / (std::f32::consts::PI / PATH_SEGMENTS as f32).cos();
+            let lift = 1.0 / (std::f64::consts::PI / PATH_SEGMENTS as f64).cos();
             let mut segments = Vec::with_capacity(render.markers.len() * PATH_SEGMENTS);
             for marker in &render.markers {
-                let points: Vec<Vec3> = satellite::orbit_path_inertial(
+                let points: Vec<glam::Vec3> = satellite::orbit_path_inertial(
                     &marker.propagation,
                     &render.time,
                     PATH_SEGMENTS,
                 )
                 .into_iter()
-                // Terra-frame ECEF -> render frame (see `terra_center` above).
-                .map(|p| ((p * lift).as_dvec3() + terra_center - origin).as_vec3())
+                // Terra-frame ECEF -> render frame (see `terra_center` above);
+                // the f32 cast is the GPU boundary (instance-buffer layout).
+                .map(|p| (p * lift + terra_center - origin).as_vec3())
                 .collect();
                 // A manually-controlled satellite burned to escape (e >= 1)
                 // has no period, so its path comes back empty - no line.

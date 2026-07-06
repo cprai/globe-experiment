@@ -28,7 +28,7 @@
 //! clean closed form, and Luna's ~1-3 km axis spread makes the difference
 //! sub-texel). For a sphere the two coincide.
 
-use glam::Vec3;
+use glam::DVec3;
 
 use crate::engine::simulation::body::{CelestialBody, TerraSystemEntity};
 
@@ -45,8 +45,7 @@ pub const SEMI_MINOR_AXIS_KM: f64 = SEMI_MAJOR_AXIS_KM * (1.0 - FLATTENING);
 /// non-const [`CelestialBody::mean_radius_km`] computes the same value from
 /// the table). Kept for const contexts that need a Terra-scale fallback
 /// (e.g. the free-coordinate camera target).
-pub const TERRA_MEAN_RADIUS_KM: f32 =
-    ((2.0 * SEMI_MAJOR_AXIS_KM + SEMI_MINOR_AXIS_KM) / 3.0) as f32;
+pub const TERRA_MEAN_RADIUS_KM: f64 = (2.0 * SEMI_MAJOR_AXIS_KM + SEMI_MINOR_AXIS_KM) / 3.0;
 
 // --- Terra dynamics constants, for orbital simulation built on this
 // geometry. Not yet consumed anywhere; provided so satellites/orbits can be
@@ -287,24 +286,22 @@ impl CelestialBody {
     /// The triaxial semi-axes in km, in the body frame (+X 90 deg east,
     /// +Y the rotation pole, +Z the prime meridian). The renderer traces the
     /// impostor ellipsoid from these (and sizes the quad by the largest
-    /// axis).
-    pub fn radii_km(self) -> Vec3 {
+    /// axis); f64, cast to f32 only when packed into the impostor uniform.
+    pub fn radii_km(self) -> DVec3 {
         let [rx, ry, rz] = self.body_data().radii_km;
-        Vec3::new(rx as f32, ry as f32, rz as f32)
+        DVec3::new(rx, ry, rz)
     }
 
     /// Characteristic mean radius (km): the axis mean over the triaxial
-    /// semi-axes, computed in f64 so Terra's value stays bit-equal to the
-    /// classic IUGG (2a + b) / 3 (rx = rz makes the two algebraically
-    /// identical; an f32 sum could drift a ULP and micro-shift every camera
-    /// distance). The camera scales its distance/zoom limits, near plane, and
-    /// pan rate by this so the interaction feel is the same fraction of the
-    /// body whichever one is targeted; for Luna it also sets the eclipse
-    /// caster/occlusion sphere, where the ~1.5 km triaxial spread is far
-    /// below the penumbra softness.
-    pub fn mean_radius_km(self) -> f32 {
+    /// semi-axes (for Terra's rx = rz row this is algebraically the classic
+    /// IUGG (2a + b) / 3). The camera scales its distance/zoom limits, near
+    /// plane, and pan rate by this so the interaction feel is the same
+    /// fraction of the body whichever one is targeted; for Luna it also sets
+    /// the eclipse caster/occlusion sphere, where the ~1.5 km triaxial spread
+    /// is far below the penumbra softness.
+    pub fn mean_radius_km(self) -> f64 {
         let [rx, ry, rz] = self.body_data().radii_km;
-        ((rx + ry + rz) / 3.0) as f32
+        (rx + ry + rz) / 3.0
     }
 
     /// The simple IAU rotational elements (evaluated against time in
@@ -339,30 +336,26 @@ impl CelestialBody {
 /// geodetic coordinates land on the exact same ellipsoid). The triaxial body
 /// (Luna) uses the parametric form (the sphere direction with each axis
 /// scaled by its semi-axis).
-pub fn surface_position(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
+pub fn surface_position(body: CelestialBody, latitude: f64, longitude: f64) -> DVec3 {
     let [rx, ry, rz] = body.body_data().radii_km;
-    let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
-    let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
+    let (sin_lat, cos_lat) = latitude.sin_cos();
+    let (sin_lon, cos_lon) = longitude.sin_cos();
 
     if rx == rz {
         // Spheroid: geodetic latitude. e^2 from the table radii equals the
-        // classic f * (2 - f) to f64 rounding, which the f32 cast absorbs.
+        // classic f * (2 - f) to f64 rounding.
         let e_sq = 1.0 - (ry * ry) / (rx * rx);
         let n = rx / (1.0 - e_sq * sin_lat * sin_lat).sqrt();
         let horizontal = n * cos_lat;
 
-        Vec3::new(
-            (horizontal * sin_lon) as f32,
-            (n * (1.0 - e_sq) * sin_lat) as f32,
-            (horizontal * cos_lon) as f32,
+        DVec3::new(
+            horizontal * sin_lon,
+            n * (1.0 - e_sq) * sin_lat,
+            horizontal * cos_lon,
         )
     } else {
         // Triaxial: parametric latitude.
-        Vec3::new(
-            (rx * cos_lat * sin_lon) as f32,
-            (ry * sin_lat) as f32,
-            (rz * cos_lat * cos_lon) as f32,
-        )
+        DVec3::new(rx * cos_lat * sin_lon, ry * sin_lat, rz * cos_lat * cos_lon)
     }
 }
 
@@ -377,22 +370,18 @@ pub fn surface_position(body: CelestialBody, latitude: f32, longitude: f32) -> V
 /// `(x/rx^2, y/ry^2, z/rz^2)`, not the radial direction (for the
 /// near-spherical Luna it is within ~0.04 deg of radial, but the true normal
 /// keeps the lighting geometrically honest).
-pub fn geodetic_normal(body: CelestialBody, latitude: f32, longitude: f32) -> Vec3 {
+pub fn geodetic_normal(body: CelestialBody, latitude: f64, longitude: f64) -> DVec3 {
     let [rx, ry, rz] = body.body_data().radii_km;
-    let (sin_lat, cos_lat) = (latitude as f64).sin_cos();
-    let (sin_lon, cos_lon) = (longitude as f64).sin_cos();
+    let (sin_lat, cos_lat) = latitude.sin_cos();
+    let (sin_lon, cos_lon) = longitude.sin_cos();
 
     if rx == rz {
-        Vec3::new(
-            (cos_lat * sin_lon) as f32,
-            sin_lat as f32,
-            (cos_lat * cos_lon) as f32,
-        )
+        DVec3::new(cos_lat * sin_lon, sin_lat, cos_lat * cos_lon)
     } else {
-        Vec3::new(
-            (cos_lat * sin_lon / (rx * rx)) as f32,
-            (sin_lat / (ry * ry)) as f32,
-            (cos_lat * cos_lon / (rz * rz)) as f32,
+        DVec3::new(
+            cos_lat * sin_lon / (rx * rx),
+            sin_lat / (ry * ry),
+            cos_lat * cos_lon / (rz * rz),
         )
         .normalize()
     }

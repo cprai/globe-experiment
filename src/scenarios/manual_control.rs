@@ -7,7 +7,7 @@
 //! orbit path, and apsis readouts all follow the post-burn state
 //! (CLI: `globe-experiment scenario manual_control`).
 
-use glam::{DVec3, Vec3};
+use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
@@ -189,7 +189,7 @@ impl Simulation for ManualControlSimulation {
         &self.celestial_sphere
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         let now = self.clock.now();
 
         // `advance` just re-anchored the state to `now`, so this is a pure
@@ -205,9 +205,9 @@ impl Simulation for ManualControlSimulation {
         }];
 
         self.last_telemetry = Some(ManualTelemetry {
-            latitude_deg: state.latitude_deg,
-            longitude_deg: state.longitude_deg,
-            altitude_km: state.altitude_km,
+            latitude_deg: state.latitude_deg as f32,
+            longitude_deg: state.longitude_deg as f32,
+            altitude_km: state.altitude_km as f32,
             shape: satellite::orbit_shape(&self.orbit),
         });
 

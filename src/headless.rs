@@ -122,13 +122,13 @@ struct SimulationSpec {
 #[serde(deny_unknown_fields)]
 struct CameraSpec {
     /// Inertial look longitude, degrees.
-    longitude: f32,
+    longitude: f64,
     /// Inertial look latitude, degrees.
-    latitude: f32,
+    latitude: f64,
     /// Eye distance to the look-at point, kilometers.
-    distance: f32,
+    distance: f64,
     /// Tilt off nadir, degrees (0 looks straight down).
-    tilt: f32,
+    tilt: f64,
     /// Which body the camera orbits: `"terra"` (default) or `"luna"`. The
     /// distance/tilt are relative to the chosen body's surface, so framing the
     /// Luna usually wants a much smaller `distance` than Terra.
@@ -336,11 +336,11 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
 /// datetime, the camera, and the output path. Informational only - the
 /// headless binary is deliberately silent about EOP range (see the module
 /// note).
-fn print_summary(params: &Cli, camera: &CameraSpec, time: &Instant, distance: f32) {
+fn print_summary(params: &Cli, camera: &CameraSpec, time: &Instant, distance: f64) {
     let (year, month, day, hour, minute, second) = time.as_datetime();
 
     // Note if the supplied distance was clamped into the camera's valid range.
-    let clamped = if (distance - camera.distance).abs() > f32::EPSILON {
+    let clamped = if (distance - camera.distance).abs() > f64::EPSILON {
         format!(" (clamped from {:.1})", camera.distance)
     } else {
         String::new()

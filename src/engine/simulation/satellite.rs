@@ -36,7 +36,7 @@
 //! stray `satkit-data` dir satkit would otherwise create on first use; see its
 //! docs (the numerical arm's EGM96 gravity model is seeded the same way).
 
-use glam::{DVec3, Vec3};
+use glam::DVec3;
 use satkit::frametransform::{qgcrf2itrf, qteme2gcrf, qteme2itrf};
 use satkit::itrfcoord::ITRFCoord;
 use satkit::orbitprop::{self, PropSettings, SimpleState};
@@ -132,13 +132,13 @@ impl Satellite {
 pub struct SatelliteState {
     /// Position in the renderer's world frame: kilometers, planet center at
     /// the origin, same axes as the Terra body frame.
-    pub position_km: Vec3,
+    pub position_km: DVec3,
     /// Sub-satellite geodetic latitude, degrees.
-    pub latitude_deg: f32,
+    pub latitude_deg: f64,
     /// Sub-satellite geodetic longitude, degrees.
-    pub longitude_deg: f32,
+    pub longitude_deg: f64,
     /// Height above the WGS84 ellipsoid, kilometers.
-    pub altitude_km: f32,
+    pub altitude_km: f64,
     /// The GCRF state vector at the propagated time - initial conditions a
     /// scenario can hand to `Propagation::Numerical` for the predicted orbit
     /// path.
@@ -204,17 +204,15 @@ fn state_from_itrf(itrf: &Vector3, orbit: OrbitState) -> SatelliteState {
     let coord = ITRFCoord::from_vector(itrf);
     let (lat_rad, lon_rad, hae_m) = coord.to_geodetic_rad();
 
-    let latitude = lat_rad as f32;
-    let longitude = lon_rad as f32;
-    let altitude_km = (hae_m / 1000.0) as f32;
+    let altitude_km = hae_m / 1000.0;
 
-    let position_km = planet::surface_position(CelestialBody::TERRA, latitude, longitude)
-        + planet::geodetic_normal(CelestialBody::TERRA, latitude, longitude) * altitude_km;
+    let position_km = planet::surface_position(CelestialBody::TERRA, lat_rad, lon_rad)
+        + planet::geodetic_normal(CelestialBody::TERRA, lat_rad, lon_rad) * altitude_km;
 
     SatelliteState {
         position_km,
-        latitude_deg: latitude.to_degrees(),
-        longitude_deg: longitude.to_degrees(),
+        latitude_deg: lat_rad.to_degrees(),
+        longitude_deg: lon_rad.to_degrees(),
         altitude_km,
         orbit,
     }
@@ -292,7 +290,7 @@ pub fn orbit_shape(state: &OrbitState) -> Option<OrbitShape> {
         [state.vel_gcrf_m_s.z],
     ]);
     let kepler = Kepler::from_pv(pos, vel).ok()?;
-    let mean_radius_m = f64::from(planet::TERRA_MEAN_RADIUS_KM) * 1000.0;
+    let mean_radius_m = planet::TERRA_MEAN_RADIUS_KM * 1000.0;
     Some(OrbitShape {
         apoapsis_alt_km: (kepler.a * (1.0 + kepler.eccen) - mean_radius_m) / 1000.0,
         periapsis_alt_km: (kepler.a * (1.0 - kepler.eccen) - mean_radius_m) / 1000.0,
@@ -318,7 +316,7 @@ pub fn orbit_shape(state: &OrbitState) -> Option<OrbitShape> {
 /// the marker only to land it on the exact mesh ellipsoid); ITRF meters map
 /// to world km by the axis permutation P alone (world (x,y,z) = ITRF (y,z,x),
 /// see `coordinates.md`).
-pub fn orbit_path_inertial(prop: &Propagation, time: &Instant, segments: usize) -> Vec<Vec3> {
+pub fn orbit_path_inertial(prop: &Propagation, time: &Instant, segments: usize) -> Vec<DVec3> {
     match prop {
         Propagation::Sgp4(tle) => orbit_path_sgp4(tle, time, segments),
         Propagation::Numerical(state) => orbit_path_numerical(state, time, segments),
@@ -334,17 +332,13 @@ fn path_sample_times(time: &Instant, period_s: f64, segments: usize) -> Vec<Inst
 
 /// ITRF meters -> world km: the axis permutation P (world (x,y,z) =
 /// ITRF (y,z,x)) plus the unit change. See `coordinates.md`.
-fn world_km_from_itrf_m(itrf: &Vector3) -> Vec3 {
-    Vec3::new(
-        (itrf[1] / 1000.0) as f32,
-        (itrf[2] / 1000.0) as f32,
-        (itrf[0] / 1000.0) as f32,
-    )
+fn world_km_from_itrf_m(itrf: &Vector3) -> DVec3 {
+    DVec3::new(itrf[1] / 1000.0, itrf[2] / 1000.0, itrf[0] / 1000.0)
 }
 
 /// The SGP4 path arm: one batch call over the TLE, period from the element
 /// set's mean motion.
-fn orbit_path_sgp4(tle: &TLE, time: &Instant, segments: usize) -> Vec<Vec3> {
+fn orbit_path_sgp4(tle: &TLE, time: &Instant, segments: usize) -> Vec<DVec3> {
     // `sgp4` needs `&mut` (it caches its propagator init in the TLE), but the
     // caller's TLE sits behind a shared `RenderState` borrow - clone locally.
     let mut tle = tle.clone();
@@ -370,7 +364,7 @@ fn orbit_path_sgp4(tle: &TLE, time: &Instant, segments: usize) -> Vec<Vec3> {
 /// The numerical path arm: satkit's `orbitprop` integrator from the GCRF
 /// initial conditions - no TLE involved. One `propagate` over the period,
 /// then all samples from its dense output in one `interp_batch`.
-fn orbit_path_numerical(state: &OrbitState, time: &Instant, segments: usize) -> Vec<Vec3> {
+fn orbit_path_numerical(state: &OrbitState, time: &Instant, segments: usize) -> Vec<DVec3> {
     let pos = Vector3::new([
         [state.pos_gcrf_m.x],
         [state.pos_gcrf_m.y],
@@ -448,7 +442,7 @@ mod tests {
         crate::engine::simulation::celestial_sphere::init_satkit_for_tests();
 
         let (state, t0) = circular_leo();
-        let alt_km = (RADIUS_M - f64::from(planet::TERRA_MEAN_RADIUS_KM) * 1000.0) / 1000.0;
+        let alt_km = (RADIUS_M - planet::TERRA_MEAN_RADIUS_KM * 1000.0) / 1000.0;
 
         let shape = orbit_shape(&state).expect("circular orbit is elliptic");
         assert!(
@@ -485,7 +479,7 @@ mod tests {
 
         let resolved = resolve_orbit(&stepped, &t1);
         assert!(
-            (f64::from(resolved.position_km.length()) * 1000.0 - RADIUS_M).abs() < 30_000.0,
+            (resolved.position_km.length() * 1000.0 - RADIUS_M).abs() < 30_000.0,
             "marker at {:.1} km from center",
             resolved.position_km.length()
         );

@@ -211,7 +211,7 @@ src/engine/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() d
                          vector - for the renderer's orbit-path propagation) -
                          the renderer derives the
                          rest from time), SatelliteTelemetry, CameraTarget (enum:
-                         Body(CelestialBody) | Coordinate(Vec3) - a pure
+                         Body(CelestialBody) | Coordinate(DVec3) - a pure
                          identity; center_world()/render_origin() resolve the
                          moving center from the CelestialSphere on demand),
                          TargetSelector (Terra/Luna, eclipses), BodySelector (one
@@ -322,7 +322,7 @@ camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::terra()]
     scenarios inherit the default; the eclipse scenarios override it from a
     TargetSelector (panel-driven).
 
-frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState
+frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState
     Propagate all satellites once, fill RenderState (the frame's time + the
     camera rig + camera_target + markers - the renderer derives Sol/Luna/planet
     geometry from the time). Stashes the same-propagation per-satellite readout
@@ -419,7 +419,7 @@ submodule path.
 ## Purity rules (compiler-enforced)
 
 - **`simulation` imports neither winit/wgpu nor the `Camera` type.**
-  The `Simulation` trait takes resolved `Vec3` values for the camera rig (eye,
+  The `Simulation` trait takes resolved `DVec3` values for the camera rig (eye,
   look-at point, up) and returns a `RenderState`. This keeps input scheme
   changes local to `application` and each scenario's `frame_state` impl
   independently testable.

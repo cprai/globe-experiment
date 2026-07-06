@@ -1,4 +1,4 @@
-use glam::{Mat3, Quat, Vec3};
+use glam::{DMat3, DQuat, DVec3};
 
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::{CameraTarget, CelestialBody};
@@ -30,13 +30,13 @@ use crate::engine::simulation::{CameraTarget, CelestialBody};
 #[derive(Clone, Copy)]
 pub struct Camera {
     /// Longitude of the inertial viewing direction, in degrees.
-    pub longitude: f32,
+    pub longitude: f64,
     /// Latitude of the inertial viewing direction, in degrees. Clamped +/-89.
-    pub latitude: f32,
+    pub latitude: f64,
     /// Distance from the camera to the look-at point, in kilometers.
-    pub distance: f32,
+    pub distance: f64,
     /// Angle off straight-down (nadir), in degrees. 0 looks straight down.
-    pub tilt: f32,
+    pub tilt: f64,
     /// The body the rig orbits. Drives the surface anchor, the
     /// distance/near/pan limits, and the world-space center the rig is
     /// offset from.
@@ -62,30 +62,30 @@ impl Camera {
     // radii out; the default view sits ~2 radii above the surface. The FOV, near
     // plane, and far plane now live with the projection in `renderer` (the
     // renderer rebuilds view_proj from the rig this camera emits).
-    const MIN_DISTANCE_RADII: f32 = 0.01;
-    const MAX_DISTANCE_RADII: f32 = 10.0;
-    const DEFAULT_DISTANCE_RADII: f32 = 2.0;
-    const MAX_TILT: f32 = 80.0;
+    const MIN_DISTANCE_RADII: f64 = 0.01;
+    const MAX_DISTANCE_RADII: f64 = 10.0;
+    const DEFAULT_DISTANCE_RADII: f64 = 2.0;
+    const MAX_TILT: f64 = 80.0;
 
     /// Closest the eye may sit above the target surface, in km.
-    fn min_distance(&self) -> f32 {
+    fn min_distance(&self) -> f64 {
         Self::MIN_DISTANCE_RADII * self.target.mean_radius_km()
     }
 
     /// Farthest the eye may sit from the target surface, in km.
-    fn max_distance(&self) -> f32 {
+    fn max_distance(&self) -> f64 {
         Self::MAX_DISTANCE_RADII * self.target.mean_radius_km()
     }
 
     /// The full-body framing distance for the target, in km. Used when a body
     /// switch reframes the camera.
-    fn default_distance(&self) -> f32 {
+    fn default_distance(&self) -> f64 {
         Self::DEFAULT_DISTANCE_RADII * self.target.mean_radius_km()
     }
 
     /// Moves the look-at point by the given degrees, wrapping longitude
     /// across the dateline and clamping latitude short of the poles.
-    pub fn pan(&mut self, dlon: f32, dlat: f32) {
+    pub fn pan(&mut self, dlon: f64, dlat: f64) {
         self.longitude = (self.longitude + dlon + 180.0).rem_euclid(360.0) - 180.0;
         self.latitude = (self.latitude + dlat).clamp(-89.0, 89.0);
     }
@@ -93,18 +93,18 @@ impl Camera {
     /// Clamps a camera distance to lie between just above the target surface
     /// and a full-body view. An instance method because the limits scale
     /// with the current target's radius.
-    pub fn clamp_distance(&self, distance: f32) -> f32 {
+    pub fn clamp_distance(&self, distance: f64) -> f64 {
         distance.clamp(self.min_distance(), self.max_distance())
     }
 
     /// Adjusts the tilt, clamped between straight-down and near-horizon.
-    pub fn tilt_by(&mut self, degrees: f32) {
+    pub fn tilt_by(&mut self, degrees: f64) {
         self.tilt = (self.tilt + degrees).clamp(0.0, Self::MAX_TILT);
     }
 
     /// Degrees of arc panned per pixel of cursor movement, scaled so the
     /// ground under the cursor approximately follows it at any altitude.
-    pub fn pan_degrees_per_pixel(&self, viewport_height: f32) -> f32 {
+    pub fn pan_degrees_per_pixel(&self, viewport_height: f64) -> f64 {
         // Ground arc length spanned by one pixel at the target plane, in km.
         let km_per_pixel = 2.0
             * self.distance
@@ -141,8 +141,8 @@ impl Camera {
     pub fn world_rig(
         &self,
         celestial: &CelestialSphere,
-        celestial_to_world: Mat3,
-    ) -> (Vec3, Vec3, Vec3) {
+        celestial_to_world: DMat3,
+    ) -> (DVec3, DVec3, DVec3) {
         self.world_frame_relative(celestial, celestial_to_world)
     }
 
@@ -156,9 +156,9 @@ impl Camera {
     /// afterward.
     pub fn looking_toward(
         target: CameraTarget,
-        star_rot_inv: Mat3,
-        world_look: Vec3,
-        distance: f32,
+        star_rot_inv: DMat3,
+        world_look: DVec3,
+        distance: f64,
     ) -> Self {
         // The rig's look axis (toward the target) is `-radial`; resolved into
         // the world it is `-celestial_to_world * radial = -star_rot_inv^T *
@@ -190,7 +190,7 @@ impl Camera {
         &mut self,
         target: CameraTarget,
         celestial: &CelestialSphere,
-        celestial_to_world: Mat3,
+        celestial_to_world: DMat3,
     ) -> bool {
         let switched = !self.target.same_kind(&target);
         self.target = target;
@@ -207,10 +207,8 @@ impl Camera {
             // heliocentric `center_world`, so it is frame-agnostic: Terra ->
             // zero (skip), Luna/planets -> the Terra->body direction.
             let terra = celestial.center_world(CelestialBody::TERRA);
-            // Geocentric-scale difference, so f32 is precise; cast down before
-            // the f32 star-frame rotation.
-            let aim = (self.target.center_world(celestial) - terra).as_vec3();
-            if aim != Vec3::ZERO {
+            let aim = self.target.center_world(celestial) - terra;
+            if aim != DVec3::ZERO {
                 let star_rot_inv = celestial_to_world.transpose();
                 let radial = -(star_rot_inv * aim.normalize_or_zero());
                 self.longitude = radial.x.atan2(radial.z).to_degrees();
@@ -234,14 +232,12 @@ impl Camera {
     fn world_frame_relative(
         &self,
         celestial: &CelestialSphere,
-        celestial_to_world: Mat3,
-    ) -> (Vec3, Vec3, Vec3) {
+        celestial_to_world: DMat3,
+    ) -> (DVec3, DVec3, DVec3) {
         let (eye, target, up) = self.frame();
-        // Geocentric-scale difference (zero for the orbited body), so f32 is
-        // precise; the f64 subtraction cancels the ~1.5e8 km heliocentric Sol
-        // offset before the cast down.
-        let shift =
-            (self.target.center_world(celestial) - self.target.render_origin(celestial)).as_vec3();
+        // The f64 subtraction cancels the ~1.5e8 km heliocentric Sol offset
+        // exactly (zero for the orbited body).
+        let shift = self.target.center_world(celestial) - self.target.render_origin(celestial);
         (
             shift + celestial_to_world * eye,
             shift + celestial_to_world * target,
@@ -251,7 +247,7 @@ impl Camera {
 
     /// Computes the camera's (eye, target, up) in the inertial (star) frame,
     /// as offsets from the target body's center.
-    fn frame(&self) -> (Vec3, Vec3, Vec3) {
+    fn frame(&self) -> (DVec3, DVec3, DVec3) {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();
         let lon = self.longitude.to_radians();
 
@@ -261,12 +257,12 @@ impl Camera {
         let radial = self.target.geodetic_normal(lat, lon);
 
         // Local tangent frame at the look-at point.
-        let east = Vec3::Y.cross(radial).normalize();
+        let east = DVec3::Y.cross(radial).normalize();
         let north = radial.cross(east);
 
         // Tilt swings the camera away from straight-down, around the local
         // east axis, so increasing tilt reveals the horizon to the north.
-        let tilt = Quat::from_axis_angle(east, self.tilt.to_radians());
+        let tilt = DQuat::from_axis_angle(east, self.tilt.to_radians());
         let eye = target + tilt * radial * self.distance;
         let up = tilt * north;
 

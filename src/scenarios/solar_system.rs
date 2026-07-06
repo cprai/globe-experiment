@@ -12,7 +12,7 @@
 //! scene is drawn relative to the orbited planet's center; see
 //! `CameraTarget::render_origin`). Terra/Luna targets keep the origin at Terra.
 
-use glam::Vec3;
+use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
@@ -75,7 +75,7 @@ impl Simulation for SolarSystemSimulation {
         self.selector.resolve()
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         // No satellites: an empty marker list. The renderer derives every
         // body's position from the frame's time and uses the camera target's
         // render origin (which must match the one the camera built its rig

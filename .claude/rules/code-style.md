@@ -31,7 +31,7 @@ module (no lib crate) plus their own top-level extra (`scenarios` for main,
   helpers. The clock + celestial sphere are held **directly by each scenario
   struct** (there is no shared core struct). **No winit/wgpu dependency. No
   `Camera` type.** Depends on `ui` (hence egui) only for the selector panel
-  builders. Takes resolved `Vec3`/`Mat4`; returns `RenderState` (UI readout
+  builders. Takes resolved `DVec3` values; returns `RenderState` (UI readout
   pulled separately via `ui::UIDrawable`).
 - **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
   device/depth helpers + `UiFrame` + projection consts. Camera is NOT here;

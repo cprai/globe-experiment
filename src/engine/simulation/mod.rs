@@ -13,7 +13,7 @@ pub mod celestial_sphere;
 pub mod clock;
 pub mod satellite;
 
-use glam::{DVec3, Vec3};
+use glam::DVec3;
 use satkit::Instant;
 
 pub use body::CelestialBody;
@@ -34,7 +34,7 @@ use celestial_sphere::CelestialSphere;
 /// and look-at anchor are all scaled by the target's radius, so the free-point
 /// variant needs a fallback scale. Chosen as Terra's mean radius so the
 /// interaction feel matches the familiar default view.
-const COORDINATE_RADIUS_KM: f32 = planet::TERRA_MEAN_RADIUS_KM;
+const COORDINATE_RADIUS_KM: f64 = planet::TERRA_MEAN_RADIUS_KM;
 
 /// What the orbital camera orbits: a celestial body (by identity) or a free
 /// world-space point. A pure **identity** - the body's moving world center is
@@ -65,7 +65,7 @@ pub enum CameraTarget {
     /// camera and renderer handle it, so a future scenario can orbit an
     /// arbitrary point (e.g. a spacecraft, a Lagrange point) for free.
     #[allow(dead_code)]
-    Coordinate(Vec3),
+    Coordinate(DVec3),
 }
 
 impl CameraTarget {
@@ -94,7 +94,7 @@ impl CameraTarget {
     pub fn center_world(&self, celestial: &CelestialSphere) -> DVec3 {
         match self {
             CameraTarget::Body(body) => celestial.center_world(*body),
-            CameraTarget::Coordinate(point) => point.as_dvec3(),
+            CameraTarget::Coordinate(point) => *point,
         }
     }
 
@@ -120,7 +120,7 @@ impl CameraTarget {
             // Any planet: too far out for the Terra origin, so the scene is
             // drawn relative to its own center.
             CameraTarget::Body(body) => celestial.center_world(*body),
-            CameraTarget::Coordinate(point) => point.as_dvec3(),
+            CameraTarget::Coordinate(point) => *point,
         }
     }
 
@@ -128,7 +128,7 @@ impl CameraTarget {
     /// limits, near plane, and pan rate by this so the interaction feel is the
     /// same fraction of the subject whichever one is targeted. Static (a body's
     /// radius does not move), so no sphere is needed.
-    pub fn mean_radius_km(&self) -> f32 {
+    pub fn mean_radius_km(&self) -> f64 {
         match self {
             CameraTarget::Body(body) => body.mean_radius_km(),
             CameraTarget::Coordinate(_) => COORDINATE_RADIUS_KM,
@@ -140,17 +140,17 @@ impl CameraTarget {
     /// inertial-frame direction (see `application::camera`); the magnitude is
     /// what differs per body. A free coordinate has no surface, so the anchor
     /// is the center itself (zero offset). Body-frame, so no sphere is needed.
-    pub fn surface_position(&self, latitude: f32, longitude: f32) -> Vec3 {
+    pub fn surface_position(&self, latitude: f64, longitude: f64) -> DVec3 {
         match self {
             CameraTarget::Body(body) => body.surface_position(latitude, longitude),
-            CameraTarget::Coordinate(_) => Vec3::ZERO,
+            CameraTarget::Coordinate(_) => DVec3::ZERO,
         }
     }
 
     /// Outward unit normal at `(lat, lon)` (radians), in the body frame - the
     /// local "up" the eye offsets along. A free coordinate uses the standard
     /// spherical direction so lon/lat still orbit the point.
-    pub fn geodetic_normal(&self, latitude: f32, longitude: f32) -> Vec3 {
+    pub fn geodetic_normal(&self, latitude: f64, longitude: f64) -> DVec3 {
         match self {
             CameraTarget::Body(body) => body.geodetic_normal(latitude, longitude),
             CameraTarget::Coordinate(_) => {
@@ -198,7 +198,7 @@ pub trait Simulation {
     /// propagation is stashed on the scenario so the immediately-following
     /// `crate::engine::ui::UIDrawable::get_drawables` call (the egui panel)
     /// reports values matching the rendered markers.
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState;
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState;
 }
 
 /// The minimal render contract for one frame: the simulation time plus the
@@ -225,17 +225,17 @@ pub struct RenderState {
     /// Camera eye in the **floating-origin (render) frame** (km), i.e. relative
     /// to `camera_target.render_origin()` (= the absolute eye for Terra/Luna).
     /// Computed without ever forming the absolute eye for far targets (see
-    /// `Camera::world_rig`), so it stays f32-precise.
-    pub camera_pos: Vec3,
+    /// `Camera::world_rig`). f64; the renderer builds the view matrix in f64
+    /// and casts to f32 only at uniform upload.
+    pub camera_pos: DVec3,
     /// The look-at point in the **render frame** (km) - the camera's view
     /// direction, carried as a point rather than a unit vector so the
-    /// renderer's `look_at_rh` is bit-identical to the camera's old
-    /// `view_proj` for Terra/Luna (reconstructing a normalized forward and
-    /// re-projecting would drift by sub-ULP and speckle every antialiased
-    /// edge).
-    pub camera_look_at: Vec3,
+    /// renderer's `look_at_rh` reproduces the camera's implied view exactly
+    /// (reconstructing a normalized forward and re-projecting would drift by
+    /// sub-ULP and speckle every antialiased edge).
+    pub camera_look_at: DVec3,
     /// Camera up direction in the world frame (unit).
-    pub camera_up: Vec3,
+    pub camera_up: DVec3,
     /// One marker per tracked satellite, in the same order as the scenario's
     /// satellite list. The renderer draws them instanced, and propagates each
     /// marker's `Propagation` ahead to draw its predicted orbit path. This is
@@ -250,7 +250,7 @@ pub struct RenderState {
 #[derive(Clone, Debug)]
 pub struct SatelliteMarker {
     /// Marker position in the world frame (km).
-    pub position_km: Vec3,
+    pub position_km: DVec3,
     /// Whether the marker is visible (false when the solid Terra occludes it).
     pub visible: bool,
     /// How the renderer predicts this object's orbit path about one orbit
@@ -555,7 +555,7 @@ impl BodySelector {
 /// (both world-space km). Approximates the planet as a sphere of mean Terra
 /// radius - slightly conservative against the WGS84 ellipsoid, which is fine
 /// for deciding whether to hide the marker.
-pub(crate) fn marker_occluded(eye: Vec3, target: Vec3) -> bool {
+pub(crate) fn marker_occluded(eye: DVec3, target: DVec3) -> bool {
     let to_target = target - eye;
     let distance = to_target.length();
     if distance <= 1e-3 {

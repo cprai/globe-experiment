@@ -2,7 +2,7 @@
 //! ~2024-001.5 TLE epoch. Same as `iss_and_hubble` but with Hubble omitted, so
 //! a single marker renders (CLI: `globe-experiment scenario iss`).
 
-use glam::Vec3;
+use glam::DVec3;
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
@@ -82,7 +82,7 @@ impl Simulation for IssSimulation {
         &self.celestial_sphere
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         let now = self.clock.now();
 
         let mut markers = Vec::with_capacity(self.satellites.len());
@@ -98,9 +98,9 @@ impl Simulation for IssSimulation {
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),
-                latitude_deg: state.latitude_deg,
-                longitude_deg: state.longitude_deg,
-                altitude_km: state.altitude_km,
+                latitude_deg: state.latitude_deg as f32,
+                longitude_deg: state.longitude_deg as f32,
+                altitude_km: state.altitude_km as f32,
             });
         }
 

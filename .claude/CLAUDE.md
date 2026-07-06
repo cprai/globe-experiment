@@ -79,9 +79,11 @@ out (past f32 precision), **all rendering is done in a camera-target-local
 center, so
 the orbited body sits at a bit-exact zero and far planets do not jitter. (The
 `CelestialSphere` itself is **heliocentric** — Sol at the origin, Terra at
-`-sol_geo` — and stores body centers as **f64** `DVec3`; the renderer subtracts
-`render_origin`, Terra's center for a Terra/Luna target, in f64 and casts to f32,
-so the Terra render frame is bit-identical to the old geocentric one. f64 is
+`-sol_geo` — and stores body placements as **f64** (`DVec3` centers, `DMat3`
+rotations); **all CPU-side computation is f64 end to end** — celestial sphere,
+camera rig (`DVec3`/`DQuat`), satellite pipeline, input controller, and the
+renderer's `prepare`/view-projection math (`DMat4`) — with f32 appearing only
+at the GPU uniform/instance upload and in egui-facing readouts. f64 is
 required: an f32 heliocentric-minus-origin cancels catastrophically.) The
 renderer derives every body's position/orientation from the frame's **time**
 (`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
@@ -91,7 +93,7 @@ bodies draw from every vantage; the **atmosphere** (a screen quad, drawn when
 a `has_atmosphere` body sits at the render origin — Terra/Luna targets today)
 and the **satellite overlays** (orbit paths + markers, Terra-frame positions)
 are the only gated passes. For Terra/Luna (render origin at Terra)
-geometry stays bit-identical. A **reversed-Z depth buffer** (Depth32Float) makes
+geometry stays Terra-local. A **reversed-Z depth buffer** (Depth32Float) makes
 Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).

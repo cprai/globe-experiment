@@ -147,7 +147,7 @@ impl OffscreenRenderer {
     /// copies the result into the readback buffer, blocks until it is mapped,
     /// then un-pads the rows into a tight RGBA8 buffer.
     pub fn render(&mut self, render: &RenderState, ui: Option<UiFrame>) -> image::RgbaImage {
-        let viewport = (self.width as f32, self.height as f32);
+        let viewport = (f64::from(self.width), f64::from(self.height));
         self.scene
             .prepare(&self.device, &self.queue, render, viewport);
 

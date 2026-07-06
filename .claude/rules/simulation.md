@@ -19,13 +19,15 @@ paths:
 
 Both **world** frames are ITRF with axes permuted: `world (X,Y,Z) = ITRF
 (Y,Z,X)`; they differ only by the origin (Sol vs Terra), a pure translation.
-See `P` in `coordinates.md`. The `CelestialSphere` is heliocentric (positions
-are `geocentric_f32.as_dvec3() - sol_geo.as_dvec3()`, so **f64** - heliocentric
-magnitudes overflow f32 when the renderer subtracts the render origin to recover
-a Terra-local offset); the renderer/camera then subtract
-`render_origin` (Terra's center for a Terra/Luna target) in f64 and cast to f32,
-landing back in the Terra-centered render frame with the pre-heliocentric output
-**bit-identical** (verified AE=0 across Terra/Luna/eclipse/planet A/B renders).
+See `P` in `coordinates.md`. The `CelestialSphere` is heliocentric and **f64
+end to end** (positions `DVec3`, rotations `DMat3`, computed straight from the
+f64 ephemeris with no intermediate f32 - heliocentric magnitudes overflow f32
+when the renderer subtracts the render origin to recover a Terra-local
+offset); the renderer/camera then subtract `render_origin` (Terra's center for
+a Terra/Luna target) in f64, landing back in the Terra-centered render frame,
+and cast to f32 only at the GPU upload boundary (verified visually neutral:
+A/B renders against the f32-era build differ by a few LSB on <0.2% of pixels -
+sub-pixel antialiasing/dither shifts from the higher-precision math).
 
 ## init_satkit — must seed all four (do not drop any seed)
 
@@ -141,23 +143,22 @@ the same DE440:
   Venus, Uranus). `planet_rot = P * R_gcrf2itrf * iau_body_to_gcrf * P^T`, same
   `P^T` un-permute as Luna.
 - Planets are **triaxial ellipsoids with rx = rz** - their familiar oblate
-  forms (`src/engine/planet.rs`: `radii_km() -> Vec3`, equatorial on +X/+Z vs
+  forms (`src/engine/planet.rs`: `radii_km() -> DVec3`, equatorial on +X/+Z vs
   polar on +Y;
   Saturn/Jupiter visibly flattened), lit by simple Lambert with the Sol direction
   *at the planet*. The planet<->`SolarSystem` map + the IAU evaluation live in
   `celestial_sphere` so `planet.rs` stays satkit-free.
 - **f64 precision note.** `geocentric_pos` is exact (f64, ~meters; it never
-  errors in range — `Result::Ok` for every planet). The per-body geocentric
-  position is computed in f32 exactly as before (`nvec` -> `P` -> /1000), then
-  widened to f64 and shifted to heliocentric (`- sol_geo.as_dvec3()`); the
-  stored `pos_world` is a **`DVec3`**. The f64 is load-bearing: the heliocentric
-  magnitude is ~1.5e8 km (Terra/Luna) to billions (planets), and the renderer
-  recovers a Terra-local offset via `pos_world - render_origin`. In f32 that
-  subtraction cancels catastrophically (Luna would shift ~16 km, ~12k px); in
-  f64 it is exact, then cast to f32 only after landing in the small render
-  frame - so the orbited body's relative position is still a **bit-exact zero**
-  and Terra/Luna output is bit-identical. Far bodies are sub-pixel specks
-  regardless.
+  errors in range — `Result::Ok` for every planet). The whole chain stays f64:
+  `nvec` (f64) -> `P` (`DMat3`) -> /1000 -> `- sol_geo`, with the stored
+  `pos_world` a **`DVec3`** and the placement `rot` a **`DMat3`** (the IAU
+  rotation models evaluate in f64 throughout). The f64 is load-bearing: the
+  heliocentric magnitude is ~1.5e8 km (Terra/Luna) to billions (planets), and
+  the renderer recovers a Terra-local offset via `pos_world - render_origin`.
+  In f32 that subtraction cancels catastrophically (Luna would shift ~16 km,
+  ~12k px); in f64 it is exact, then cast to f32 only at GPU upload after
+  landing in the small render frame - so the orbited body's relative position
+  is still a **bit-exact zero**. Far bodies are sub-pixel specks regardless.
 
 ## Satellite pipeline (satellite.rs)
 

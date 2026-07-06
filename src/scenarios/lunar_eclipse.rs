@@ -5,7 +5,7 @@
 //! no `Satellite` list; its clock starts directly from the eclipse datetime,
 //! and it draws no markers.
 
-use glam::Vec3;
+use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
@@ -22,7 +22,7 @@ use crate::engine::ui::{
 /// Eye distance for the Luna framing (km): ~2 lunar radii above the surface, so
 /// the eclipsed disc fills the frame with a little margin (the camera orbits
 /// Luna, so the distance is relative to its surface, not Terra's).
-const VIEW_DISTANCE_KM: f32 = 3500.0;
+const VIEW_DISTANCE_KM: f64 = 3500.0;
 
 /// Empty lunar-eclipse simulation: just the clock + celestial sphere; no
 /// satellites. Carries a [`TargetSelector`] so the view can be switched
@@ -80,7 +80,7 @@ impl Simulation for LunarEclipseSimulation {
         self.selector.resolve()
     }
 
-    fn frame_state(&mut self, camera_pos: Vec3, look_at: Vec3, up: Vec3) -> RenderState {
+    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
         // No satellites: an empty marker list. The renderer derives the Terra
         // system from the frame's time; the selector's target (Luna or Terra)
         // keeps the origin at Terra either way.
@@ -177,9 +177,8 @@ pub fn run() {
     let celestial = &sim.celestial_sphere;
     // The Terra->Luna direction. The celestial sphere is heliocentric, so this
     // is Luna's center minus Terra's center, not Luna's raw position.
-    let center = (celestial.luna().placement.pos_world
-        - celestial.center_world(CelestialBody::TERRA))
-    .as_vec3();
+    let center =
+        celestial.luna().placement.pos_world - celestial.center_world(CelestialBody::TERRA);
     let camera = Camera::looking_toward(
         CameraTarget::Body(CelestialBody::LUNA),
         celestial.star_rot_inv,

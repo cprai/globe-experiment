@@ -17,9 +17,15 @@ paths:
   because the heliocentric magnitudes overflow f32 when the renderer recovers a
   Terra-local offset. The two frames differ only by the translation
   `center_world(TERRA)`; the renderer/camera subtract `render_origin` (Terra's
-  center for a Terra/Luna target) in f64 and cast to f32, so the Terra render
-  frame is bit-identical to the pre-heliocentric geocentric frame. See
-  `simulation.md` (Reference frames).
+  center for a Terra/Luna target) in f64. See `simulation.md` (Reference
+  frames).
+- **f64 everywhere; f32 only at the GPU/egui boundary.** All CPU-side
+  computation - the celestial sphere (positions AND rotations, `DMat3`), the
+  camera rig (`DVec3`/`DQuat`), the satellite/orbit-path pipeline, the input
+  controller, and the renderer's `prepare` math (view/projection in `DMat4`) -
+  runs in f64 end to end. Values are cast to f32 only when packed into a GPU
+  uniform/instance buffer or handed to egui (telemetry readouts, slider
+  values). Do not introduce intermediate f32 casts into computation paths.
 - Constants and helpers in `src/engine/planet.rs` (Terra is a row of the
   shared per-body table; there is no terra module) — single source of truth;
   the impostor renderer, the camera, and the satellite pipeline all call it.
@@ -79,7 +85,7 @@ So P is consistent with every WGS84 helper and with every satkit result.
   planets is a **triaxial ellipsoid with equal +X/+Z axes** - its familiar
   oblate spheroid (equatorial radius on +X/+Z,
   polar radius on +Y), in the same triaxial formulation as Luna
-  (`radii_km() -> Vec3`) - in the **same body convention** — +Y = north (rotation
+  (`radii_km() -> DVec3`) - in the **same body convention** — +Y = north (rotation
   pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`
   scales the sphere direction per axis; `geodetic_normal` is the gradient
   (`x/rx^2, y/ry^2, z/rz^2`), not radial. Planets are drawn as **shader

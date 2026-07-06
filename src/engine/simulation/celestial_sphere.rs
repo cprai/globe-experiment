@@ -33,7 +33,7 @@
 //! shader-facing matrix), leaving `star_rot_inv` as the equatorial frame the
 //! inertial camera rig is built from.
 
-use glam::{DVec3, Mat3, Vec3};
+use glam::{DMat3, DVec3};
 use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf, qitrf2gcrf};
 use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
@@ -94,10 +94,7 @@ const EGM96: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EGM96.gfc"));
 /// equirectangular lookup (see the module's star-map frame note). glam stores
 /// matrices column-major, so this lists the *columns* (images of the standard
 /// basis), i.e. the transpose of how the matrix is usually printed by row.
-// The full catalogued digits are kept verbatim for provenance; f32 silently
-// rounds them (well below the sub-pixel star-map tolerance).
-#[allow(clippy::excessive_precision)]
-const R_EQU2GAL: Mat3 = Mat3::from_cols_array(&[
+const R_EQU2GAL: DMat3 = DMat3::from_cols_array(&[
     -0.0548755604,
     0.4941094279,
     -0.8676661490,
@@ -196,13 +193,16 @@ pub struct CelestialSphere {
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
     /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
     /// shader samples the star texture with (that is `star_tex_rot_inv`).
-    pub star_rot_inv: Mat3,
+    /// f64, like every derived quantity here; consumers cast down only at
+    /// the GPU boundary.
+    pub star_rot_inv: DMat3,
     /// Rotation taking world (ECEF) view directions into the star *texture's*
     /// galactic frame: `GALACTIC_OFFSET * star_rot_inv`. Uploaded to the shader
-    /// as `star_rot_inv` (the equirectangular lookup matrix). Kept separate
-    /// from the camera-rig frame above so the static galactic->equatorial
-    /// re-orientation does not move existing scenarios' camera framing.
-    pub star_tex_rot_inv: Mat3,
+    /// as `star_rot_inv` (the equirectangular lookup matrix; cast to f32 at
+    /// upload). Kept separate from the camera-rig frame above so the static
+    /// galactic->equatorial re-orientation does not move existing scenarios'
+    /// camera framing.
+    pub star_tex_rot_inv: DMat3,
     /// Every renderable body's world-frame placement this frame, as a flat list
     /// (identity + center + orientation), all HELIOCENTRIC (Sol at the origin,
     /// Earth-fixed axes): **Terra** (at `-sol_geo`, identity orientation - its
@@ -245,10 +245,10 @@ impl CelestialSphere {
     pub fn at(time: &Instant) -> Self {
         // P: standard ECEF/GCRF (Z = pole) -> world frame (Y = north),
         // mapping (x, y, z) -> (y, z, x). Orthonormal, so transpose = inverse.
-        let p = Mat3::from_cols(
-            Vec3::new(0.0, 0.0, 1.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
+        let p = DMat3::from_cols(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
         );
 
         // Sol position relative to Terra in GCRF (inertial), meters; rotate to
@@ -269,7 +269,7 @@ impl CelestialSphere {
         // celestial pole. As time advances this rotates the star map at the
         // sidereal rate, consistent with Sol's motion above.
         let q = qitrf2gcrf(time);
-        let r_itrf2gcrf = Mat3::from_cols(
+        let r_itrf2gcrf = DMat3::from_cols(
             nvec(q * unit(1.0, 0.0, 0.0)),
             nvec(q * unit(0.0, 1.0, 0.0)),
             nvec(q * unit(0.0, 0.0, 1.0)),
@@ -290,14 +290,14 @@ impl CelestialSphere {
         // size.
         let q_gcrf2itrf = qgcrf2itrf(time);
         let luna_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("luna ephemeris lookup");
-        let luna_pos_world = p * (nvec(q_gcrf2itrf * luna_gcrf) / 1000.0);
+        let luna_pos_geo = p * (nvec(q_gcrf2itrf * luna_gcrf) / 1000.0);
 
         // Luna's body frame uses the project body convention (+Y north,
         // +Z sub-Terra); compose its body->world rotation as
         // P * R_gcrf2itrf * M_body2gcrf * P^T, where M_body2gcrf (standard
         // Z=pole convention) is the IAU lunar rotation and the P^T un-permutes
         // the project-convention axes into the standard ones M expects.
-        let r_gcrf2itrf = Mat3::from_cols(
+        let r_gcrf2itrf = DMat3::from_cols(
             nvec(q_gcrf2itrf * unit(1.0, 0.0, 0.0)),
             nvec(q_gcrf2itrf * unit(0.0, 1.0, 0.0)),
             nvec(q_gcrf2itrf * unit(0.0, 0.0, 1.0)),
@@ -307,25 +307,24 @@ impl CelestialSphere {
         // The render list, in a fixed order: Terra, then Luna, then the seven
         // planets. Positions are HELIOCENTRIC (relative to Sol, i.e. minus
         // `sol_geo`) in Earth-fixed axes, so Terra - the world origin - sits at
-        // `-sol_geo`, not at zero. The shift is computed in f64
-        // (`geocentric_f32.as_dvec3() - sol_geo.as_dvec3()`): the geocentric
-        // value stays bit-for-bit what the pre-heliocentric build stored, and
-        // widening to f64 before subtracting Sol is what lets the renderer
-        // recover it exactly (`pos_world - render_origin` cancels the ~1.5e8 km
-        // Sol offset with no f32 cancellation). Orientations (rot) are
+        // `-sol_geo`, not at zero. Everything stays f64 end to end (the
+        // ephemeris is f64 meters): the heliocentric shift is a pure f64
+        // subtraction, so the renderer recovers the geocentric-scale offset
+        // exactly (`pos_world - render_origin` cancels the ~1.5e8 km Sol
+        // offset with no f32 cancellation). Orientations (rot) are
         // frame-invariant and unchanged.
         let mut bodies = Vec::with_capacity(2 + planet::ALL.len());
         bodies.push(BodyState {
             body: CelestialBody::TERRA,
             placement: Placement {
-                pos_world: -sol_geo.as_dvec3(),
-                rot: Mat3::IDENTITY,
+                pos_world: -sol_geo,
+                rot: DMat3::IDENTITY,
             },
         });
         bodies.push(BodyState {
             body: CelestialBody::LUNA,
             placement: Placement {
-                pos_world: luna_pos_world.as_dvec3() - sol_geo.as_dvec3(),
+                pos_world: luna_pos_geo - sol_geo,
                 rot: luna_rot,
             },
         });
@@ -340,7 +339,7 @@ impl CelestialSphere {
             let body_gcrf =
                 geocentric_pos(planet_body(planet), time).expect("planet ephemeris lookup");
             let pos_geo = p * (nvec(q_gcrf2itrf * body_gcrf) / 1000.0);
-            let pos_world = pos_geo.as_dvec3() - sol_geo.as_dvec3();
+            let pos_world = pos_geo - sol_geo;
             let rot = p * r_gcrf2itrf * iau_body_to_gcrf(planet.rotation(), time) * p.transpose();
             bodies.push(BodyState {
                 body: planet,
@@ -392,7 +391,7 @@ fn planet_body(planet: CelestialBody) -> SolarSystem {
 /// Dynamical Time* since J2000; TT is used here (the TT-TDB difference is below
 /// a millisecond, far under the model's relevance), and the TT-UTC offset
 /// matters at the ~0.01 deg level in `W` - itself well below a rendered pixel.
-fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
+fn lunar_body_to_gcrf(time: &Instant) -> DMat3 {
     // Days and centuries of TT since the J2000 epoch (JD 2451545.0 TT).
     let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
     let t = d / 36_525.0;
@@ -455,7 +454,7 @@ fn lunar_body_to_gcrf(time: &Instant) -> Mat3 {
 /// `delta0` carry a linear rate in Julian centuries `T`, and the prime meridian
 /// `W` advances at the (possibly retrograde) sidereal spin rate in days `d`.
 /// Both `T` and `d` are TT since J2000, matching the lunar model.
-fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> Mat3 {
+fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> DMat3 {
     let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
     let t = d / 36_525.0;
 
@@ -472,21 +471,21 @@ fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> Mat3 {
 /// meridian x = Q rotated east by W about z; y completes the right-handed triad
 /// (90 deg east). Shared by Luna (libration folded into the angles) and the
 /// planets. Columns are the GCRF images of the body x/y/z axes.
-fn body_basis(alpha0: f64, delta0: f64, w: f64) -> Mat3 {
-    let (sa, ca) = (alpha0.sin() as f32, alpha0.cos() as f32);
-    let (sd, cd) = (delta0.sin() as f32, delta0.cos() as f32);
-    let z = Vec3::new(cd * ca, cd * sa, sd);
-    let q = Vec3::new(-sa, ca, 0.0);
+fn body_basis(alpha0: f64, delta0: f64, w: f64) -> DMat3 {
+    let (sa, ca) = alpha0.sin_cos();
+    let (sd, cd) = delta0.sin_cos();
+    let z = DVec3::new(cd * ca, cd * sa, sd);
+    let q = DVec3::new(-sa, ca, 0.0);
     let q_east = z.cross(q);
-    let x = q * (w.cos() as f32) + q_east * (w.sin() as f32);
+    let x = q * w.cos() + q_east * w.sin();
     let y = z.cross(x);
 
-    Mat3::from_cols(x, y, z)
+    DMat3::from_cols(x, y, z)
 }
 
-/// satkit column vector -> glam Vec3.
-fn nvec(v: Vector3) -> Vec3 {
-    Vec3::new(v[(0, 0)] as f32, v[(1, 0)] as f32, v[(2, 0)] as f32)
+/// satkit column vector -> glam DVec3 (both are f64; no precision is lost).
+fn nvec(v: Vector3) -> DVec3 {
+    DVec3::new(v[(0, 0)], v[(1, 0)], v[(2, 0)])
 }
 
 /// A satkit 3-vector from components (the ctor takes a column-major array).
@@ -508,14 +507,14 @@ mod tests {
     #[allow(clippy::excessive_precision)]
     #[test]
     fn galactic_axes_map_to_catalogued_radec() {
-        let equ_of = |gal: Vec3| {
+        let equ_of = |gal: DVec3| {
             let e = R_EQU2GAL.transpose() * gal;
             let ra = e.y.atan2(e.x).to_degrees().rem_euclid(360.0);
             let dec = e.z.clamp(-1.0, 1.0).asin().to_degrees();
             (ra, dec)
         };
 
-        let (gc_ra, gc_dec) = equ_of(Vec3::X);
+        let (gc_ra, gc_dec) = equ_of(DVec3::X);
         assert!(
             (gc_ra - 266.40500).abs() < 1e-3,
             "galactic center RA {gc_ra}"
@@ -525,7 +524,7 @@ mod tests {
             "galactic center Dec {gc_dec}"
         );
 
-        let (ngp_ra, ngp_dec) = equ_of(Vec3::Z);
+        let (ngp_ra, ngp_dec) = equ_of(DVec3::Z);
         assert!((ngp_ra - 192.85948).abs() < 1e-3, "NGP RA {ngp_ra}");
         assert!((ngp_dec - 27.12825).abs() < 1e-3, "NGP Dec {ngp_dec}");
     }
@@ -535,23 +534,23 @@ mod tests {
     /// `v=0`) - the convention `fs_stars` assumes. Checks the `P R P^T` bring.
     #[test]
     fn texture_frame_places_galactic_center_and_pole() {
-        let p = Mat3::from_cols(
-            Vec3::new(0.0, 0.0, 1.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
+        let p = DMat3::from_cols(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
         );
         let galactic_offset = p * R_EQU2GAL * p.transpose();
 
         // `galactic_offset` maps a permuted-equatorial dir to the permuted
         // texture frame. Feed the permuted-equatorial galactic center / NGP.
-        let gc_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * Vec3::X));
-        let ngp_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * Vec3::Z));
+        let gc_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * DVec3::X));
+        let ngp_tex = galactic_offset * (p * (R_EQU2GAL.transpose() * DVec3::Z));
 
         assert!(
-            (gc_tex - Vec3::Z).length() < 1e-5,
+            (gc_tex - DVec3::Z).length() < 1e-5,
             "galactic center {gc_tex}"
         );
-        assert!((ngp_tex - Vec3::Y).length() < 1e-5, "NGP {ngp_tex}");
+        assert!((ngp_tex - DVec3::Y).length() < 1e-5, "NGP {ngp_tex}");
     }
 
     /// The IAU lunar rotation must keep Luna's near side facing Terra: the
@@ -573,11 +572,11 @@ mod tests {
 
         // Outward normal at the sub-Terra point in world space.
         let luna = sphere.luna().placement;
-        let sub_terra = luna.rot * Vec3::Z;
+        let sub_terra = luna.rot * DVec3::Z;
         // Direction from Luna back toward Terra. The frame is heliocentric, so
         // Terra is at `center_world(TERRA)` (not the origin), not zero.
         let terra = sphere.center_world(CelestialBody::TERRA);
-        let toward_terra = (terra - luna.pos_world).as_vec3().normalize();
+        let toward_terra = (terra - luna.pos_world).normalize();
 
         let angle = sub_terra
             .dot(toward_terra)
