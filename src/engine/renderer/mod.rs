@@ -4,9 +4,9 @@ use wgpu::util::DeviceExt;
 use glam::{DMat4, DVec3, DVec4};
 
 use crate::engine::planet;
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::satellite;
-use crate::engine::simulation::{CameraTarget, CelestialBody, RenderState};
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::satellite;
+use crate::engine::scene::{CameraTarget, CelestialBody, RenderState};
 
 /// Radius of the on-screen station marker, in pixels.
 const MARKER_RADIUS_PX: f32 = 6.0;
@@ -18,7 +18,7 @@ const MARKER_RADIUS_PX: f32 = 6.0;
 const PATH_SEGMENTS: usize = 256;
 
 /// Initial path-instance buffer capacity (segments): two satellites' worth,
-/// covering both shipping satellite scenarios with no first-frame realloc.
+/// covering both shipping satellite scenes with no first-frame realloc.
 const INITIAL_PATH_CAPACITY: u32 = 2 * PATH_SEGMENTS as u32;
 
 /// Fraction of the orbital period at which the path alpha starts its
@@ -1216,7 +1216,7 @@ impl SceneRenderer {
     /// `&mut self` (and `&Device`) because the marker and path instance
     /// buffers grow on demand when more satellites are tracked than they
     /// currently hold. All camera/astronomical math is done by the simulation
-    /// (each scenario's clock + celestial sphere), except the orbit-path
+    /// (each scene's clock + celestial sphere), except the orbit-path
     /// propagation
     /// (`satellite::orbit_path_inertial`), which runs here from each marker's
     /// `Propagation` (analytic SGP4 or numerical orbitprop); otherwise this
@@ -1370,10 +1370,10 @@ impl SceneRenderer {
         // there, ray-tracing the triaxial ellipsoid in its fragment shader.
         // `celestial.bodies` is a flat list (Terra, Luna, planets); every
         // entry has an `IMPOSTOR_BODIES` GPU slot and drives this loop -
-        // every body draws from every vantage. Terra/Luna scenarios (origin
+        // every body draws from every vantage. Terra/Luna scenes (origin
         // at Terra) still carry the planets here, but they project far
         // off-screen / behind the camera and are mostly sub-pixel specks; a
-        // planet scenario carries Terra/Luna the same way.
+        // planet scene carries Terra/Luna the same way.
         self.planet_draw_indices.clear();
         for state in &celestial.bodies {
             let body = state.body;

@@ -1,16 +1,9 @@
-//! Solar-system scenario: a free tour of the whole solar system with no tracked
-//! objects - the celestial sphere wound to a fixed past date, and a body
-//! selector (one latching key per body) that flies the camera to and orbits any
-//! of Terra, Luna, or the seven planets (CLI: `globe-experiment scenario
-//! solar_system`).
-//! Like the eclipse scenarios it carries no `Satellite` list and draws no
-//! markers; unlike them it draws all seven planets, each at its true
-//! geocentric position and scale.
-//!
-//! Because the outer planets sit billions of km from Terra - far past f32
-//! precision in world-km - a planet target renders with a floating origin (the
-//! scene is drawn relative to the orbited planet's center; see
-//! `CameraTarget::render_origin`). Terra/Luna targets keep the origin at Terra.
+//! Lunar-eclipse scene: the 2025-03-14 total lunar eclipse, with no tracked
+//! objects - just the celestial sphere wound to the event, so Terra's
+//! shadow falls on Luna and turns it a coppery "blood-red Luna" (CLI:
+//! `globe-experiment scene lunar_eclipse`). Like `solar_eclipse` it carries
+//! no `Satellite` list; its clock starts directly from the eclipse datetime,
+//! and it draws no markers.
 
 use satkit::Instant;
 
@@ -18,49 +11,77 @@ use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{
     CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
 };
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::{self, BodySelector, Clock, RenderState, Simulation};
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::{
+    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, TargetSelector,
+};
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };
 
-/// Empty solar-system simulation: the clock + celestial sphere held directly,
-/// plus the body selector. No satellites.
-pub struct SolarSystemSimulation {
+/// Eye distance for the Luna framing (km): ~2 lunar radii above the surface, so
+/// the eclipsed disc fills the frame with a little margin (the camera orbits
+/// Luna, so the distance is relative to its surface, not Terra's).
+const VIEW_DISTANCE_KM: f64 = 3500.0;
+
+/// Empty lunar-eclipse simulation: just the clock + celestial sphere; no
+/// satellites. Carries a [`TargetSelector`] so the view can be switched
+/// between orbiting Luna (the default blood-red-Luna framing) and orbiting
+/// Terra.
+pub struct LunarEclipseScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
     /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
     /// clock runs.
     celestial_sphere: CelestialSphere,
-    selector: BodySelector,
-    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
-    /// animations); starts on the default whole-Terra view.
+    selector: TargetSelector,
+    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// animations), seeded orbiting Luna with the eclipsed near side framed.
     camera: PtzCamera,
 }
 
-impl SolarSystemSimulation {
+impl LunarEclipseScene {
     fn new() -> Self {
-        // A fixed recent past date, well inside the bundled EOP range
-        // (1962-01-01 .. build date), so every body's position is accurate. The
-        // clock auto-plays from here; the planets and their phases evolve.
+        // ~30 min before greatest eclipse (06:58 UTC) - the start of totality -
+        // so the auto-playing clock runs through the deep umbral phase. Well
+        // inside the bundled EOP range (1962-01-01 .. build date).
         let epoch =
-            Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
-        // `simulation::init` must already have run (the celestial sphere reads
+            Instant::from_datetime(2025, 3, 14, 6, 28, 0.0).expect("valid lunar-eclipse datetime");
+        // `scene::init` must already have run (the celestial sphere reads
         // satkit globals).
         let clock = Clock::new(epoch);
+        let celestial_sphere = CelestialSphere::at(&clock.now());
+
+        // Orbit Luna, looking at its Terra-facing near side (which is the side
+        // in Terra's shadow - the blood-red Luna). Looking *toward* Luna
+        // places the eye on its Terra-facing side, so Terra is behind the
+        // camera and never occludes the disc - no limb nudge needed. The
+        // Terra->Luna direction: the celestial sphere is heliocentric, so this
+        // is Luna's center minus Terra's center, not Luna's raw position.
+        let center = celestial_sphere.luna().placement.pos_world
+            - celestial_sphere.center_world(CelestialBody::TERRA);
+        let camera = PtzCamera::looking_toward(
+            CameraTarget::Body(CelestialBody::LUNA),
+            celestial_sphere.star_rot_inv,
+            center,
+            VIEW_DISTANCE_KM,
+        );
+
         Self {
-            celestial_sphere: CelestialSphere::at(&clock.now()),
+            celestial_sphere,
             clock,
-            selector: BodySelector::default(),
-            camera: PtzCamera::default(),
+            // Default to orbiting Luna - the whole point is the blood-red Luna.
+            selector: TargetSelector::new(true),
+            camera,
         }
     }
 }
 
-impl Simulation for SolarSystemSimulation {
+impl Scene for LunarEclipseScene {
     fn advance(&mut self) -> bool {
-        // Fold in any pending body-key press before the camera target is read.
+        // Fold in any pending target-selector key press before the camera target
+        // is read this frame.
         self.selector.apply_requests();
         // Advance the clock and, while it is running, re-evaluate the
         // ephemeris-driven celestial sphere at the new time. Returns whether
@@ -74,10 +95,10 @@ impl Simulation for SolarSystemSimulation {
     }
 }
 
-impl CameraControl for SolarSystemSimulation {
+impl CameraControl for LunarEclipseScene {
     // The input methods forward to the embedded PtzCamera; the forwarding
-    // block is deliberately duplicated per scenario (like the Time panel) so
-    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    // block is deliberately duplicated per scene (like the Time panel) so
+    // a scene can diverge - e.g. gate input or swap the camera kind.
     fn pointer_press(&mut self, button: PointerButton) -> bool {
         self.camera.pointer_press(button)
     }
@@ -103,12 +124,13 @@ impl CameraControl for SolarSystemSimulation {
     }
 }
 
-impl CameraView for SolarSystemSimulation {
+impl CameraView for LunarEclipseScene {
     fn frame_state(&mut self) -> RenderState {
-        // Re-aim the camera at this frame's selected body (its moving center
-        // refreshed from the ephemeris; a genuine body switch reframes and
-        // drops in-flight animations inside `retarget`), then resolve the
-        // inertial rig into the render frame.
+        // Re-aim the camera at this frame's selected target (the moving Luna
+        // center refreshed from the ephemeris; a genuine Luna<->Terra switch
+        // reframes and drops in-flight animations inside `retarget`), then
+        // resolve the inertial rig into the render frame. The target packed
+        // below is the same one the rig was built for.
         let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
         let target = self.selector.resolve();
         self.camera
@@ -117,10 +139,9 @@ impl CameraView for SolarSystemSimulation {
             .camera
             .world_rig(&self.celestial_sphere, celestial_to_world);
 
-        // No satellites: an empty marker list. The renderer derives every
-        // body's position from the frame's time and uses the camera target's
-        // render origin (which must match the one the camera built its rig
-        // against - both are the single `target` resolved above).
+        // No satellites: an empty marker list. The renderer derives the Terra
+        // system from the frame's time; the selector's target (Luna or Terra)
+        // keeps the origin at Terra either way.
         RenderState {
             time: self.clock.now(),
             camera_target: target,
@@ -132,12 +153,12 @@ impl CameraView for SolarSystemSimulation {
     }
 }
 
-impl UIDrawable for SolarSystemSimulation {
+impl UIDrawable for LunarEclipseScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The Time panel (datetime + run/speed) plus the one-key-per-body
-        // selector. The panels borrow disjoint fields (`clock` vs `selector`).
-        // The panel builder is deliberately kept per-scenario - scenarios may
-        // diverge in what they expose.
+        // The Time panel (datetime + run/speed) plus the Terra / Luna
+        // camera-target selector. The panels borrow disjoint fields (`clock`
+        // vs `selector`). The panel builder is deliberately kept per-scene
+        // - scenes may diverge in what they expose.
         //
         // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
         // so no shared borrow of the clock outlives into the mutable callback
@@ -200,10 +221,11 @@ impl UIDrawable for SolarSystemSimulation {
     }
 }
 
-/// Builds the solar-system scene and hands off to the winit event loop. Starts
-/// on the default whole-Terra view; the body-selector keys then tour the
-/// system.
+/// Builds the lunar-eclipse scene already orbiting Luna (the eclipsed
+/// near-side disc centered - the camera is seeded in `new`) and hands off to
+/// the winit event loop.
 pub fn run() {
-    simulation::init();
-    application::run(ApplicationState::new(SolarSystemSimulation::new()));
+    scene::init();
+
+    application::run(ApplicationState::new(LunarEclipseScene::new()));
 }

@@ -1,16 +1,15 @@
-//! ISS + Hubble scenario: track the International Space Station and the Hubble
-//! Space Telescope from their shared ~2024-001.5 TLE epoch. This is the
-//! original default scene, now expressed as a named scenario (CLI:
-//! `globe-experiment scenario iss_and_hubble`).
+//! ISS-only scene: track the International Space Station from its
+//! ~2024-001.5 TLE epoch. Same as `iss_and_hubble` but with Hubble omitted, so
+//! a single marker renders (CLI: `globe-experiment scene iss`).
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{
     CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
 };
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::satellite::{Propagation, Satellite};
-use crate::engine::simulation::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation,
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::satellite::{Propagation, Satellite};
+use crate::engine::scene::{
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene,
     marker_occluded,
 };
 use crate::engine::ui::{
@@ -18,14 +17,15 @@ use crate::engine::ui::{
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
-// This scenario's tracked-object TLEs, inlined as source literals. Unlike the
+// This scene's tracked-object TLE, inlined as a source literal. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked
-// into the binary), these small element sets live directly in source so a fresh
+// into the binary), this small element set lives directly in source so a fresh
 // checkout needs no data file. The lines are column-sensitive TLE format (each
 // element line is exactly 69 chars) - keep the exact spacing. `concat!` keeps
 // source indentation out of the string. satkit parses by column and does not
 // verify the trailing checksum digit. `new` below assembles the tracked array
-// from these via `Satellite::from_tle`.
+// from this via `Satellite::from_tle`. (Deliberately duplicated from
+// `iss_and_hubble.rs` - each scene owns its own TLE data.)
 
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
 /// element set.
@@ -35,20 +35,9 @@ const ISS_TLE: &str = concat!(
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
-/// The Hubble Space Telescope (HST), epoch ~2024-001.5. NOTE: the orbit shape
-/// is realistic (inclination 28.47 deg, ~540 km / ~15.1 rev/day), but this set
-/// was assembled from memory - the RAAN/anomaly/epoch-fraction phase is
-/// approximate. Replace with a freshly fetched TLE for true positional
-/// accuracy. Included as a second tracked object so multiple markers render.
-const HST_TLE: &str = concat!(
-    "HST\n",
-    "1 20580U 90037B   24001.49473380  .00002000  00000-0  10000-3 0  9990\n",
-    "2 20580  28.4690  85.5400 0002600 310.0000  50.0000 15.09600000123456\n",
-);
-
-/// ISS + Hubble simulation: the clock + celestial sphere held directly, plus
-/// this scenario's two tracked satellites.
-pub struct IssAndHubbleSimulation {
+/// ISS-only simulation: the clock + celestial sphere held directly, plus this
+/// scene's single tracked satellite.
+pub struct IssScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
     /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
@@ -60,18 +49,16 @@ pub struct IssAndHubbleSimulation {
     /// so the readout matches the rendered markers. Empty until the first
     /// frame.
     last_telemetry: Vec<SatelliteTelemetry>,
-    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
     camera: PtzCamera,
 }
 
-impl IssAndHubbleSimulation {
+impl IssScene {
     fn new() -> Self {
-        // The clock starts at the first satellite's TLE epoch, so order
-        // matters: the primary object (ISS) goes first.
-        let satellites = vec![Satellite::from_tle(ISS_TLE), Satellite::from_tle(HST_TLE)];
+        let satellites = vec![Satellite::from_tle(ISS_TLE)];
         let epoch = satellites.first().expect("TLE present").epoch();
-        // `simulation::init` must already have run (the celestial sphere reads
+        // `scene::init` must already have run (the celestial sphere reads
         // satkit globals).
         let clock = Clock::new(epoch);
         Self {
@@ -84,7 +71,7 @@ impl IssAndHubbleSimulation {
     }
 }
 
-impl Simulation for IssAndHubbleSimulation {
+impl Scene for IssScene {
     fn advance(&mut self) -> bool {
         // Advance the clock and, while it is running, re-evaluate the
         // ephemeris-driven celestial sphere at the new time. Returns whether
@@ -98,10 +85,10 @@ impl Simulation for IssAndHubbleSimulation {
     }
 }
 
-impl CameraControl for IssAndHubbleSimulation {
+impl CameraControl for IssScene {
     // The input methods forward to the embedded PtzCamera; the forwarding
-    // block is deliberately duplicated per scenario (like the Time panel) so
-    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    // block is deliberately duplicated per scene (like the Time panel) so
+    // a scene can diverge - e.g. gate input or swap the camera kind.
     fn pointer_press(&mut self, button: PointerButton) -> bool {
         self.camera.pointer_press(button)
     }
@@ -127,7 +114,7 @@ impl CameraControl for IssAndHubbleSimulation {
     }
 }
 
-impl CameraView for IssAndHubbleSimulation {
+impl CameraView for IssScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 
@@ -144,23 +131,14 @@ impl CameraView for IssAndHubbleSimulation {
 
         let mut markers = Vec::with_capacity(self.satellites.len());
         let mut sat_telemetry = Vec::with_capacity(self.satellites.len());
-        for (i, sat) in self.satellites.iter_mut().enumerate() {
+        for sat in &mut self.satellites {
             let state = sat.state_at(&now);
-            // The renderer propagates this ahead for the orbit path. The two
-            // objects deliberately use different backends - ISS the analytic
-            // SGP4 element set, Hubble numerical integration from its current
-            // GCRF state vector - demonstrating (and continuously exercising)
-            // the mixed-propagation capability in one scene.
-            let propagation = if i == 0 {
-                Propagation::Sgp4(Box::new(sat.tle().clone()))
-            } else {
-                Propagation::Numerical(state.orbit)
-            };
             markers.push(SatelliteMarker {
                 position_km: state.position_km,
                 // Terra target, so the render-frame eye is the absolute eye.
                 visible: !marker_occluded(eye, state.position_km),
-                propagation,
+                // The renderer propagates this ahead for the orbit path.
+                propagation: Propagation::Sgp4(Box::new(sat.tle().clone())),
             });
             sat_telemetry.push(SatelliteTelemetry {
                 name: sat.name.clone(),
@@ -187,13 +165,13 @@ impl CameraView for IssAndHubbleSimulation {
     }
 }
 
-impl UIDrawable for IssAndHubbleSimulation {
+impl UIDrawable for IssScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The Time panel first, then this scenario's own panel built from the
+        // The Time panel first, then this scene's own panel built from the
         // disjoint `self.last_telemetry` field (so it coexists with the clock
         // borrows). Both the panel builder and the readout loop are
-        // deliberately kept per-scenario (like the propagation loop) -
-        // scenarios may diverge in what they expose and how.
+        // deliberately kept per-scene (like the propagation loop) -
+        // scenes may diverge in what they expose and how.
         //
         // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
         // so no shared borrow of the clock outlives into the mutable callback
@@ -262,7 +240,7 @@ impl UIDrawable for IssAndHubbleSimulation {
             // Values are padded to their widest form ("-179.99" / "9999.9"):
             // the font is monospace, so fixed-width values keep the digit
             // windows from resizing (and the Lon window from shifting) as the
-            // satellites move.
+            // satellite moves.
             rows.push(vec![Box::new(DualReadout {
                 left_label: "Lat".to_string(),
                 left_value: format!("{:>7.2}", sat.latitude_deg),
@@ -285,14 +263,14 @@ impl UIDrawable for IssAndHubbleSimulation {
     }
 }
 
-/// Builds the ISS + Hubble simulation and hands off to the winit event loop.
-/// Blocks until the window closes.
+/// Builds the ISS simulation and hands off to the winit event loop. Blocks
+/// until the window closes.
 pub fn run() {
     // Seed satkit's global state (embedded ephemeris + EOP table) before
-    // anything else: IssAndHubbleSimulation::new below builds the
-    // CelestialSphere (which reads the ephemeris) and the satellites parse
-    // TLEs. Doing it here keeps satkit fully offline and data-dir-free.
-    simulation::init();
+    // anything else: IssScene::new below builds the CelestialSphere
+    // (which reads the ephemeris) and the satellite parses a TLE. Doing it
+    // here keeps satkit fully offline and data-dir-free.
+    scene::init();
 
-    application::run(ApplicationState::new(IssAndHubbleSimulation::new()));
+    application::run(ApplicationState::new(IssScene::new()));
 }

@@ -1,9 +1,9 @@
 //! Satellite tracking: parse a TLE and propagate it with the satkit SGP4
 //! implementation to a given datetime, exposing the result in the renderer's
-//! world frame (km). Each [`Satellite`] is one tracked object; scenario structs
-//! (see `crate::scenarios`) own a `Vec<Satellite>` assembled from that
-//! scenario's own inline TLE literals (this module is element-set agnostic - it
-//! propagates whatever TLEs a scenario hands it). Only the TLE is retained; the
+//! world frame (km). Each [`Satellite`] is one tracked object; scene structs
+//! (see `crate::scenes`) own a `Vec<Satellite>` assembled from that
+//! scene's own inline TLE literals (this module is element-set agnostic - it
+//! propagates whatever TLEs a scene hands it). Only the TLE is retained; the
 //! position state is a pure function of (TLE, datetime), so it is recomputed on
 //! demand via `state_at` rather than stored - nothing in the struct goes stale
 //! as the simulation clock advances.
@@ -18,13 +18,13 @@
 //! dispatches on [`Propagation`]: analytic SGP4 from a TLE, or numerical
 //! integration (satkit `orbitprop`) from a GCRF state vector ([`OrbitState`]).
 //! The numerical arm needs no TLE, so a manually-controlled satellite (the
-//! `manual_control` scenario) feeds the same path renderer. See the function
+//! `manual_control` scene) feeds the same path renderer. See the function
 //! docs for the deliberately different (inertial, single-rotation) frame
 //! treatment shared by both arms.
 //!
 //! For manually-controlled objects this module also offers the
 //! TLE-free state pipeline: [`propagate_numerical`] steps an [`OrbitState`]
-//! forward (the scenario re-anchors it each frame, then nudges the velocity
+//! forward (the scene re-anchors it each frame, then nudges the velocity
 //! for burns), [`resolve_orbit`] turns the state into the same
 //! [`SatelliteState`] the SGP4 pipeline produces (marker + geodetic readout),
 //! and [`orbit_shape`] reads the osculating apsides/speed for the panel.
@@ -45,7 +45,7 @@ use satkit::tle::TLE;
 use satkit::{Duration, Instant, Kepler, Vector3};
 
 use crate::engine::planet;
-use crate::engine::simulation::body::CelestialBody;
+use crate::engine::scene::body::CelestialBody;
 
 /// An instantaneous orbital state vector in the GCRF frame: the initial
 /// conditions for numerical propagation. Deliberately a plain-data type (no
@@ -90,7 +90,7 @@ pub struct Satellite {
 
 impl Satellite {
     /// Parses a 3-line TLE (name line + the two element lines, e.g. a
-    /// scenario's `ISS_TLE`). Panics on malformed input - the TLEs are
+    /// scene's `ISS_TLE`). Panics on malformed input - the TLEs are
     /// inline source literals, so a failure is a build-time bug, handled
     /// like the other embedded data. No
     /// propagation happens here - the state is computed on demand via
@@ -112,7 +112,7 @@ impl Satellite {
     }
 
     /// The parsed element set, for callers that carry it elsewhere (a
-    /// scenario clones it into a marker's `Propagation::Sgp4` so the renderer
+    /// scene clones it into a marker's `Propagation::Sgp4` so the renderer
     /// can propagate the predicted orbit path itself).
     pub fn tle(&self) -> &TLE {
         &self.tle
@@ -140,7 +140,7 @@ pub struct SatelliteState {
     /// Height above the WGS84 ellipsoid, kilometers.
     pub altitude_km: f64,
     /// The GCRF state vector at the propagated time - initial conditions a
-    /// scenario can hand to `Propagation::Numerical` for the predicted orbit
+    /// scene can hand to `Propagation::Numerical` for the predicted orbit
     /// path.
     pub orbit: OrbitState,
 }
@@ -247,7 +247,7 @@ fn numerical_settings() -> PropSettings {
 
 /// Numerically steps a GCRF state vector from `from` to `to` (one
 /// `orbitprop` integration, force model as [`numerical_settings`]). The
-/// manually-controlled satellite's per-frame re-anchor: the scenario stores
+/// manually-controlled satellite's per-frame re-anchor: the scene stores
 /// the returned state as its new initial conditions at `to`, so a burn's
 /// velocity change compounds into every later frame.
 pub fn propagate_numerical(state: &OrbitState, from: &Instant, to: &Instant) -> OrbitState {
@@ -439,7 +439,7 @@ mod tests {
     /// misses by orders of magnitude.
     #[test]
     fn numerical_pipeline_holds_circular_leo() {
-        crate::engine::simulation::celestial_sphere::init_satkit_for_tests();
+        crate::engine::scene::celestial_sphere::init_satkit_for_tests();
 
         let (state, t0) = circular_leo();
         let alt_km = (RADIUS_M - planet::TERRA_MEAN_RADIUS_KM * 1000.0) / 1000.0;

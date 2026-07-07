@@ -20,13 +20,13 @@ build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
                          Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              bin root of `globe-experiment` (the windowed app;
-                         default-run): clap CLI with only the `scenario <name>`
-                         subcommand; declares `mod engine;` + `mod scenarios;`
+                         default-run): clap CLI with only the `scene <name>`
+                         subcommand; declares `mod engine;` + `mod scenes;`
                          (NO offscreen/headless code)
 src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          EOP range check): flat clap flags --scene --output
                          [--width --height], no subcommand; declares
-                         `mod engine;` + `mod offscreen;` (NO scenarios) +
+                         `mod engine;` + `mod offscreen;` (NO scenes) +
                          crate-level allow(dead_code) for the engine items only
                          the main tree uses (all of engine::application, plus
                          windowed-only items in the shared modules). SceneSpec =
@@ -36,22 +36,22 @@ src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          overlay (build_ui_frame)
 src/engine/mod.rs        the engine module root, declared identically by BOTH
                          bin roots: everything used to run the app (application,
-                         camera, planet, renderer, simulation, terra, ui).
-                         The top level keeps only the bin roots, scenarios
+                         camera, planet, renderer, scene, terra, ui).
+                         The top level keeps only the bin roots, scenes
                          (main tree), and offscreen (headless tree)
-src/scenarios/mod.rs     scenario registry
-src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_TLE/HST_TLE consts
-src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
-src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
+src/scenes/mod.rs     scene registry
+src/scenes/iss_and_hubble.rs  IssAndHubbleScene (Scene impl); ISS_TLE/HST_TLE consts
+src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on purpose)
+src/scenes/solar_eclipse.rs  SolarEclipseScene: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
                          new() seeds its PtzCamera framing the Terra day side
                          (PtzCamera::looking_toward);
                          TargetSelector (default Terra) for the Terra/Luna panel
-src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
+src/scenes/lunar_eclipse.rs  LunarEclipseScene: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
                          new() seeds its PtzCamera orbiting Luna (Luna-target
                          looking_toward); TargetSelector (default Luna)
-src/scenarios/manual_control.rs  ManualControlSimulation: ONE user-thrustable
+src/scenes/manual_control.rs  ManualControlScene: ONE user-thrustable
                          satellite; own ISS_TLE const (duplicated on purpose),
                          used once to seed a GCRF OrbitState (no TLE after) that
                          advance() re-anchors to the clock each frame via
@@ -62,11 +62,11 @@ src/scenarios/manual_control.rs  ManualControlSimulation: ONE user-thrustable
                          * dt; marker via satellite::resolve_orbit +
                          Propagation::Numerical; apo/peri/speed readouts from
                          satellite::orbit_shape (dashes on escape)
-src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
+src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
-src/engine/application/mod.rs   ApplicationState<S: Simulation + CameraControl +
+src/engine/application/mod.rs   ApplicationState<S: Scene + CameraControl +
                          CameraView + UIDrawable>
                          + winit ApplicationHandler + run(). Keeps NO camera or
                          input state: translate_camera_event statelessly maps
@@ -80,7 +80,7 @@ src/engine/application/gfx.rs   Gfx: the windowed presenter - GPU surface/swapch
                          (called only by the main tree - the headless tree
                          compiles it dead; offscreen.rs is its headless twin)
 src/engine/camera/mod.rs        the CameraControl + CameraView TRAIT PAIR every
-                         scenario implements (CameraControl = the input methods
+                         scene implements (CameraControl = the input methods
                          with default no-op impls + tick + cursor_hint;
                          CameraView = frame_state, so a non-interactive camera
                          implements only CameraView) and the winit-free input
@@ -94,7 +94,7 @@ src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
                          also cancels in-flight animation on a body switch) AND
                          all input/animation state (drag pan/tilt, flick
                          inertia, smoothed zoom glide; feel constants at file
-                         top). Scenarios embed one and forward both camera
+                         top). Scenes embed one and forward both camera
                          traits to it; headless.rs constructs one from the
                          --scene JSON (PtzCamera::new)
 src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
@@ -104,9 +104,9 @@ src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawab
                          taffy (egui_taffy): panel = flex column of rows, row =
                          flex row of instrument nodes, all content-sized (+ the
                          shared min width) - no pixel positions or fixed panel
-                         boxes (interactivity via callbacks). Each scenario
+                         boxes (interactivity via callbacks). Each scene
                          implements UIDrawable itself (its own Time panel +
-                         scenario panels). Re-exports the instrument structs
+                         scene panels). Re-exports the instrument structs
                          (bare + Interactive*) + theme install_theme + the spec
                          types (PanelSet/UiPanel).
 src/engine/ui/instruments/mod.rs  the Instrument trait (render(&mut Tui): each
@@ -176,7 +176,7 @@ src/engine/planet.rs            EVERY body's data (Terra + the 7 planets + Luna;
                          bit-for-bit the old WGS84 math for Terra - and
                          parametric for triaxial Luna) + the WGS84 defining
                          consts and TERRA_MEAN_RADIUS_KM. satkit-free;
-                         references simulation::body for the CelestialBody
+                         references scene::body for the CelestialBody
                          type
 src/engine/renderer/mod.rs      the winit-free shared scene core, compiled into BOTH
                          binaries: SceneRenderer (5 pipelines: stars (full-
@@ -209,7 +209,7 @@ src/offscreen.rs         OffscreenRenderer: surfaceless Rgba8Unorm offscreen
                          shared SceneRenderer; owns MAX_FRAME_DIMENSION. The
                          headless bin's presenter (its tree only; the windowed
                          twin is application/gfx.rs)
-src/engine/simulation/body.rs   the celestial-body hierarchy: CelestialBody identity
+src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
                          enum (TerraSystem(TerraSystemEntity Terra|Luna), then
                          each planet Mercury..Neptune as its own variant) +
                          total geometry accessors (name/mean_radius/surface/
@@ -220,9 +220,9 @@ src/engine/simulation/body.rs   the celestial-body hierarchy: CelestialBody iden
                          from it), Placement (pos+rot), BodyState (identity
                          + placement). The shared vocabulary for the celestial
                          sphere, CameraTarget, and the selectors
-src/engine/simulation/mod.rs    Simulation trait (UI- and camera-agnostic; just
+src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
                          advance(); the clock + celestial sphere live directly
-                         in each scenario struct), RenderState
+                         in each scene struct), RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
                          + camera_target + markers (each SatelliteMarker carries
                          a satellite::Propagation - cloned TLE or GCRF state
@@ -235,14 +235,14 @@ src/engine/simulation/mod.rs    Simulation trait (UI- and camera-agnostic; just
                          TargetSelector (Terra/Luna, eclipses), BodySelector (one
                          latching key per body, 9 bodies ordered by distance from
                          Sol, solar_system)
-src/engine/simulation/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
+src/engine/scene/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          + Luna position (DE440) and IAU lunar rotation;
                          sol_pos_world + the 7 planets' position (DE440) and IAU
                          planet rotation, all assembled into bodies:
                          Vec<BodyState> (Terra, Luna, 7 planets in planet::ALL
                          order); iau_body_to_gcrf helper. Called by the renderer
                          each frame (keyed on RenderState.time)
-src/engine/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
+src/engine/scene/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversion
                          (marker state also carries the GCRF pos/vel as
                          OrbitState); Propagation enum (Sgp4(Box<TLE>) |
                          Numerical(OrbitState)) + orbit_path_inertial, which
@@ -258,7 +258,7 @@ src/engine/simulation/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km con
                          SatelliteState as the SGP4 arm), orbit_shape
                          (osculating apo/peri/speed, None for e >= 1); plus a
                          render-free circular-LEO unit test of that pipeline
-src/engine/simulation/clock.rs  simulation Clock: wall-dt x speed, play/pause
+src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause
 shaders/scene.wgsl       ALL shader code (5 passes in one module: a single
                          distance-adaptive body impostor for all 9 bodies
                          (perspective/orthographic ray trace, writes
@@ -280,54 +280,54 @@ Two bin roots over the one shared `engine` (no lib crate); the trees differ
 only in their top-level extras:
 
 ```
-main (bin globe-experiment) -> engine, scenarios (NO offscreen/headless code)
-headless (bin headless)     -> engine, offscreen (NO scenarios; compiles
+main (bin globe-experiment) -> engine, scenes (NO offscreen/headless code)
+headless (bin headless)     -> engine, offscreen (NO scenes; compiles
                                        # engine::application dead - covered by
                                        # its crate-level allow(dead_code))
-engine      = application, camera, planet, renderer, simulation, ui
+engine      = application, camera, planet, renderer, scene, ui
                                        # - declared identically by both roots
 application -> camera (the CameraControl/CameraView traits + their input
                                        # types, NOT PtzCamera),
-                                       # simulation (Simulation trait +
+                                       # scene (Scene trait +
                                        # RenderState only - NO CelestialSphere
                                        # access anymore), renderer, ui, (winit,
                                        # egui, egui_winit). Contains gfx.rs
                                        # (the windowed Gfx presenter around
                                        # renderer's SceneRenderer)
-camera      -> simulation (CameraTarget + CelestialSphere + RenderState),
+camera      -> scene (CameraTarget + CelestialSphere + RenderState),
                                        # renderer::FOV_Y_DEG, (glam)  # winit-free
 offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
-                                       # simulation (RenderState), (wgpu,
+                                       # scene (RenderState), (wgpu,
                                        # egui_wgpu, image)  # headless tree only
 ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
-renderer    -> simulation (RenderState + CelestialSphere::at),
+renderer    -> scene (RenderState + CelestialSphere::at),
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
                                        # winit-free (Gfx moved to application);
                                        # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-simulation  -> planet, ui, (satkit, egui via ui, glam)  # selector
+scene       -> planet, ui, (satkit, egui via ui, glam)  # selector
                                        # panel builders use ui; NO winit/wgpu/
                                        # camera types
-planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
+planet      -> scene::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
-                                       # (mutual ref with simulation::body)
-scenarios   -> simulation, ui, application, camera (CameraControl/CameraView
+                                       # (mutual ref with scene::body)
+scenes      -> scene, ui, application, camera (CameraControl/CameraView
                                        # traits + PtzCamera)
 ```
 
-## `Simulation` trait
+## `Scene` trait
 
-Defined in `src/engine/simulation/mod.rs`. One of the four traits every
-scenario implements (`ApplicationState<S>` bounds
-`S: Simulation + CameraControl + CameraView + UIDrawable`); adding a scenario
+Defined in `src/engine/scene/mod.rs`. One of the four traits every
+scene implements (`ApplicationState<S>` bounds
+`S: Scene + CameraControl + CameraView + UIDrawable`); adding a scene
 requires no changes
 to the application layer. It is **UI- and camera-agnostic** - the panel
-reads/drives a scenario through a *separate* `ui::UIDrawable` impl, and the
-frame's `RenderState` comes from the scenario's *separate* `camera::CameraView`
-impl. (The `Simulation` trait itself takes no UI or camera types; the
-`simulation` module does depend on `ui` for the selector panel builders,
+reads/drives a scene through a *separate* `ui::UIDrawable` impl, and the
+frame's `RenderState` comes from the scene's *separate* `camera::CameraView`
+impl. (The `Scene` trait itself takes no UI or camera types; the
+`scene` module does depend on `ui` for the selector panel builders,
 `TargetSelector::panel` / `BodySelector::panel`.)
 
 ```
@@ -344,10 +344,10 @@ default) and **`CameraView`** (`frame_state`, the frame production). Both +
 the winit-free input vocabulary (`PointerButton`,
 `ScrollDelta::{Lines,Pixels}`, `CursorHint::{Default,Grab,Grabbing}`) live in
 `src/engine/camera/mod.rs`; the reusable interactive implementation
-`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scenario implements both
+`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scene implements both
 traits itself, usually by embedding a `camera: PtzCamera` field and forwarding
-(the forwarding block is deliberately duplicated per scenario, like the Time
-panel, so a scenario can diverge - gate input, or fly a future scripted/fixed
+(the forwarding block is deliberately duplicated per scene, like the Time
+panel, so a scene can diverge - gate input, or fly a future scripted/fixed
 camera type by implementing only `CameraView` and leaving `CameraControl`'s
 defaults).
 
@@ -369,7 +369,7 @@ scroll(&mut self, delta) -> bool              [default: no-op, false]
 tick(&mut self, viewport_height) -> bool      [default: no-op, false]
     Advance one frame of camera animation (flick coast, zoom glide) with
     real frame time. Called at the top of every redraw, BEFORE
-    Simulation::advance. Returns true while another frame is needed; with a
+    Scene::advance. Returns true while another frame is needed; with a
     paused clock this reaching false is what lets the app go idle.
 
 cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
@@ -381,15 +381,15 @@ CameraView:
 frame_state(&mut self) -> RenderState
     Produce the frame: re-aim the camera at the frame's target (PtzCamera::
     retarget - which itself cancels in-flight animation on a genuine body
-    switch), resolve the rig against the scenario's own celestial sphere
+    switch), resolve the rig against the scene's own celestial sphere
     (world_rig), propagate all satellites once, fill RenderState (time +
     rig + camera_target + markers). Stashes the same-propagation
-    per-satellite readout on the scenario for the immediately-following
+    per-satellite readout on the scene for the immediately-following
     get_drawables call. The camera_target packed into RenderState MUST be
     the same one the rig was retargeted to.
 ```
 
-Per-frame application order: `tick` -> `Simulation::advance` ->
+Per-frame application order: `tick` -> `Scene::advance` ->
 `frame_state` (idle invariant: redraw is re-requested only while
 `tick() || advance()` reports motion, or egui asks for a repaint).
 
@@ -398,9 +398,9 @@ Per-frame application order: `tick` -> `Simulation::advance` ->
 The trait + panel live in `src/engine/ui/mod.rs`; each instrument is a struct in its
 own `src/engine/ui/instruments/*.rs` (egui-free *data* + boxed closures - egui only
 enters in each instrument's `render` and in `control_panel`). Decouples panel
-*rendering* from *interactivity*. The trait stays separate from `Simulation`;
-each scenario implements it itself, building its own Time panel from its
-directly-held clock plus its scenario panels.
+*rendering* from *interactivity*. The trait stays separate from `Scene`;
+each scene implements it itself, building its own Time panel from its
+directly-held clock plus its scene panels.
 
 ```
 UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
@@ -447,15 +447,15 @@ trait Instrument { render(&mut self, tui: &mut Tui) }
 PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
 ```
 
-- Each scenario's `impl UIDrawable` emits the **Time panel** (top-left) first,
+- Each scene's `impl UIDrawable` emits the **Time panel** (top-left) first,
   built from live state: the UTC datetime + speed readouts, and the Run toggle
   + speed slider whose callbacks mutate the live clock (each captures a
   *disjoint* clock field - `paused` vs `multiplier` - via direct field
   assignment, so both coexist with no interior mutability; do not call a
   `Clock` method in those closures, it would borrow the whole clock). The
-  panel-building code is **deliberately duplicated per scenario** (like the
-  propagation loop) so each scenario can diverge in what it exposes.
-- After the Time panel, each scenario pushes its own panel(s): top-right
+  panel-building code is **deliberately duplicated per scene** (like the
+  propagation loop) so each scene can diverge in what it exposes.
+- After the Time panel, each scene pushes its own panel(s): top-right
   telemetry from the stashed `last_telemetry` (a disjoint field) or the
   selector panel, plus manual_control's bottom-center Burns panel. All panels
   are independently anchored - no stacking constant.
@@ -474,19 +474,19 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   with the gunmetal `panel_frame` and paints the bevel highlight + corner
   rivets per panel.
 
-Every scenario struct holds the clock + celestial sphere as direct fields
+Every scene struct holds the clock + celestial sphere as direct fields
 (there is no shared core struct), alongside its own satellites/selector.
-`Clock` is re-exported from `simulation` so callers need not know the `clock`
+`Clock` is re-exported from `scene` so callers need not know the `clock`
 submodule path.
 
 ## Purity rules (compiler-enforced)
 
-- **`simulation` imports neither winit/wgpu nor any camera type.**
+- **`scene` imports neither winit/wgpu nor any camera type.**
   `RenderState` is plain data (time + resolved `DVec3` rig + `CameraTarget` +
-  markers), produced by the scenario's `camera::CameraView` impl and consumed
+  markers), produced by the scene's `camera::CameraView` impl and consumed
   by the renderer. This keeps input scheme changes local to `camera` (+ one
-  translation arm in `application`) and each scenario independently testable.
-  `simulation` *does* depend on `ui` (hence egui, transitively) for the
+  translation arm in `application`) and each scene independently testable.
+  `scene` *does* depend on `ui` (hence egui, transitively) for the
   selector panel builders (`TargetSelector::panel` / `BodySelector::panel`).
   The `UIDrawable`/`UIDrawablePanel`/`Instrument`
   types are still defined in `ui`, and interactivity is carried by the
@@ -504,15 +504,15 @@ submodule path.
   (`translate_camera_event`, stateless). Other modules see only the resolved
   rig inside `RenderState`; the renderer rebuilds the projection from it via
   `renderer::view_proj_reversed_z` (the FOV/near/far projection consts also
-  live in `renderer`). (`RenderState` is defined in `simulation` but consumed
-  by `renderer`, and `CameraTarget` is defined in `simulation` but consumed by
+  live in `renderer`). (`RenderState` is defined in `scene` but consumed
+  by `renderer`, and `CameraTarget` is defined in `scene` but consumed by
   `camera` — the two allowed edges. `CameraTarget` is plain **identity** data:
   it names no camera/winit/wgpu type, only the orbit subject (a
   `CelestialBody` identity, or a free `Coordinate`). It does **not** store the
   body's moving center; the center is resolved from the `CelestialSphere` on
   demand via `center_world(&sphere)` / `render_origin(&sphere)`, with the
   static geometry accessors delegating through the identity to `planet`. The
-  scenario owns its camera outright - there is no scenario→application camera
+  scene owns its camera outright - there is no scene→application camera
   channel anymore.)
 - **`renderer` is winit-free (by convention, kept by review).** The windowed
   `Gfx` presenter (the only winit-touching render code) lives in
@@ -522,11 +522,11 @@ submodule path.
   `engine` — the headless tree *compiles* `engine::application` (winit
   included) but never calls it, so "headless runs no winit code" is no longer
   compiler-enforced module-by-module. What the compiler still enforces is the
-  top level: the `headless` bin root must never declare `scenarios`, and
+  top level: the `headless` bin root must never declare `scenes`, and
   `main.rs` must never declare `offscreen`.
 - **`application` does not touch the `CelestialSphere`.** (The 2026-07 camera
   re-home reinstated this: retargeting and rig resolution moved into each
-  scenario's `CameraView::frame_state`, which reads the scenario's own sphere, so
+  scene's `CameraView::frame_state`, which reads the scene's own sphere, so
   the old "relaxed" exception - `application` reading it via
-  `Simulation::celestial()` - is gone along with that method.) `application`
+  `Scene::celestial()` - is gone along with that method.) `application`
   consumes only the finished `RenderState`.

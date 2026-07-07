@@ -4,7 +4,7 @@ An astronomically-accurate, interactive 3D solar-system simulation with
 satellite tracking, written
 in Rust with [wgpu](https://wgpu.rs) for rendering, [winit](https://github.com/rust-windowing/winit)
 for windowing and input, and [egui](https://github.com/emilk/egui) for
-the control overlay. It simulates **past** scenarios (events before the
+the control overlay. It simulates **past** scenes (events before the
 build date), which is what lets it use a fixed, never-changing record of
 Earth-orientation data for full accuracy.
 
@@ -47,7 +47,7 @@ a `distance` scaled to the body), and an optional `ui`
 section that overlays mock UI panels for debugging UI layouts headlessly (see
 `src/engine/ui/spec.rs`'s `UiPanel`). Unknown JSON keys are rejected. `--width`/`--height` default to 1920x1080. The frame is
 written as a PNG and a short summary (resolved datetime, camera, output path)
-is printed. Unlike the interactive scenarios, the datetime here is **not**
+is printed. Unlike the interactive scenes, the datetime here is **not**
 range-checked against the bundled Earth-orientation data - times outside the
 bundled range (before 1962 or after the build date) render but silently lose
 accuracy, so use a past, in-range datetime for a faithful frame.
@@ -84,7 +84,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   shadow darkens a spot on Terra during a solar eclipse, and Terra's
   shadow turns Luna a dim coppery red during a lunar eclipse (a "blood-red
   Luna"). A depth buffer makes Terra correctly occlude the more distant Luna.
-- The whole solar system: the `solar_system` scenario draws the seven planets
+- The whole solar system: the `solar_system` scene draws the seven planets
   (Mercury through Neptune) at their true DE440 positions and scale, shaped as
   triaxial ellipsoids with equal equatorial axes - their familiar oblate forms,
   Saturn and Jupiter visibly flattened - oriented by the IAU
@@ -105,12 +105,12 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 - Real Earth-orientation parameters: satellite positions use measured polar
   motion and UT1-UTC (CelesTrak's `EOP-All.csv`), so the ground track is
   accurate to sub-arcsecond. This holds for past dates within the bundled EOP
-  record (1962 onward); the tool simulates past scenarios only.
+  record (1962 onward); the tool simulates past scenes only.
 - Smooth map-style navigation: panning follows the cursor at
   any zoom level, from whole-Terra spins down to country level. The camera orbits
-  a chosen body - always Terra for satellite scenarios, either Terra
-  or Luna in the eclipse scenarios (a Terra / Luna selector in the panel),
-  and any of nine bodies in the solar-system scenario (a key per body in the
+  a chosen body - always Terra for satellite scenes, either Terra
+  or Luna in the eclipse scenes (a Terra / Luna selector in the panel),
+  and any of nine bodies in the solar-system scene (a key per body in the
   panel), with pan/tilt/zoom scaled to whichever body is targeted.
 - Real-world geometry: Terra is the WGS84 reference ellipsoid and the
   scene is modeled in kilometers, so it can host real-scale orbital
@@ -126,7 +126,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   advances time (play/pause and an exponential real-time to 100x speed slider),
   so Sol, stars, and every satellite all move live; the panel shows the
   current datetime, the subsolar point, and each object's ground position.
-- Manual orbit control: the `manual_control` scenario starts one satellite
+- Manual orbit control: the `manual_control` scene starts one satellite
   from the ISS orbit and hands you the thrusters. Hold a key in the Burns
   panel - prograde / retrograde, normal / anti-normal, radial out / radial
   in - and a (deliberately game-strength) thrust integrates into the

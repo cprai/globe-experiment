@@ -31,7 +31,7 @@ find target -type d -name out -path '*globe-experiment*' 2>/dev/null
   `build.rs`'s `mod atmosphere` (do this after the
   `edit-atmosphere-constants` skill).
 - **EOP snapshot** (`EOP-All.csv`): delete it to pull a fresher CelesTrak
-  snapshot. This also moves the scenario upper-bound (last data row).
+  snapshot. This also moves the scene upper-bound (last data row).
   ```sh
   rm "$OUT_DIR"/EOP-All.csv && cargo build --release   # needs network
   ```

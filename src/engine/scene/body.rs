@@ -33,7 +33,7 @@ pub enum TerraSystemEntity {
 }
 
 /// Identity of a renderable body, with no placement. This is the vocabulary the
-/// [`crate::engine::simulation::CameraTarget`] and the body selectors speak;
+/// [`crate::engine::scene::CameraTarget`] and the body selectors speak;
 /// per-frame position/orientation lives in [`BodyState`].
 ///
 /// Hierarchical: Terra and Luna are reached through [`TerraSystemEntity`];

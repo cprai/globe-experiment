@@ -16,7 +16,7 @@ paths:
 
 Two bin roots (`main.rs` = the windowed `globe-experiment`, `headless.rs` =
 the single-frame `headless` bin), both declaring the one shared `src/engine/`
-module (no lib crate) plus their own top-level extra (`scenarios` for main,
+module (no lib crate) plus their own top-level extra (`scenes` for main,
 `offscreen` for headless). The engine modules:
 - **`application`** — window, egui logic, and the windowed presenter. Keeps
   NO camera or input state: `translate_camera_event` statelessly maps each
@@ -25,18 +25,18 @@ module (no lib crate) plus their own top-level extra (`scenarios` for main,
   the winit-touching code lives here; only the main tree calls it (the
   headless tree compiles it dead).
 - **`camera`** — directory module, winit-free, shared by both trees.
-  `camera/mod.rs`: the `CameraControl` + `CameraView` traits every scenario
+  `camera/mod.rs`: the `CameraControl` + `CameraView` traits every scene
   implements (input/tick/cursor_hint vs frame_state) + the
   device-neutral input types (`PointerButton`/`ScrollDelta`/`CursorHint`).
   `camera/ptz.rs`: `PtzCamera`, the interactive pan/tilt/zoom rig + ALL its
-  input/animation state; scenarios embed one and forward both traits to it, the
+  input/animation state; scenes embed one and forward both traits to it, the
   headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
-- **`simulation`** — the `Simulation` trait (UI-agnostic), `RenderState`,
+- **`scene`** — the `Scene` trait (UI-agnostic), `RenderState`,
   `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
-  helpers. The clock + celestial sphere are held **directly by each scenario
+  helpers. The clock + celestial sphere are held **directly by each scene
   struct** (there is no shared core struct). **No winit/wgpu dependency. No
   camera type** (the trait shrank to `advance()`; the frame's `RenderState` -
-  plain data defined here - is produced by the scenario's `camera::CameraView`
+  plain data defined here - is produced by the scene's `camera::CameraView`
   impl, the UI readout pulled separately via `ui::UIDrawable`). Depends on
   `ui` (hence egui) only for the selector panel builders.
 - **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
@@ -46,8 +46,8 @@ module (no lib crate) plus their own top-level extra (`scenarios` for main,
   `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
   `control_panel` that frames each panel at its anchored corner and lays out
   its rows of boxed `Instrument`s with taffy (`egui_taffy`; content-sized, no
-  pixel positions; no `Clock`/scenario knowledge). Each scenario implements
-  `UIDrawable` itself (its own Time panel + scenario panels).
+  pixel positions; no `Clock`/scene knowledge). Each scene implements
+  `UIDrawable` itself (its own Time panel + scene panels).
   `ui/instruments/*.rs` is one `Instrument`-impl struct per file;
   `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
   panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
@@ -57,13 +57,13 @@ The top-level (non-engine) modules:
 - **`offscreen`** — `OffscreenRenderer` (`src/offscreen.rs`): the headless
   bin's surfaceless presenter + readback around `SceneRenderer`. Headless bin
   tree only.
-- **`scenarios`** — one `<Name>Simulation` struct per past scenario
-  implementing `Simulation` + `CameraControl` + `CameraView` + `UIDrawable`,
+- **`scenes`** — one `<Name>Scene` struct per past scene
+  implementing `Scene` + `CameraControl` + `CameraView` + `UIDrawable`,
   each with a `run()`.
   Each struct holds its `Clock` + `CelestialSphere` + `camera: PtzCamera`
   directly and builds its own Time panel (the panel code and the
-  camera-trait forwarding block are deliberately duplicated per scenario so
-  scenarios can diverge). Satellites live here, not in `simulation`.
+  camera-trait forwarding block are deliberately duplicated per scene so
+  scenes can diverge). Satellites live here, not in `scene`.
 - **`headless` bin root** (`src/headless.rs`) — the single-frame render
   binary: flat `--scene`/`--output` CLI, scene-spec parsing, mock-UI
   `build_ui_frame`, calls `OffscreenRenderer`. Carries a crate-level
@@ -86,9 +86,9 @@ The top-level (non-engine) modules:
   (`FOV_Y_DEG`, `NEAR_PLANE_RADII`, `FAR_PLANE_KM`); the far plane is a *floor* —
   `prepare` grows it to enclose a large orbited body (see `camera.md`).
 - **All build assets**: in `OUT_DIR`, `include_bytes!`-ed. No `assets/` dir.
-- **TLE data**: inline source `const`s in the scenario files, not in
+- **TLE data**: inline source `const`s in the scene files, not in
   `satellite.rs`. The `ISS_TLE` literal is **deliberately duplicated** across
-  scenarios that need it — do not factor into a shared const.
+  scenes that need it — do not factor into a shared const.
 
 ## Documentation rule
 

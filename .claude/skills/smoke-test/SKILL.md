@@ -9,7 +9,7 @@ Render a single frame with the `headless` binary. It builds the same shared
 `renderer::SceneRenderer` as the windowed app — all pipelines and bind groups
 are created in `SceneRenderer::new`, and wgpu validation errors **panic there
 or at first draw** — so one clean frame means pipelines/bindings are valid.
-No scenario, no window, no display server needed (works in the dev sandbox
+No scene, no window, no display server needed (works in the dev sandbox
 via lavapipe).
 
 ## Command

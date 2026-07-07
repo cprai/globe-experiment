@@ -6,7 +6,7 @@
 //! scene, with cream "lit readout" text and keys that light green when engaged.
 //! References: real Apollo CSM/LM panels (gunmetal + engraved labels + lamp
 //! accents) and the game UI in `ui_examples/`. Every color *and metric* is
-//! theme-internal: producers (the scenarios) pick *which
+//! theme-internal: producers (the scenes) pick *which
 //! instrument* to draw, not its color or spacing - the style lives here and is
 //! consumed by the instrument renderers (each owns its own
 //! `Instrument::render`), and layout comes from the taffy styles below, not

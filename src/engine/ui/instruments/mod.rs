@@ -1,7 +1,7 @@
 //! Pre-styled instruments - one self-contained type per file, each a specific
 //! display with a baked-in look.
 //!
-//! A producer (a scenario) picks *which* instrument and
+//! A producer (a scene) picks *which* instrument and
 //! supplies its content, but **never** its color, font, emphasis, or metrics -
 //! that all lives in each instrument's [`Instrument::render`], which pulls
 //! from [`crate::engine::ui::theme`] (palette + the spacing/type/radius

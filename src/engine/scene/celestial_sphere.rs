@@ -39,7 +39,7 @@ use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
 
 use crate::engine::planet::{self, Rotation};
-use crate::engine::simulation::body::{BodyState, CelestialBody, Placement};
+use crate::engine::scene::body::{BodyState, CelestialBody, Placement};
 
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
 /// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s straight
@@ -134,7 +134,7 @@ const R_EQU2GAL: DMat3 = DMat3::from_cols_array(&[
 ///    mode as the EOP table: satkit's lazy resolver would `from_file(..)` each
 ///    one, recreating `satkit-data` (and panicking if absent). Seeding them up
 ///    front consumes that one-shot load, and must happen before the first
-///    transform - which it does, since this runs at the top of each scenario.
+///    transform - which it does, since this runs at the top of each scene.
 ///
 /// 4. The EGM96 gravity-model singleton (`EGM96`). The numerical orbit
 ///    propagator (`satkit::orbitprop`, the `Propagation::Numerical` arm of the
@@ -165,7 +165,7 @@ pub fn init_satkit() {
 /// set-once (`AlreadyInitialized` on a second call), and the test binary runs
 /// every `#[test]` in one process, so any two tests that both need satkit
 /// globals must share one guarded seeding. Production keeps the bare
-/// [`init_satkit`] (one scenario per process; a double init there is a bug
+/// [`init_satkit`] (one scene per process; a double init there is a bug
 /// worth the panic).
 #[cfg(test)]
 pub(crate) fn init_satkit_for_tests() {
@@ -187,7 +187,7 @@ pub struct CelestialSphere {
     /// differs from Terra's. For a Terra-relative Sol direction, subtract
     /// Terra's center: `sol_pos_world - center_world(TERRA)`. f64 to match
     /// the body positions (heliocentric magnitudes overflow f32; see
-    /// [`crate::engine::simulation::body::Placement::pos_world`]).
+    /// [`crate::engine::scene::body::Placement::pos_world`]).
     pub sol_pos_world: DVec3,
     /// Rotation taking world (ECEF) view directions into the *equatorial*
     /// celestial (GCRF) frame. This is the inertial frame the camera rig is
@@ -200,7 +200,7 @@ pub struct CelestialSphere {
     /// galactic frame: `GALACTIC_OFFSET * star_rot_inv`. Uploaded to the shader
     /// as `star_rot_inv` (the equirectangular lookup matrix; cast to f32 at
     /// upload). Kept separate from the camera-rig frame above so the static
-    /// galactic->equatorial re-orientation does not move existing scenarios'
+    /// galactic->equatorial re-orientation does not move existing scenes'
     /// camera framing.
     pub star_tex_rot_inv: DMat3,
     /// Every renderable body's world-frame placement this frame, as a flat list
@@ -212,7 +212,7 @@ pub struct CelestialSphere {
     /// orientation). Luna's
     /// placement also drives the analytic eclipse shadows; its radius comes
     /// from the identity (`mean_radius_km`), not stored here. A
-    /// scenario takes the subset it draws - the Terra system
+    /// scene takes the subset it draws - the Terra system
     /// (Terra + Luna), or all of them.
     pub bodies: Vec<BodyState>,
 }
@@ -224,7 +224,7 @@ impl CelestialSphere {
     }
 
     /// Luna's placement this frame (always present). Convenience for the
-    /// eclipse scenarios and the rotation test.
+    /// eclipse scenes and the rotation test.
     pub fn luna(&self) -> &BodyState {
         self.body(CelestialBody::LUNA)
             .expect("Luna present in the celestial sphere")

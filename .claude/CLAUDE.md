@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Project rules and conventions for **Solar System**, an astronomically-accurate
-solar-system renderer with satellite tracking (past scenarios only). Rules are in
+solar-system renderer with satellite tracking (past scenes only). Rules are in
 `.claude/rules/` — topic files load at launch or when you open matching
 files. Read all loaded rules before making changes.
 
@@ -33,7 +33,7 @@ tracked satellite also draws its **predicted orbit path**: the marker carries
 a `Propagation` - a cloned TLE element set or a GCRF state vector - and the
 renderer propagates it one period ahead with the matching backend (analytic
 SGP4, or numerical satkit `orbitprop` needing no TLE - what the
-**manually-controlled satellite** flies on: the `manual_control` scenario
+**manually-controlled satellite** flies on: the `manual_control` scene
 seeds one object from the ISS TLE, re-anchors its GCRF state vector to the
 clock each frame, and its bottom-center **Burns panel** of six hold-to-fire
 keys (prograde/retrograde, normal/anti-normal, radial out/in) integrates a
@@ -43,8 +43,8 @@ does), rendering the star-fixed
 inertial ellipse as a thick depth-tested line whose tail fades out sharply
 near one full orbit), inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
-any of the **seven planets** in the `solar_system` scenario via a body-selector
-panel (one key per body); Luna in the eclipse scenarios via a Terra/Luna
+any of the **seven planets** in the `solar_system` scene via a body-selector
+panel (one key per body); Luna in the eclipse scenes via a Terra/Luna
 panel; the `headless`
 binary picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
 simulation clock (1x-100x, plays from launch). Luna is
@@ -94,16 +94,16 @@ a `has_atmosphere` body sits at the render origin — Terra/Luna targets today)
 and the **satellite overlays** (orbit paths + markers, Terra-frame positions)
 are the only gated passes. For Terra/Luna (render origin at Terra)
 geometry stays Terra-local. A **reversed-Z depth buffer** (Depth32Float) makes
-Terra occlude Luna. **Past scenarios only** (before build date) — what makes full EOP accuracy
+Terra occlude Luna. **Past scenes only** (before build date) — what makes full EOP accuracy
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
 The crate builds **two binaries over one shared `src/engine/`** (no lib
-crate): `globe-experiment` (`src/main.rs`, the windowed app + scenarios) and
+crate): `globe-experiment` (`src/main.rs`, the windowed app + scenes) and
 `headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
 declare `mod engine;` (everything used to run the app: `application`, `camera`,
-`planet`, `renderer`, `simulation`, `ui`); the trees differ
-only at the top level — `scenarios` exists only in the main tree, `offscreen`
+`planet`, `renderer`, `scene`, `ui`); the trees differ
+only at the top level — `scenes` exists only in the main tree, `offscreen`
 only in the headless tree. The headless binary compiles (but never calls) the
 winit-bound `engine::application`; its crate-level `allow(dead_code)` covers
 that.

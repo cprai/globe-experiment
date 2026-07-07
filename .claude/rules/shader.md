@@ -69,7 +69,7 @@ paths:
   apparent diameter straddles the cutoff over the month) Luna are perspective,
   so this is at most a few full-screen passes. The
   group-1 layout is shared (per-body bind groups; dummies fill the optional
-  map slots); only the solar-system scenario shows the planets prominently
+  map slots); only the solar-system scene shows the planets prominently
   (the Terra/Luna views carry them too, but far off-screen).
 - **Only the atmosphere and the satellite overlays are gated; every body
   always draws.** The atmosphere (a CPU-sized screen quad) draws when a
@@ -95,7 +95,7 @@ paths:
   derives its Sol direction from `sol_pos` (`normalize(sol_pos - world_pos)` for
   surfaces, `normalize(sol_pos)` for the backdrop disc).
 - **Markers are instanced screen-space overlays** drawn last. CPU occlusion
-  per marker (`marker_occluded` in `src/engine/simulation/mod.rs`). No depth test.
+  per marker (`marker_occluded` in `src/engine/scene/mod.rs`). No depth test.
 - **Orbit paths are instanced mitered line segments** (`vs_path`/`fs_path`),
   drawn just before the markers: constant pixel width via the marker `clip.w`
   trick, watertight miter joints from per-instance neighbor samples (any

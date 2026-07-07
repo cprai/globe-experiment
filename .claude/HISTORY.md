@@ -66,12 +66,12 @@ to consume the one-shot lazy load. (Empty seed superseded in phase 10.)
 downloaded into `OUT_DIR` and embedded. `qteme2itrf` now applies real polar
 motion + UT1-UTC (sub-arcsec). Project reframed as **past-only, astronomically-
 accurate** satellite simulation tool. Valid EOP range ~1962 to build date;
-past-only keeps every scenario in range permanently.
+past-only keeps every scene in range permanently.
 
 **Phase 11** (2026-06-19) — **Multiple satellites.** `SimulationState` holds
-`Vec<Satellite>`; assembled by the scenario. One instanced draw for all
+`Vec<Satellite>`; assembled by the scene. One instanced draw for all
 markers (per-instance position + visibility). UI lists one block per satellite.
-`ISS_TLE`/`HST_TLE` consts moved from `satellite.rs` into the scenario file
+`ISS_TLE`/`HST_TLE` consts moved from `satellite.rs` into the scene file
 (element-set agnostic module).
 
 **Phase 12** (2026-06-20) — **No `assets/` dir; everything in `OUT_DIR`.**
@@ -79,11 +79,11 @@ Textures downloaded into memory and decoded+BC7-encoded in one pass; `.ktx2`
 output is the cache. `download_if_missing` gone; `embed_verbatim` for the
 satkit data files.
 
-**Phase 13** (2026-06-20) — **Scenarios module + clap CLI.** New
-`src/scenarios/` with one module per past scenario (`run()`). `main.rs`
-reduced to a pure clap CLI (`scenario <name>` | `render` subcommands).
-`ScenarioName` is a `ValueEnum`; bare `scenario` lists available scenarios.
-Added `scenarios::iss` (ISS-only) alongside `scenarios::iss_and_hubble`.
+**Phase 13** (2026-06-20) — **Scenes module + clap CLI.** New
+`src/scenes/` with one module per past scene (`run()`). `main.rs`
+reduced to a pure clap CLI (`scene <name>` | `render` subcommands).
+`SceneName` is a `ValueEnum`; bare `scene` lists available scenes.
+Added `scenes::iss` (ISS-only) alongside `scenes::iss_and_hubble`.
 
 **Phase 14** (2026-06-21) — **Drop GPU texture compression for multiplatform.**
 BC7/KTX2 transcode removed from `build.rs`; textures downloaded verbatim
@@ -102,8 +102,8 @@ Decisions made during the phases above that need their reasoning preserved.
 
 ### Module architecture
 
-**`simulation` has no winit/wgpu/egui dependency, and no `Camera` type.**
-This was an explicit design decision: `simulation` deals only in glam/satkit
+**`scene` has no winit/wgpu/egui dependency, and no `Camera` type.**
+This was an explicit design decision: `scene` deals only in glam/satkit
 values and receives a resolved `Vec3`/`Mat4` for the camera. This makes
 `frame_state` independently testable and keeps any future input-scheme change
 (e.g. touch) entirely local to `application`. Enforced by import discipline.
@@ -113,7 +113,7 @@ values and receives a resolved `Vec3`/`Mat4` for the camera. This makes
 controller never sees it. This replaces iced's `stack![]` overlay capture and
 is what makes panel interaction not pan the scene.
 
-**`simulation.advance()` runs before the UI frame.** This means each frame
+**`scene.advance()` runs before the UI frame.** This means each frame
 applies the *previous* frame's play/pause/speed edits — a one-frame (~16 ms)
 delay. Accepted: it lets a single `state_at(now)` call per satellite feed
 both the marker and the readout without the two diverging mid-frame.

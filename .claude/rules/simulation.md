@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/engine/simulation/**/*.rs"
+  - "src/engine/scene/**/*.rs"
 ---
 
 # Simulation & satkit rules
@@ -33,7 +33,7 @@ sub-pixel antialiasing/dither shifts from the higher-precision math).
 
 **`init_satkit()` must seed the ephemeris, the EOP table, the three IERS
 nutation/CIO tables, and the EGM96 gravity model** before any satkit use.
-Call it once at the start of each scenario's `run()`.
+Call it once at the start of each scene's `run()`.
 
 ```rust
 satkit::jplephem::init_from_bytes(EPHEMERIS)        // DE440 OnceLock
@@ -80,7 +80,7 @@ rotation:
   -> ITRF (full `qgcrf2itrf`) -> world via P, /1000 for km is the origin-shift
   every body position subtracts.) The renderer still uploads it as
   `sol_pos = sol_pos_world - render_origin` so every body lights from its own
-  local Sol direction; the solar-eclipse scenario frames the day side from the
+  local Sol direction; the solar-eclipse scene frames the day side from the
   Terra-relative Sol direction `sol_pos_world - center_world(TERRA)`.
 - `star_rot_inv = P * R_itrf2gcrf * P^T` (world -> equatorial celestial). This
   is the frame the camera rig is built from (see `camera.md`). As time
@@ -162,7 +162,7 @@ the same DE440:
 
 ## Satellite pipeline (satellite.rs)
 
-Each `Satellite` is element-set agnostic — TLEs live in the scenarios, not
+Each `Satellite` is element-set agnostic — TLEs live in the scenes, not
 here. `from_tle(text)` parses a 3-line TLE. Position is **not stored**;
 `state_at(time)` propagates on demand (`sgp4` needs `&mut TLE`). The parsed
 `TLE` is retained because sgp4 caches its propagator inside it.
@@ -211,7 +211,7 @@ recompute every frame (no caching).
 **TLE-free manual-control pipeline** (`satellite.rs`, all sharing the
 `numerical_settings()` force model above):
 - `propagate_numerical(state, from, to)` — one `orbitprop` step reading
-  `PropagationResult.state_end`; the `manual_control` scenario's per-frame
+  `PropagationResult.state_end`; the `manual_control` scene's per-frame
   re-anchor of its stored `OrbitState` to the clock (burn delta-v is then
   added to the velocity, so it compounds into every later frame).
 - `resolve_orbit(state, time)` — GCRF -> ITRF via `qgcrf2itrf(time)`, then

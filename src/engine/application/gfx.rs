@@ -16,7 +16,7 @@ use crate::engine::renderer::{
     DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
-use crate::engine::simulation::RenderState;
+use crate::engine::scene::RenderState;
 
 /// The renderer: owns the GPU surface/device/queue, the scene resources
 /// (pipelines, buffers, bind group), and the egui paint backend. Created once

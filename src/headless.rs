@@ -3,11 +3,11 @@
 //! fixes the celestial positions) and explicit camera parameters, and written
 //! to a caller-specified path - intended for visual debugging of rendering
 //! changes, e.g. by an agent that opens the image. This is the headless
-//! analogue of a scenario's `run` in the main binary.
+//! analogue of a scene's `run` in the main binary.
 //!
 //! This bin root declares its own module tree (the two binaries share source
 //! files, not a lib crate): the shared `engine` plus `offscreen`, and not the
-//! main binary's `scenarios`. The engine also carries items only the main
+//! main binary's `scenes`. The engine also carries items only the main
 //! binary calls (all of `engine::application`, plus windowed-only items in
 //! the shared modules), hence the crate-level `allow(dead_code)` - the main
 //! binary's tree keeps full dead-code checking for them.
@@ -22,17 +22,17 @@
 //! headless analogue of the windowed egui driving in the main binary's
 //! `application`.
 //!
-//! IMPORTANT: unlike scenarios (see the "Scenarios & valid time range" rules in
+//! IMPORTANT: unlike scenes (see the "Scenes & valid time range" rules in
 //! `CLAUDE.md`), the headless binary does **not** range-check the datetime
 //! against the bundled Earth-orientation (EOP) data. The caller owns the time,
 //! and an out-of-range datetime silently degrades rather than erroring: before
 //! ~1962-01-01 satkit falls back to zero EOP, and past the last bundled EOP
 //! entry it constant-extrapolates. Choosing an in-range past datetime for an
 //! accurate frame is the caller's responsibility. This deliberate deviation is
-//! also documented in `.claude/rules/scenarios.md` and the `analyze-render`
+//! also documented in `.claude/rules/scenes.md` and the `analyze-render`
 //! skill.
 
-// The shared engine is included whole in both bin trees; scenario/windowed-
+// The shared engine is included whole in both bin trees; scene/windowed-
 // only items in it are intentionally unused here (see the module doc above).
 #![allow(dead_code)]
 
@@ -47,8 +47,8 @@ use satkit::Instant;
 
 use crate::engine::camera::PtzCamera;
 use crate::engine::renderer::UiFrame;
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::{self, CameraTarget, CelestialBody, RenderState};
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::{self, CameraTarget, CelestialBody, RenderState};
 use crate::engine::ui::{self, PanelSet, UiPanel};
 use crate::offscreen::{MAX_FRAME_DIMENSION, OffscreenRenderer};
 
@@ -218,11 +218,11 @@ fn run(params: Cli) {
     }
 
     // Seed satkit's global state (embedded ephemeris + EOP) before any
-    // celestial-sphere or instant math, exactly like a scenario.
-    simulation::init();
+    // celestial-sphere or instant math, exactly like a scene.
+    scene::init();
 
     // Build the frame directly from the celestial sphere + camera: render mode
-    // has no clock, no tracked satellites, and no scenario struct. The camera
+    // has no clock, no tracked satellites, and no scene struct. The camera
     // math is identical to the windowed path (see `application`'s redraw).
     let celestial = CelestialSphere::at(&time);
     // Camera rig uses the equatorial frame (`star_rot_inv`); the star texture

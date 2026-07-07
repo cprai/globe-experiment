@@ -9,17 +9,17 @@
 //! - [`spec`] - the serde-deserialized [`PanelSet`]/[`UiPanel`]/[`UiElement`]
 //!   for the headless `--scene` overlay.
 //! - this file - the [`UIDrawable`] trait, [`UIDrawablePanel`]/[`PanelAnchor`],
-//!   and [`control_panel`]. Each scenario implements `UIDrawable` itself,
-//!   building its own Time panel plus any scenario panels.
+//!   and [`control_panel`]. Each scene implements `UIDrawable` itself, building
+//!   its own Time panel plus any scene panels.
 //!
 //! Panels are laid out by taffy flexbox (via `egui_taffy`): a panel is a
 //! content-sized flex column of rows, each row a flex row of instruments -
 //! there are no absolute pixel positions or fixed panel boxes. A producer
 //! groups instruments into rows; every metric comes from the `theme` tokens.
 //!
-//! The clock + celestial sphere live directly in each scenario struct. The
-//! panel reads/drives a scenario through its `UIDrawable` impl, which is kept
-//! separate from the `Simulation` trait.
+//! The clock + celestial sphere live directly in each scene struct. The
+//! panel reads/drives a scene through its `UIDrawable` impl, which is kept
+//! separate from the `Scene` trait.
 
 mod instruments;
 // The spec types are constructed only by the headless binary's tree (its
@@ -75,7 +75,7 @@ pub struct UIDrawablePanel<'a> {
 
 /// Anything the control panel can render: it yields a list of anchored
 /// [`UIDrawablePanel`]s, each owning rows of [`Instrument`]s. Implemented by
-/// each scenario (which returns its Time panel plus its own scenario panels).
+/// each scene (which returns its Time panel plus its own scene panels).
 /// `&mut self` so a control's callback can capture a disjoint mutable field
 /// of live state.
 pub trait UIDrawable {
@@ -96,11 +96,11 @@ fn anchor_to_egui(anchor: &PanelAnchor) -> (egui::Align2, egui::Vec2) {
 }
 
 /// The control/readout panel(s) over the scene: one panel holds the simulation
-/// clock (datetime, play/pause, and speed); a scenario may add its own (e.g.
+/// clock (datetime, play/pause, and speed); a scene may add its own (e.g.
 /// per-satellite position readouts, or a camera-target selector).
 ///
 /// This function is deliberately *decoupled from interactivity*: it knows
-/// nothing about the `Clock` or any scenario. It asks the `drawable` for a list
+/// nothing about the `Clock` or any scene. It asks the `drawable` for a list
 /// of [`UIDrawablePanel`]s, frames each at its anchored corner, and lays out
 /// each panel's rows with taffy (`theme::panel_layout` / `theme::row_layout`);
 /// each instrument adds its own flex node. Interactivity rides along inside

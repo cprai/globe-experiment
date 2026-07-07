@@ -1,6 +1,6 @@
 ---
 name: build-and-run
-description: Build and run the Solar System app with cargo run --release to see a change live - look, interaction feel, and pipeline-binding correctness. Use when asked to run, launch, start, or visually confirm the app, including running a specific scenario.
+description: Build and run the Solar System app with cargo run --release to see a change live - look, interaction feel, and pipeline-binding correctness. Use when asked to run, launch, start, or visually confirm the app, including running a specific scene.
 ---
 
 # Build & run the app
@@ -17,11 +17,11 @@ pipeline-binding correctness).
 cargo run --release
 ```
 
-To run a specific scenario (clap subcommand; a bare `scenario` lists them):
+To run a specific scene (clap subcommand; a bare `scene` lists them):
 ```sh
-cargo run --release -- scenario iss_and_hubble
-cargo run --release -- scenario iss
-cargo run --release -- scenario          # lists available scenarios
+cargo run --release -- scene iss_and_hubble
+cargo run --release -- scene iss
+cargo run --release -- scene          # lists available scenes
 ```
 
 ## Notes / gotchas

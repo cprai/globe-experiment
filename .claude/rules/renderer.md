@@ -195,7 +195,7 @@ dashes where the path grazes Terra's limb. The fade tail (`path_fade`,
 CPU-side per-endpoint alpha) holds full opacity until `PATH_FADE_START` of the
 period, then smoothsteps to zero at one full period. Recomputed every frame
 (a paused app renders zero frames, so idle stays free). Empty markers
-(eclipse/solar_system scenarios, the headless binary) mean `path_count == 0`
+(eclipse/solar_system scenes, the headless binary) mean `path_count == 0`
 and the draw is skipped; the paths/markers also gate on
 `draw_satellite_overlays` (render origin at Terra).
 
@@ -265,7 +265,7 @@ z-clipped) / `MAX_OCCLUDERS 4` (eclipse-occluder slots, must match
 
 The single-frame render mode is its own binary (`cargo run --release --bin
 headless -- --scene ... --output frame.png`) over the shared `engine` (no
-`scenarios`; it calls none of the winit code); `src/offscreen.rs` is its
+`scenes`; it calls none of the winit code); `src/offscreen.rs` is its
 presenter, `src/headless.rs` its bin root (CLI + scene spec + mock-UI
 driving). See `architecture.md`.
 
@@ -277,7 +277,7 @@ driving). See `architecture.md`.
   `compatible_surface: None` to the adapter.
 - **No EOP range check** in the headless binary. Out-of-range datetimes render
   and silently degrade. This is deliberate — documented in `headless.rs` and
-  `scenarios.md`.
+  `scenes.md`.
 - **No markers** in the headless binary (`RenderState.markers` is empty — so no
   predicted orbit paths either). The renderer
   derives every body from `RenderState.time`, so `camera.target` can be any of

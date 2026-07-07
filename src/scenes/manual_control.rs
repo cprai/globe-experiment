@@ -1,11 +1,11 @@
-//! Manually-controlled satellite scenario: one object seeded from the ISS TLE
+//! Manually-controlled satellite scene: one object seeded from the ISS TLE
 //! but propagated **numerically** (satkit `orbitprop`, no TLE retained), so
 //! the user can reshape the orbit at runtime. A bottom-center "Burns" panel
 //! offers the six orbital-frame thrust keys (prograde / retrograde, normal /
 //! anti-normal, radial out / radial in); while a key is held the thrust
 //! acceleration integrates into the GCRF velocity, and the marker, predicted
 //! orbit path, and apsis readouts all follow the post-burn state
-//! (CLI: `globe-experiment scenario manual_control`).
+//! (CLI: `globe-experiment scene manual_control`).
 
 use glam::DVec3;
 use satkit::Instant;
@@ -14,19 +14,19 @@ use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{
     CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
 };
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
-use crate::engine::simulation::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded,
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
+use crate::engine::scene::{
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, Scene, marker_occluded,
 };
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
-// This scenario's seed TLE, inlined as a source literal - see `iss.rs` for the
-// format notes. (Deliberately duplicated per scenario.) Unlike the tracking
-// scenarios the element set is used ONCE, to bootstrap the initial GCRF state
+// This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
+// format notes. (Deliberately duplicated per scene.) Unlike the tracking
+// scenes the element set is used ONCE, to bootstrap the initial GCRF state
 // vector; after that the orbit belongs to the user.
 
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
@@ -57,7 +57,7 @@ struct ManualTelemetry {
 /// Manually-controlled simulation: the clock + celestial sphere held directly,
 /// plus the satellite's live GCRF state vector (re-anchored to the clock every
 /// frame) and the six burn request flags.
-pub struct ManualControlSimulation {
+pub struct ManualControlScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
     /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
@@ -83,19 +83,19 @@ pub struct ManualControlSimulation {
     burn_radial_in: bool,
     /// See [`ManualTelemetry`]. `None` until the first frame.
     last_telemetry: Option<ManualTelemetry>,
-    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
     camera: PtzCamera,
 }
 
-impl ManualControlSimulation {
+impl ManualControlScene {
     fn new() -> Self {
         // The TLE lives exactly long enough to produce the initial conditions:
         // one SGP4 sample at its own epoch, converted to a GCRF state vector.
         let mut seed = Satellite::from_tle(ISS_TLE);
         let epoch = seed.epoch();
         let orbit = seed.state_at(&epoch).orbit;
-        // `simulation::init` must already have run (the celestial sphere reads
+        // `scene::init` must already have run (the celestial sphere reads
         // satkit globals).
         let clock = Clock::new(epoch);
         Self {
@@ -151,7 +151,7 @@ impl ManualControlSimulation {
     }
 }
 
-impl Simulation for ManualControlSimulation {
+impl Scene for ManualControlScene {
     fn advance(&mut self) -> bool {
         // Advance the clock and, while it is running, re-evaluate the
         // ephemeris-driven celestial sphere at the new time (paused = nothing
@@ -193,10 +193,10 @@ impl Simulation for ManualControlSimulation {
     }
 }
 
-impl CameraControl for ManualControlSimulation {
+impl CameraControl for ManualControlScene {
     // The input methods forward to the embedded PtzCamera; the forwarding
-    // block is deliberately duplicated per scenario (like the Time panel) so
-    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    // block is deliberately duplicated per scene (like the Time panel) so
+    // a scene can diverge - e.g. gate input or swap the camera kind.
     fn pointer_press(&mut self, button: PointerButton) -> bool {
         self.camera.pointer_press(button)
     }
@@ -222,7 +222,7 @@ impl CameraControl for ManualControlSimulation {
     }
 }
 
-impl CameraView for ManualControlSimulation {
+impl CameraView for ManualControlScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 
@@ -267,14 +267,14 @@ impl CameraView for ManualControlSimulation {
     }
 }
 
-impl UIDrawable for ManualControlSimulation {
+impl UIDrawable for ManualControlScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
         // The Time panel first (its callbacks capture disjoint `self.clock`
         // fields), then the telemetry panel from the disjoint `last_telemetry`,
         // then the Burns panel whose key callbacks each capture one disjoint
         // `burn_*` flag - all coexisting borrows of separate fields. The panel
-        // builder is deliberately kept per-scenario (like the propagation
-        // loop) - scenarios may diverge in what they expose.
+        // builder is deliberately kept per-scene (like the propagation
+        // loop) - scenes may diverge in what they expose.
         //
         // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
         // so no shared borrow of the clock outlives into the mutable callback
@@ -452,7 +452,7 @@ pub fn run() {
     // Seed satkit's global state (embedded ephemeris + EOP + IERS tables +
     // EGM96 gravity) before anything else: `new` parses a TLE and builds the
     // CelestialSphere, and every frame numerically propagates the orbit.
-    simulation::init();
+    scene::init();
 
-    application::run(ApplicationState::new(ManualControlSimulation::new()));
+    application::run(ApplicationState::new(ManualControlScene::new()));
 }

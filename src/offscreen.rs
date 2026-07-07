@@ -19,7 +19,7 @@ use crate::engine::renderer::{
     DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
     request_adapter_device,
 };
-use crate::engine::simulation::RenderState;
+use crate::engine::scene::RenderState;
 
 /// Maximum width or height (pixels) for a single-frame [`OffscreenRenderer`]
 /// target. Matches wgpu's default 2D texture dimension limit

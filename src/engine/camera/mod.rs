@@ -1,7 +1,7 @@
 //! The camera layer: the [`CameraControl`] + [`CameraView`] trait pair every
-//! scenario implements (alongside `Simulation` + `UIDrawable`), the winit-free
+//! scene implements (alongside `Scene` + `UIDrawable`), the winit-free
 //! input vocabulary they speak, and the reusable [`PtzCamera`] pan/tilt/zoom
-//! implementation a scenario can embed - or not: a future scenario may fly a
+//! implementation a scene can embed - or not: a future scene may fly a
 //! scripted, fixed, or chase camera by implementing the traits differently
 //! (a non-interactive camera implements only `CameraView` and leaves every
 //! `CameraControl` method at its no-op default).
@@ -18,7 +18,7 @@ mod ptz;
 
 pub use ptz::PtzCamera;
 
-use crate::engine::simulation::RenderState;
+use crate::engine::scene::RenderState;
 
 /// Which pointer button an event names, device-neutral. The application's
 /// winit translation maps the left/right mouse buttons here and drops the
@@ -58,7 +58,7 @@ pub enum CursorHint {
 /// spawn (flick coasting, the zoom glide), and reporting the cursor
 /// affordance that reflects the drag state. The methods return whether the
 /// camera changed (or an animation started/continues) so the application
-/// knows a redraw is needed; every method defaults to a no-op, so a scenario
+/// knows a redraw is needed; every method defaults to a no-op, so a scene
 /// with a non-interactive camera implements only [`CameraView`].
 pub trait CameraControl {
     /// A pointer button went down. Carries no position: winit press events
@@ -87,7 +87,7 @@ pub trait CameraControl {
 
     /// Advances one frame of camera animation (e.g. flick coasting, the zoom
     /// glide) with real frame time. Called at the top of every redraw, before
-    /// `Simulation::advance`; returns true while another frame is needed, so
+    /// `Scene::advance`; returns true while another frame is needed, so
     /// a settled camera lets the app go idle.
     fn tick(&mut self, _viewport_height: f64) -> bool {
         false
@@ -99,16 +99,16 @@ pub trait CameraControl {
     }
 }
 
-/// The frame-production half of the camera interface: turning the scenario's
+/// The frame-production half of the camera interface: turning the scene's
 /// own simulation state into the frame's [`RenderState`]. Split from
 /// [`CameraControl`] so the two concerns stay independent - a scripted or
 /// fixed camera is a `CameraView` with no input surface at all.
 pub trait CameraView {
     /// Produce this frame's [`RenderState`]: re-aim the camera at the frame's
-    /// target, resolve the rig against the scenario's own celestial sphere,
+    /// target, resolve the rig against the scene's own celestial sphere,
     /// and pack it with the frame's time and markers. Satellite propagation
     /// happens here, once per frame per satellite; the per-satellite readout
-    /// from the same propagation is stashed on the scenario so the
+    /// from the same propagation is stashed on the scene so the
     /// immediately-following `UIDrawable::get_drawables` call (the egui
     /// panel) reports values matching the rendered markers.
     fn frame_state(&mut self) -> RenderState;

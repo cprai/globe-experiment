@@ -1,13 +1,13 @@
 //! The application layer: windowing, the winit event loop, per-frame redraw
 //! orchestration, and the windowed presenter. It is generic over any
-//! `S: Simulation + CameraControl + CameraView + UIDrawable`, owns the
+//! `S: Scene + CameraControl + CameraView + UIDrawable`, owns the
 //! windowed `Gfx` renderer (the `gfx` submodule), advances the simulation,
 //! and drives each render.
 //!
 //! The application keeps NO camera or input state: each winit input event is
 //! translated **statelessly** into one device-neutral `CameraControl`-trait
 //! call (see `translate_camera_event`), so all camera state - the rig, drag/
-//! flick/zoom animation, even cursor tracking - lives behind the scenario's
+//! flick/zoom animation, even cursor tracking - lives behind the scene's
 //! `CameraControl`/`CameraView` impls (usually a `PtzCamera`). Swapping or
 //! extending the input scheme (gamepad, touch) means a new trait method plus
 //! a translation arm here, nothing more. The simulation and renderer only
@@ -25,14 +25,14 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::engine::camera::{CameraControl, CameraView, CursorHint, PointerButton, ScrollDelta};
 use crate::engine::renderer::UiFrame;
-use crate::engine::simulation::Simulation;
+use crate::engine::scene::Scene;
 use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
 
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
-pub fn run<S: Simulation + CameraControl + CameraView + UIDrawable>(mut app: ApplicationState<S>) {
+pub fn run<S: Scene + CameraControl + CameraView + UIDrawable>(mut app: ApplicationState<S>) {
     let event_loop = build_event_loop();
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
@@ -61,9 +61,9 @@ fn build_event_loop() -> EventLoop<()> {
 /// `egui_winit::State`), the simulation (which carries its own camera behind
 /// the `CameraControl`/`CameraView` traits), and the renderer. The
 /// window/egui_state/gfx are created on `resumed`. Generic over
-/// `S: Simulation + CameraControl + CameraView + UIDrawable` so any scenario
+/// `S: Scene + CameraControl + CameraView + UIDrawable` so any scene
 /// can be plugged in without changing the application layer.
-pub struct ApplicationState<S: Simulation + CameraControl + CameraView + UIDrawable> {
+pub struct ApplicationState<S: Scene + CameraControl + CameraView + UIDrawable> {
     simulation: S,
     /// The window, created on `resumed`. Shared with the renderer's surface.
     window: Option<Arc<Window>>,
@@ -76,9 +76,9 @@ pub struct ApplicationState<S: Simulation + CameraControl + CameraView + UIDrawa
     shown: bool,
 }
 
-impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
+impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
     /// Builds the application around an already-constructed simulation (which
-    /// carries its own camera - a scenario that frames a specific event on
+    /// carries its own camera - a scene that frames a specific event on
     /// launch seeds its `PtzCamera` in its `new()`). The window, egui platform
     /// state, and renderer are created later, on the first `resumed`.
     pub fn new(simulation: S) -> Self {
@@ -97,7 +97,7 @@ impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationState<S
     }
 }
 
-impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationHandler
+impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationHandler
     for ApplicationState<S>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -165,10 +165,10 @@ impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationHandler
     }
 }
 
-impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
+impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
     /// hover); whatever it doesn't consume is translated into the
-    /// scenario's `CameraControl` impl.
+    /// scene's `CameraControl` impl.
     fn handle_input(&mut self, event: WindowEvent) {
         let Some(window) = self.window.clone() else {
             return;
@@ -217,14 +217,14 @@ impl<S: Simulation + CameraControl + CameraView + UIDrawable> ApplicationState<S
         animating |= self.simulation.advance();
 
         // Produce this frame's RenderState *and* the UI snapshots in one shot
-        // (a single satellite propagation feeds both). The scenario's
+        // (a single satellite propagation feeds both). The scene's
         // CameraView impl resolves its own view - it re-aims at the frame's target and
         // builds the rig against its own celestial sphere - so the
         // application never touches the ephemeris; the renderer rebuilds the
         // projection from the rig in the returned state.
         let render_state = self.simulation.frame_state();
 
-        // Run the egui UI: the panel pulls the scenario's drawable elements
+        // Run the egui UI: the panel pulls the scene's drawable elements
         // (read from the propagation just done above, so the readout matches the
         // rendered markers) and renders them, firing the elements' callbacks for
         // any interaction. The logic and tessellation live here (the renderer

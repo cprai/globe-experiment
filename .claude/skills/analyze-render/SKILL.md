@@ -53,7 +53,7 @@ the day side and terminator should fall in the frame.
 
 ## IMPORTANT: no EOP time-bound checking in the headless binary
 The headless binary does **not** validate the datetime against the bundled
-Earth-orientation (EOP) data (unlike scenarios). Out-of-range times silently
+Earth-orientation (EOP) data (unlike scenes). Out-of-range times silently
 degrade and will mislead a visual analysis:
 - before ~1962-01-01: satkit falls back to zero EOP (the Sol/stars drift);
 - after the last bundled EOP entry (~build date): satkit constant-extrapolates.

@@ -1,11 +1,11 @@
 //! Simulation state and astronomical math: the simulation clock and the
-//! ephemeris-driven celestial sphere. This module defines the `Simulation`
-//! trait that every scenario implements; the clock + celestial sphere live
-//! directly in each scenario struct, which also builds its own Time panel
-//! (deliberately per-scenario, so scenarios can diverge). It stays free of
+//! ephemeris-driven celestial sphere. This module defines the `Scene`
+//! trait that every scene implements; the clock + celestial sphere live
+//! directly in each scene struct, which also builds its own Time panel
+//! (deliberately per-scene, so scenes can diverge). It stays free of
 //! any windowing (winit) or GPU (wgpu) dependency and never references any
 //! camera type (the `CameraControl`/`CameraView` traits + `PtzCamera` live in
-//! the shared `engine::camera` module, implemented/held by each scenario); it
+//! the shared `engine::camera` module, implemented/held by each scene); it
 //! does
 //! depend on `ui` for the `UIDrawablePanel`/`Instrument` types the selector
 //! panels are built from.
@@ -19,7 +19,7 @@ use glam::DVec3;
 use satkit::Instant;
 
 pub use body::CelestialBody;
-// Only the main binary's scenarios name this re-export; the headless bin tree
+// Only the main binary's scenes name this re-export; the headless bin tree
 // compiles this module with no `Clock` consumer, so the import would warn
 // there (its crate-level allow covers `dead_code`, not `unused_imports`).
 #[allow(unused_imports)]
@@ -63,8 +63,8 @@ pub enum CameraTarget {
     Body(CelestialBody),
     /// Orbit a fixed world-frame point (km). The camera treats it like a planet
     /// target: its own floating origin sits at the point, with synthetic body
-    /// geometry. Future-proof scaffold - no scenario constructs it yet, but the
-    /// camera and renderer handle it, so a future scenario can orbit an
+    /// geometry. Future-proof scaffold - no scene constructs it yet, but the
+    /// camera and renderer handle it, so a future scene can orbit an
     /// arbitrary point (e.g. a spacecraft, a Lagrange point) for free.
     #[allow(dead_code)]
     Coordinate(DVec3),
@@ -162,17 +162,17 @@ impl CameraTarget {
     }
 }
 
-/// The simulation half of the interface every scenario implements.
-/// `ApplicationState` bounds `S: Simulation + CameraControl + CameraView +
+/// The simulation half of the interface every scene implements.
+/// `ApplicationState` bounds `S: Scene + CameraControl + CameraView +
 /// UIDrawable` and calls only those traits' methods, so adding or swapping a
-/// scenario requires no changes to the application layer.
+/// scene requires no changes to the application layer.
 ///
 /// This trait is UI- and camera-agnostic. The egui panel reads/drives a
-/// scenario through a separate `crate::engine::ui::UIDrawable` impl, and the
-/// frame's `RenderState` (camera rig included) comes from the scenario's
+/// scene through a separate `crate::engine::ui::UIDrawable` impl, and the
+/// frame's `RenderState` (camera rig included) comes from the scene's
 /// `crate::engine::camera::CameraView` impl - each concern is a distinct
-/// trait on the same scenario struct.
-pub trait Simulation {
+/// trait on the same scene struct.
+pub trait Scene {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
     fn advance(&mut self) -> bool;
@@ -183,7 +183,7 @@ pub trait Simulation {
 /// body's position and orientation from `time` itself (via
 /// `CelestialSphere::at`), so this carries no body list, Sol position, or star
 /// matrices - only what the renderer cannot recompute: the time, the camera,
-/// and the satellite markers. Returned by the scenario's
+/// and the satellite markers. Returned by the scene's
 /// `crate::engine::camera::CameraView::frame_state` impl (which resolves its
 /// own camera rig); the UI readout for the same frame is pulled separately
 /// via `crate::engine::ui::UIDrawable`.
@@ -214,11 +214,11 @@ pub struct RenderState {
     pub camera_look_at: DVec3,
     /// Camera up direction in the world frame (unit).
     pub camera_up: DVec3,
-    /// One marker per tracked satellite, in the same order as the scenario's
+    /// One marker per tracked satellite, in the same order as the scene's
     /// satellite list. The renderer draws them instanced, and propagates each
     /// marker's `Propagation` ahead to draw its predicted orbit path. This is
     /// the one piece of frame state not derivable from `time` (it depends on
-    /// the scenario's tracked objects).
+    /// the scene's tracked objects).
     pub markers: Vec<SatelliteMarker>,
 }
 
@@ -234,13 +234,13 @@ pub struct SatelliteMarker {
     /// How the renderer predicts this object's orbit path about one orbit
     /// ahead (`satellite::orbit_path_inertial`): analytic SGP4 from a cloned
     /// element set, or numerical propagation from a GCRF state vector (no TLE
-    /// needed). Chosen per object by the scenario; a scene may mix both. The
+    /// needed). Chosen per object by the scene; a scene may mix both. The
     /// path, like the marker position, is the render input that is not
     /// derivable from `time` alone.
     pub propagation: satellite::Propagation,
 }
 
-/// One tracked satellite's readout for the UI panel. A scenario stashes a
+/// One tracked satellite's readout for the UI panel. A scene stashes a
 /// `Vec<SatelliteTelemetry>` each frame in its
 /// `crate::engine::camera::CameraView::frame_state` impl, built from the same
 /// propagation that fills [`RenderState::markers`] (so readout and marker can
@@ -269,8 +269,8 @@ pub fn init() {
 }
 
 /// Tracks which body the user has chosen to orbit (Terra or Luna) and builds
-/// the Terra / Luna selector panel. Shared by the scenarios that offer a Luna
-/// target (the eclipses); Terra-only scenarios never hold one.
+/// the Terra / Luna selector panel. Shared by the scenes that offer a Luna
+/// target (the eclipses); Terra-only scenes never hold one.
 ///
 /// Two radio toggles can't both `&mut` one selection field - a panel's element
 /// callbacks all coexist, so each must capture a *disjoint* mutable field (the
@@ -300,7 +300,7 @@ impl TargetSelector {
 
     /// Applies any pending key press into the live selection, then clears the
     /// flags. Call once per frame *before* the frame's camera target is
-    /// resolved (i.e. at the top of the scenario's `advance` - the scenario's
+    /// resolved (i.e. at the top of the scene's `advance` - the scene's
     /// `CameraView::frame_state` resolves the selection later the same frame).
     /// A simultaneous press of both keys in one frame is impossible from a
     /// mouse, but resolve it to Luna for determinism.
@@ -377,7 +377,7 @@ const SELECTABLE_BODIES: [CelestialBody; 9] = [
     CelestialBody::Neptune,
 ];
 
-/// Index of Terra in [`SELECTABLE_BODIES`] - the scenario's start target.
+/// Index of Terra in [`SELECTABLE_BODIES`] - the scene's start target.
 const TERRA_INDEX: usize = 2;
 
 /// Tracks which solar-system body the camera orbits and builds the selector
@@ -389,7 +389,7 @@ const TERRA_INDEX: usize = 2;
 /// follow); hence one `request_*` flag per body rather than a single shared
 /// selection a key could write. A click sets that body's flag;
 /// [`apply_requests`] folds it into `selected` once per frame, before the
-/// scenario's `CameraView::frame_state` resolves it
+/// scene's `CameraView::frame_state` resolves it
 /// - the same one-frame latency as [`TargetSelector`].
 pub struct BodySelector {
     /// Index into [`SELECTABLE_BODIES`].
@@ -429,7 +429,7 @@ impl Default for BodySelector {
 impl BodySelector {
     /// Applies any pending key press into the live selection, then clears every
     /// flag. Call once per frame *before* the frame's camera target is resolved
-    /// (at the top of the scenario's `advance`; the scenario's
+    /// (at the top of the scene's `advance`; the scene's
     /// `CameraView::frame_state` resolves the selection later the same frame).
     /// At most one key can be pressed per frame from a mouse; the branch
     /// order only breaks an impossible tie. The indices match

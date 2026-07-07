@@ -6,11 +6,11 @@ paths:
 # Camera rules
 
 The `engine::camera` module is a directory: `mod.rs` holds the
-**`CameraControl` + `CameraView` trait pair** (implemented by every scenario;
+**`CameraControl` + `CameraView` trait pair** (implemented by every scene;
 `CameraControl` = the no-op-defaulted input methods + `tick` + `cursor_hint`,
 `CameraView` = `frame_state`) + the winit-free input vocabulary
 (`PointerButton`/`ScrollDelta`/`CursorHint`); `ptz.rs` holds **`PtzCamera`**,
-the interactive pan/tilt/zoom implementation scenarios embed and forward to.
+the interactive pan/tilt/zoom implementation scenes embed and forward to.
 The rig rules below are about `PtzCamera`; input rules live in `input.md`.
 
 ## Inertial (star-fixed) frame
@@ -22,7 +22,7 @@ celestial frame and rotated into the world by:
 celestial_to_world = star_rot_inv.transpose()
 ```
 
-Each scenario's `CameraView::frame_state` derives `celestial_to_world =
+Each scene's `CameraView::frame_state` derives `celestial_to_world =
 star_rot_inv.transpose()` from its **own** celestial sphere, retargets, and
 calls `camera.world_rig(celestial, c2w)` (which returns the eye, look-at
 point, and up in the render frame; the renderer rebuilds the projection from
@@ -39,7 +39,7 @@ shader samples the star texture with a *different* matrix, `star_tex_rot_inv`
 = a static galactic->equatorial offset times `star_rot_inv` (the texture is
 drawn in galactic coordinates — see `simulation.md`). The offset is constant,
 so the camera stays inertial; keeping the rig on the equatorial frame means
-the re-orientation does not move existing scenarios' framing.
+the re-orientation does not move existing scenes' framing.
 
 `PtzCamera.longitude` / `PtzCamera.latitude` are **inertial directions**, not
 geographic coordinates. Do not move the camera into the ECEF/world frame.
@@ -47,11 +47,11 @@ geographic coordinates. Do not move the camera into the ECEF/world frame.
 `PtzCamera::looking_toward(target, star_rot_inv, world_look, distance)` builds
 a camera that orbits `target` and whose look axis points along a
 **world-frame** direction (it maps the direction back through `star_rot_inv`
-into the inertial rig). A scenario seeds its `camera: PtzCamera` field with it
+into the inertial rig). A scene seeds its `camera: PtzCamera` field with it
 in `new()` to frame an event on launch (solar eclipse: Terra target aimed at
 `-sol_dir`; lunar eclipse: Luna target aimed at Luna's center, so it launches
 orbiting the Luna); `PtzCamera::default()` still gives the whole-Terra view.
-(`ApplicationState::with_camera` no longer exists - the scenario owns the
+(`ApplicationState::with_camera` no longer exists - the scene owns the
 camera.)
 
 ## Render frame (floating origin) — all rendering is camera-target-local
@@ -96,7 +96,7 @@ absolute world position.
 ## Camera target (orbit Terra, Luna, a planet, or a free point)
 
 The camera orbits a **`CameraTarget`** (an enum `Body(CelestialBody) |
-Coordinate(DVec3)`, defined in `simulation`, a sanctioned `simulation`->
+Coordinate(DVec3)`, defined in `scene`, a sanctioned `scene`->
 `application` data edge like `RenderState`). It is a pure **identity**: it does
 NOT store the body's center. The position-dependent accessors take the sphere
 (`center_world(&celestial)`, `render_origin(&celestial)`) and look the center up
@@ -106,7 +106,7 @@ from the ephemeris; the static ones (`mean_radius_km`, `surface_position`,
 `TerraSystem(Luna)`, or a planet; orbiting Luna is `TerraSystem(Luna)`. The
 `Coordinate` variant orbits a free world point with synthetic geometry (a
 Terra-radius scale + a center look-at anchor) — future-proof scaffolding, not
-wired into any scenario yet.
+wired into any scene yet.
 `PtzCamera` holds a `target` field (identity only). The rig is built by
 `world_frame_relative(&celestial, c2w)` in the render frame (see above): for
 Terra/Luna it equals the absolute rig; for a planet (or coordinate) it is the
@@ -119,9 +119,9 @@ The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
 
-Each frame the scenario's `CameraView::frame_state` calls
+Each frame the scene's `CameraView::frame_state` calls
 `PtzCamera::retarget(target, &celestial, c2w)` with its resolved target
-(Terra for the satellite scenarios; the eclipse / solar-system scenarios
+(Terra for the satellite scenes; the eclipse / solar-system scenes
 resolve their `TargetSelector`/`BodySelector`, driven by the panel keys). On a
 genuine **body switch** it reframes (distance = body default, tilt 0,
 re-aimed at the target's center resolved from the sphere) and internally

@@ -20,7 +20,7 @@
   albedos) and two 2K ~8 MB each (Uranus/Neptune), plus a `Depth32Float`
   buffer at the window size. Same total as before the Terra-impostor fold
   (the identical 13 textures, redistributed from group 0 into group 1). The body maps upload at `SceneRenderer::new`, so
-  **every** scenario pays this, even ISS. Accepted cost of native-res +
+  **every** scene pays this, even ISS. Accepted cost of native-res +
   no-feature portability; the lever if it bites is downsizing the body
   textures to 4K/2K in `build.rs`.
 - **No `.cargo/config.toml`** — deleted when `intel_tex_2` was removed; its

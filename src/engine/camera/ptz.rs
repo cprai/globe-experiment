@@ -2,7 +2,7 @@
 //! input response that drives it (drag pan with flick inertia, drag tilt,
 //! smoothed wheel zoom). One struct owns both halves so all camera state,
 //! including in-flight animation, lives behind the `CameraControl` +
-//! `CameraView` traits a scenario forwards to; the application passes
+//! `CameraView` traits a scene forwards to; the application passes
 //! translated input through and keeps none of it.
 //!
 //! The camera lives in the **inertial (star-fixed) frame** and orbits a
@@ -35,8 +35,8 @@ use std::time::Instant;
 use glam::{DMat3, DQuat, DVec3};
 
 use super::{CursorHint, PointerButton, ScrollDelta};
-use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::{CameraTarget, CelestialBody};
+use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::scene::{CameraTarget, CelestialBody};
 
 /// Minimum release speed, in px/s, for a drag to keep coasting.
 const FLICK_SPEED: f64 = 50.0;
@@ -261,7 +261,7 @@ impl PtzCamera {
     /// Sol's day side or toward Luna) - viewed from `distance` km with
     /// no tilt. `star_rot_inv` is the celestial sphere's world->celestial
     /// (equatorial) rotation, mapping the world direction back into the
-    /// inertial frame the rig is built in. Used by the eclipse scenarios to
+    /// inertial frame the rig is built in. Used by the eclipse scenes to
     /// frame their event on launch; the camera stays fully interactive
     /// afterward.
     pub fn looking_toward(
