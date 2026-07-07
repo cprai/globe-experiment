@@ -24,15 +24,15 @@ use crate::engine::ui::{
 /// frame with Luna's umbral shadow spot centered near the subsolar point.
 const VIEW_DISTANCE_KM: f64 = 22000.0;
 
-/// Empty solar-eclipse simulation: just the clock + celestial sphere; no
-/// satellites. Carries a [`TargetSelector`] so the view can be switched
-/// between orbiting Terra (the default day-side framing) and orbiting Luna.
+/// Empty solar-eclipse simulation: just the clock; no satellites. Carries a
+/// [`TargetSelector`] so the view can be switched between orbiting Terra (the
+/// default day-side framing) and orbiting Luna. No celestial sphere is
+/// stored - `CelestialSphere::at` is a pure function of time, so
+/// `frame_state` evaluates it fresh at each frame's clock instant (`new`
+/// builds a throwaway one for the initial framing).
 pub struct SolarEclipseScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
-    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
-    /// clock runs.
-    celestial_sphere: CelestialSphere,
     selector: TargetSelector,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations), seeded on the day-side framing.
@@ -75,7 +75,6 @@ impl SolarEclipseScene {
         );
 
         Self {
-            celestial_sphere,
             clock,
             // Default to orbiting Terra (the day-side framing above).
             selector: TargetSelector::new(false),
@@ -90,15 +89,11 @@ impl Scene for SolarEclipseScene {
         // Fold in any pending target-selector key press before the camera target
         // is read this frame.
         self.selector.apply_requests();
-        // Advance the clock and, while it is running, re-evaluate the
-        // ephemeris-driven celestial sphere at the new time. Returns whether
-        // the clock is running - an "animating" source that keeps frames
-        // coming; when paused nothing advances and the app can go idle.
-        let running = self.clock.tick();
-        if running {
-            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
-        }
-        running
+        // Advance the clock. Returns whether it is running - an "animating"
+        // source that keeps frames coming; when paused nothing advances and
+        // the app can go idle. Nothing else to update: `frame_state`
+        // re-derives the celestial sphere at the frame's clock instant.
+        self.clock.tick()
     }
 }
 
@@ -134,28 +129,31 @@ impl CameraControl for SolarEclipseScene {
 
 impl CameraView for SolarEclipseScene {
     fn frame_state(&mut self) -> RenderState {
+        let now = self.clock.now();
+        // This frame's celestial sphere, evaluated on the spot: `at` is a
+        // pure function of time, so it needs no stashing between frames (the
+        // renderer re-derives the same sphere from `RenderState.time`).
+        let sphere = CelestialSphere::at(&now);
+
         // Refresh the scene-owned camera target from the selector; a genuine
         // Terra<->Luna switch reframes the camera (full-frame distance,
         // re-aim, in-flight animations dropped). Then resolve the inertial
         // rig into the render frame (the moving Luna center is re-resolved
         // from the ephemeris inside `world_rig`). The target packed below is
         // the same one the rig was built for.
-        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let celestial_to_world = sphere.star_rot_inv.transpose();
         let target = self.selector.resolve();
         if !self.camera_target.same_kind(&target) {
-            self.camera
-                .reframe(&target, &self.celestial_sphere, celestial_to_world);
+            self.camera.reframe(&target, &sphere, celestial_to_world);
         }
         self.camera_target = target;
-        let (eye, look_at, up) =
-            self.camera
-                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
         // No satellites: an empty marker list. The renderer derives the Terra
         // system from the frame's time; the selector's target (Terra or Luna)
         // keeps the origin at Terra either way.
         RenderState {
-            time: self.clock.now(),
+            time: now,
             camera_target: target,
             camera_pos: eye,
             camera_look_at: look_at,

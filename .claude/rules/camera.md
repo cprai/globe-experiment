@@ -23,7 +23,9 @@ celestial_to_world = star_rot_inv.transpose()
 ```
 
 Each scene's `CameraView::frame_state` derives `celestial_to_world =
-star_rot_inv.transpose()` from its **own** celestial sphere, resolves its
+star_rot_inv.transpose()` from the celestial sphere it evaluates **on the
+spot** at the frame's clock instant (`CelestialSphere::at(&now)` — a pure
+function of time; no scene stores a sphere), resolves its
 scene-owned camera target (reframing the camera on a genuine body switch),
 and calls `camera.world_rig(&target, celestial, c2w)` (which returns the eye,
 look-at point, and up in the render frame; the renderer rebuilds the

@@ -106,10 +106,13 @@ pub trait CameraControl {
 pub trait CameraView {
     /// Produce this frame's [`RenderState`]: resolve the frame's camera
     /// target (owned by the scene; a genuine body switch reframes the
-    /// camera), resolve the rig against the scene's own celestial sphere,
-    /// and pack it with the frame's time and markers. The marker propagation
-    /// happens here; the immediately-following `UIDrawable::get_drawables`
-    /// call (the egui panel) re-derives its readouts at the same clock
-    /// instant, so they match the rendered markers.
+    /// camera), resolve the rig against the celestial sphere evaluated at
+    /// the frame's clock instant (`CelestialSphere::at` is a pure function
+    /// of time, so the scene computes it on the spot rather than storing
+    /// one), and pack it with the frame's time and markers. The marker
+    /// propagation happens here; the immediately-following
+    /// `UIDrawable::get_drawables` call (the egui panel) re-derives its
+    /// readouts at the same clock instant, so they match the rendered
+    /// markers.
     fn frame_state(&mut self) -> RenderState;
 }

@@ -1,7 +1,9 @@
 //! Simulation state and astronomical math: the simulation clock and the
 //! ephemeris-driven celestial sphere. This module defines the `Scene`
-//! trait that every scene implements; the clock + celestial sphere live
-//! directly in each scene struct, which also builds its own Time panel
+//! trait that every scene implements; the clock lives directly in each
+//! scene struct (the celestial sphere is not stored anywhere -
+//! `CelestialSphere::at` is a pure function of time, evaluated on demand),
+//! and each scene also builds its own Time panel
 //! (deliberately per-scene, so scenes can diverge). It stays free of
 //! any windowing (winit) or GPU (wgpu) dependency and never references any
 //! camera type (the `CameraControl`/`CameraView` traits + `PtzCamera` live in
@@ -173,8 +175,9 @@ impl CameraTarget {
 /// `crate::engine::camera::CameraView` impl - each concern is a distinct
 /// trait on the same scene struct.
 pub trait Scene {
-    /// Advance the clock and re-evaluate the celestial sphere. Returns whether
-    /// the clock is running, i.e. the app should keep requesting frames.
+    /// Advance the clock (plus any scene-specific per-frame state). Returns
+    /// whether the clock is running, i.e. the app should keep requesting
+    /// frames.
     fn advance(&mut self) -> bool;
 }
 

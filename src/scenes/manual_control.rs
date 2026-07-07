@@ -44,15 +44,15 @@ const ISS_TLE: &str = concat!(
 /// dt, so time-warp burns harder in wall time (physically consistent).
 const BURN_ACCEL_M_S2: f64 = 10.0;
 
-/// Manually-controlled simulation: the clock + celestial sphere held directly,
-/// plus the satellite's live GCRF state vector (re-anchored to the clock every
-/// frame) and the six burn request flags.
+/// Manually-controlled simulation: the clock held directly, plus the
+/// satellite's live GCRF state vector (re-anchored to the clock every frame)
+/// and the six burn request flags. No celestial sphere is stored -
+/// `CelestialSphere::at` is a pure function of time, so `frame_state`
+/// evaluates it fresh at each frame's clock instant (the same pattern as the
+/// renderer).
 pub struct ManualControlScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
-    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
-    /// clock runs.
-    celestial_sphere: CelestialSphere,
     /// Object name from the seed TLE, for the panel header.
     name: String,
     /// The satellite's GCRF state vector, valid at `orbit_epoch`. THE orbit -
@@ -83,16 +83,13 @@ pub struct ManualControlScene {
 impl ManualControlScene {
     fn new() -> Self {
         // The TLE lives exactly long enough to produce the initial conditions:
-        // one SGP4 sample at its own epoch, converted to a GCRF state vector.
+        // one SGP4 sample at its own epoch, converted to a GCRF state vector
+        // (reads satkit globals - `scene::init` must already have run).
         let mut seed = Satellite::from_tle(ISS_TLE);
         let epoch = seed.epoch();
         let orbit = seed.state_at(&epoch).orbit;
-        // `scene::init` must already have run (the celestial sphere reads
-        // satkit globals).
-        let clock = Clock::new(epoch);
         Self {
-            celestial_sphere: CelestialSphere::at(&clock.now()),
-            clock,
+            clock: Clock::new(epoch),
             name: seed.name,
             orbit,
             orbit_epoch: epoch,
@@ -145,13 +142,10 @@ impl ManualControlScene {
 
 impl Scene for ManualControlScene {
     fn advance(&mut self) -> bool {
-        // Advance the clock and, while it is running, re-evaluate the
-        // ephemeris-driven celestial sphere at the new time (paused = nothing
-        // advances and the app can go idle).
+        // Advance the clock (paused = nothing advances and the app can go
+        // idle). The celestial sphere is not stashed here: `frame_state`
+        // re-derives it at the frame's clock instant.
         let running = self.clock.tick();
-        if running {
-            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
-        }
         let now = self.clock.now();
 
         // Re-anchor the state vector to the clock: one numerical step over
@@ -218,16 +212,18 @@ impl CameraControl for ManualControlScene {
 impl CameraView for ManualControlScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
+        // This frame's celestial sphere, evaluated on the spot: `at` is a
+        // pure function of time, so it needs no stashing between frames (the
+        // renderer re-derives the same sphere from `RenderState.time`).
+        let sphere = CelestialSphere::at(&now);
 
         // Resolve the camera first: build the rig against this frame's sphere
         // (Terra's moving center is re-resolved inside `world_rig`; the fixed
         // Terra target never reframes) - the eye feeds the marker-occlusion
         // test below.
-        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let celestial_to_world = sphere.star_rot_inv.transpose();
         let target = self.camera_target;
-        let (eye, look_at, up) =
-            self.camera
-                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
         // `advance` just re-anchored the state to `now`, so this is a pure
         // frame change (GCRF -> the world-frame marker), no propagation.
@@ -443,8 +439,9 @@ impl UIDrawable for ManualControlScene {
 /// loop. Blocks until the window closes.
 pub fn run() {
     // Seed satkit's global state (embedded ephemeris + EOP + IERS tables +
-    // EGM96 gravity) before anything else: `new` parses a TLE and builds the
-    // CelestialSphere, and every frame numerically propagates the orbit.
+    // EGM96 gravity) before anything else: `new` parses a TLE, and every
+    // frame numerically propagates the orbit and evaluates the
+    // CelestialSphere.
     scene::init();
 
     application::run(ApplicationState::new(ManualControlScene::new()));

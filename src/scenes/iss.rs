@@ -35,14 +35,13 @@ const ISS_TLE: &str = concat!(
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
-/// ISS-only simulation: the clock + celestial sphere held directly, plus this
-/// scene's single tracked satellite.
+/// ISS-only simulation: the clock held directly, plus this scene's single
+/// tracked satellite. No celestial sphere is stored - `CelestialSphere::at`
+/// is a pure function of time, so `frame_state` evaluates it fresh at each
+/// frame's clock instant (the same pattern as the renderer).
 pub struct IssScene {
     /// Simulation clock (datetime + play/paused + speed).
     clock: Clock,
-    /// Ephemeris-driven celestial sphere, re-evaluated by `advance` while the
-    /// clock runs.
-    celestial_sphere: CelestialSphere,
     satellites: Vec<Satellite>,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
@@ -57,12 +56,8 @@ impl IssScene {
     fn new() -> Self {
         let satellites = vec![Satellite::from_tle(ISS_TLE)];
         let epoch = satellites.first().expect("TLE present").epoch();
-        // `scene::init` must already have run (the celestial sphere reads
-        // satkit globals).
-        let clock = Clock::new(epoch);
         Self {
-            celestial_sphere: CelestialSphere::at(&clock.now()),
-            clock,
+            clock: Clock::new(epoch),
             satellites,
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
@@ -72,15 +67,11 @@ impl IssScene {
 
 impl Scene for IssScene {
     fn advance(&mut self) -> bool {
-        // Advance the clock and, while it is running, re-evaluate the
-        // ephemeris-driven celestial sphere at the new time. Returns whether
-        // the clock is running - an "animating" source that keeps frames
-        // coming; when paused nothing advances and the app can go idle.
-        let running = self.clock.tick();
-        if running {
-            self.celestial_sphere = CelestialSphere::at(&self.clock.now());
-        }
-        running
+        // Advance the clock. Returns whether it is running - an "animating"
+        // source that keeps frames coming; when paused nothing advances and
+        // the app can go idle. Nothing else to update: `frame_state`
+        // re-derives the celestial sphere at the frame's clock instant.
+        self.clock.tick()
     }
 }
 
@@ -117,16 +108,18 @@ impl CameraControl for IssScene {
 impl CameraView for IssScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
+        // This frame's celestial sphere, evaluated on the spot: `at` is a
+        // pure function of time, so it needs no stashing between frames (the
+        // renderer re-derives the same sphere from `RenderState.time`).
+        let sphere = CelestialSphere::at(&now);
 
         // Resolve the camera first: build the rig against this frame's sphere
         // (Terra's moving center is re-resolved inside `world_rig`; the fixed
         // Terra target never reframes) - the eye feeds the marker-occlusion
         // test below.
-        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let celestial_to_world = sphere.star_rot_inv.transpose();
         let target = self.camera_target;
-        let (eye, look_at, up) =
-            self.camera
-                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
         let mut markers = Vec::with_capacity(self.satellites.len());
         for sat in &mut self.satellites {
@@ -273,9 +266,9 @@ impl UIDrawable for IssScene {
 /// until the window closes.
 pub fn run() {
     // Seed satkit's global state (embedded ephemeris + EOP table) before
-    // anything else: IssScene::new below builds the CelestialSphere
-    // (which reads the ephemeris) and the satellite parses a TLE. Doing it
-    // here keeps satkit fully offline and data-dir-free.
+    // anything else: the satellite propagation and the per-frame
+    // CelestialSphere evaluation read satkit globals. Doing it here keeps
+    // satkit fully offline and data-dir-free.
     scene::init();
 
     application::run(ApplicationState::new(IssScene::new()));

@@ -12,16 +12,21 @@ paths:
   `<Name>Scene` struct that implements the **four traits** `Scene`
   + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`, plus a
   `run()`. Add a module and a `SceneName` variant in `src/main.rs`.
-- Each scene struct holds `clock: Clock` + `celestial_sphere:
-  CelestialSphere` + `camera: PtzCamera` + `camera_target: CameraTarget` as
-  direct fields (there is no shared core struct), plus its own
-  `Vec<Satellite>`. The scene — not the camera — owns the orbit target and
-  passes `&self.camera_target` into every camera call that depends on it.
-  `new()` builds `Clock::new(epoch)` + `CelestialSphere::at(&clock.now())` +
-  `PtzCamera::default()` (or a `looking_toward` framing, below) +
+- Each scene struct holds `clock: Clock` + `camera: PtzCamera` +
+  `camera_target: CameraTarget` as direct fields (there is no shared core
+  struct), plus its own `Vec<Satellite>`. **No scene stores a
+  `CelestialSphere`**: `CelestialSphere::at` is a pure function of time, so
+  `frame_state` evaluates it fresh at the frame's clock instant (the same
+  pattern as the renderer's per-frame `at`). The scene — not the camera —
+  owns the orbit target and passes `&self.camera_target` into every camera
+  call that depends on it.
+  `new()` builds `Clock::new(epoch)` +
+  `PtzCamera::default()` (or a `looking_toward` framing, below — the only
+  case where `new()` evaluates a throwaway local sphere) +
   `CameraTarget::terra()` (or the body matching the seeded framing/selector
   default, so the first frame does not reframe); `advance()`
-  ticks the clock and, while running, re-evaluates the sphere.
+  ticks the clock (and nothing else, unless the scene has extra per-frame
+  state like `manual_control`'s orbit re-anchor).
   `get_drawables` builds the top-left Time panel itself (UTC readout, speed
   readout, Run toggle, speed slider - the toggle/slider callbacks mutate the
   disjoint `clock.paused` / `clock.multiplier` fields by direct assignment).
@@ -32,8 +37,9 @@ paths:
   (`pointer_press`/`pointer_release`/`pointer_move`/`scroll`/`tick`/
   `cursor_hint`; `pointer_move`/`scroll`/`tick` pass `&self.camera_target`
   along); the `impl CameraView` block is `frame_state`, the frame
-  recipe: derive
-  `celestial_to_world = self.celestial_sphere.star_rot_inv.transpose()`,
+  recipe: evaluate this frame's sphere
+  (`let sphere = CelestialSphere::at(&now)`), derive
+  `celestial_to_world = sphere.star_rot_inv.transpose()`,
   resolve the frame's target (the fixed `self.camera_target` for satellite
   scenes; selector scenes resolve the selector, call
   `self.camera.reframe(&target, &sphere, c2w)` when
@@ -57,7 +63,9 @@ no TLE there is no epoch to borrow, so `new()` sets the clock start
 ### Initial camera framing (optional)
 
 A scene's `new()` can frame its event on launch instead of the default
-whole-Terra view: after building the clock + celestial sphere, seed the
+whole-Terra view: after building the clock, evaluate a throwaway local
+sphere (`CelestialSphere::at(&clock.now())` - used for the framing only,
+never stored) and seed the
 `camera` field with `PtzCamera::looking_toward(&target, star_rot_inv,
 world_look, distance)` (orbits `target` with the look axis along a world-frame
 direction — e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna
@@ -142,7 +150,8 @@ renderer likewise draws nothing for e >= 1).
   with the `SatelliteState.orbit` GCRF state vector from the same propagation
   (`iss_and_hubble` deliberately mixes both, ISS SGP4 + Hubble numerical, to
   exercise the mixed-scene capability) — and reads Sol/star values from
-  `self.celestial_sphere`. The near-identical propagation loop (and Time-panel
+  the sphere it evaluated at the top of the frame
+  (`CelestialSphere::at(&now)`). The near-identical propagation loop (and Time-panel
   builder) across scenes is **intentional** — each may diverge (marker
   style, visibility logic, non-satellite objects, panel content); premature
   factoring adds indirection before any variant exists.

@@ -224,8 +224,11 @@ src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
                          + placement). The shared vocabulary for the celestial
                          sphere, CameraTarget, and the selectors
 src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
-                         advance(); the clock + celestial sphere live directly
-                         in each scene struct), RenderState
+                         advance(); the clock lives directly in each scene
+                         struct - the celestial sphere is NOT stored anywhere:
+                         CelestialSphere::at is a pure function of time,
+                         evaluated on the spot by frame_state and by the
+                         renderer), RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
                          + camera_target + markers (each SatelliteMarker carries
                          a satellite::Propagation - cloned TLE or GCRF state
@@ -335,8 +338,11 @@ impl. (The `Scene` trait itself takes no UI or camera types; the
 
 ```
 advance(&mut self) -> bool
-    Tick the clock + re-evaluate the celestial sphere. Returns whether the
-    clock is running (keeps frames coming; paused = app goes idle).
+    Tick the clock (plus any scene-specific per-frame state, e.g.
+    manual_control's orbit re-anchor). Returns whether the clock is running
+    (keeps frames coming; paused = app goes idle). The celestial sphere is
+    not touched here - frame_state re-derives it at the frame's clock
+    instant.
 ```
 
 ## `CameraControl` + `CameraView` traits + `PtzCamera`
@@ -388,8 +394,10 @@ frame_state(&mut self) -> RenderState
     scenes refresh it from their selector, calling PtzCamera::reframe on a
     genuine body switch - which resets framing and cancels in-flight
     animation; satellite scenes keep it fixed at Terra), resolve the rig
-    against the scene's own celestial sphere (world_rig(&target, ..)),
-    propagate all satellites, fill RenderState (time +
+    against the celestial sphere evaluated on the spot at the frame's clock
+    instant (let sphere = CelestialSphere::at(&now) - `at` is a pure
+    function of time, so no sphere is stored; world_rig(&target, &sphere,
+    ..)), propagate all satellites, fill RenderState (time +
     rig + camera_target + markers). The immediately-following
     get_drawables call re-derives its readouts at the same clock instant
     (Clock::now() is pure, propagation deterministic), so they match the
@@ -484,8 +492,11 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   with the gunmetal `panel_frame` and paints the bevel highlight + corner
   rivets per panel.
 
-Every scene struct holds the clock + celestial sphere as direct fields
-(there is no shared core struct), alongside its own satellites/selector.
+Every scene struct holds the clock as a direct field (there is no shared
+core struct), alongside its own satellites/selector. No scene stores a
+`CelestialSphere`: `CelestialSphere::at` is a pure function of time, so
+`frame_state` (and, where framing needs it, `new()`) evaluates it on the
+spot - the same pattern as the renderer's per-frame `at`.
 `Clock` is re-exported from `scene` so callers need not know the `clock`
 submodule path.
 

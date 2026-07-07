@@ -8,7 +8,7 @@
 //! The camera lives in the **inertial (star-fixed) frame** and orbits a
 //! chosen subject (a [`CameraTarget`] - Terra, Luna, a planet, or a free
 //! point). The target is NOT stored here: the scene owns it (alongside its
-//! clock and celestial sphere) and passes it into every call that scales by
+//! clock) and passes it into every call that scales by
 //! or centers on the orbited body, so the rig state and the orbit subject
 //! cannot drift apart across the scene/camera boundary.
 //!

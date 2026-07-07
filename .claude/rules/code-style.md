@@ -35,8 +35,10 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
 - **`scene`** — the `Scene` trait (UI-agnostic), `RenderState`,
   `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
-  helpers. The clock + celestial sphere are held **directly by each scene
-  struct** (there is no shared core struct). **No winit/wgpu dependency. No
+  helpers. The clock is held **directly by each scene struct** (there is no
+  shared core struct); the celestial sphere is **not stored anywhere** —
+  `CelestialSphere::at` is a pure function of time, evaluated on the spot
+  where needed. **No winit/wgpu dependency. No
   camera type** (the trait shrank to `advance()`; the frame's `RenderState` -
   plain data defined here - is produced by the scene's `camera::CameraView`
   impl, the UI readout pulled separately via `ui::UIDrawable`). Depends on
@@ -62,8 +64,10 @@ The top-level (non-engine) modules:
 - **`scenes`** — one `<Name>Scene` struct per past scene
   implementing `Scene` + `CameraControl` + `CameraView` + `UIDrawable`,
   each with a `run()`.
-  Each struct holds its `Clock` + `CelestialSphere` + `camera: PtzCamera` +
-  `camera_target: CameraTarget` directly and builds its own Time panel (the
+  Each struct holds its `Clock` + `camera: PtzCamera` +
+  `camera_target: CameraTarget` directly (no stored `CelestialSphere`;
+  `frame_state` evaluates one at the frame's clock instant) and builds its
+  own Time panel (the
   panel code and the
   camera-trait forwarding block are deliberately duplicated per scene so
   scenes can diverge). Satellites live here, not in `scene`.
