@@ -90,8 +90,11 @@ src/engine/camera/mod.rs        the CameraControl + CameraView TRAIT PAIR every
                          gamepad/touch input stays device-neutral
 src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
                          camera - the inertial-frame rig (km world space,
-                         orbiting a CameraTarget; per-frame retarget, which now
-                         also cancels in-flight animation on a body switch) AND
+                         orbiting a scene-owned CameraTarget passed by ref
+                         into every call that depends on the orbited body -
+                         no stored target; `reframe`, called by the scene on
+                         a genuine body switch, resets framing and cancels
+                         in-flight animation) AND
                          all input/animation state (drag pan/tilt, flick
                          inertia, smoothed zoom glide; feel constants at file
                          top). Scenes embed one and forward both camera
@@ -345,7 +348,9 @@ the winit-free input vocabulary (`PointerButton`,
 `ScrollDelta::{Lines,Pixels}`, `CursorHint::{Default,Grab,Grabbing}`) live in
 `src/engine/camera/mod.rs`; the reusable interactive implementation
 `PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scene implements both
-traits itself, usually by embedding a `camera: PtzCamera` field and forwarding
+traits itself, usually by embedding a `camera: PtzCamera` field (plus the
+scene-owned `camera_target: CameraTarget` the forwarders pass by ref into
+the camera calls that depend on the orbited body) and forwarding
 (the forwarding block is deliberately duplicated per scene, like the Time
 panel, so a scene can diverge - gate input, or fly a future scripted/fixed
 camera type by implementing only `CameraView` and leaving `CameraControl`'s
@@ -379,15 +384,17 @@ cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
 CameraView:
 
 frame_state(&mut self) -> RenderState
-    Produce the frame: re-aim the camera at the frame's target (PtzCamera::
-    retarget - which itself cancels in-flight animation on a genuine body
-    switch), resolve the rig against the scene's own celestial sphere
-    (world_rig), propagate all satellites, fill RenderState (time +
+    Produce the frame: resolve the scene-owned camera_target (selector
+    scenes refresh it from their selector, calling PtzCamera::reframe on a
+    genuine body switch - which resets framing and cancels in-flight
+    animation; satellite scenes keep it fixed at Terra), resolve the rig
+    against the scene's own celestial sphere (world_rig(&target, ..)),
+    propagate all satellites, fill RenderState (time +
     rig + camera_target + markers). The immediately-following
     get_drawables call re-derives its readouts at the same clock instant
     (Clock::now() is pure, propagation deterministic), so they match the
     rendered markers with no stashed state. The camera_target packed into
-    RenderState MUST be the same one the rig was retargeted to.
+    RenderState MUST be the same one the rig was built for.
 ```
 
 Per-frame application order: `tick` -> `Scene::advance` ->
@@ -528,7 +535,7 @@ submodule path.
   top level: the `headless` bin root must never declare `scenes`, and
   `main.rs` must never declare `offscreen`.
 - **`application` does not touch the `CelestialSphere`.** (The 2026-07 camera
-  re-home reinstated this: retargeting and rig resolution moved into each
+  re-home reinstated this: target resolution and rig resolution moved into each
   scene's `CameraView::frame_state`, which reads the scene's own sphere, so
   the old "relaxed" exception - `application` reading it via
   `Scene::celestial()` - is gone along with that method.) `application`

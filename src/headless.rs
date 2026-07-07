@@ -230,18 +230,20 @@ fn run(params: Cli) {
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
     // Resolve the orbit body by identity; its center (and the render origin) is
-    // looked up from the celestial sphere where needed. `PtzCamera::new` clamps
-    // the distance into the chosen target's radius-scaled limits.
+    // looked up from the celestial sphere where needed. The target lives
+    // outside the camera (here a local, in a scene a struct field) and is
+    // passed into every camera call that depends on the orbited body;
+    // `PtzCamera::new` clamps the distance into its radius-scaled limits.
     let target = CameraTarget::Body(scene.camera.target.body());
     let camera = PtzCamera::new(
-        target,
+        &target,
         scene.camera.longitude,
         scene.camera.latitude,
         scene.camera.distance,
         scene.camera.tilt,
     );
     let distance = camera.distance;
-    let (eye, look_at, up) = camera.world_rig(&celestial, celestial_to_world);
+    let (eye, look_at, up) = camera.world_rig(&target, &celestial, celestial_to_world);
 
     let render = RenderState {
         time,

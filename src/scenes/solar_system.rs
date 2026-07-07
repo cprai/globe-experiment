@@ -19,7 +19,7 @@ use crate::engine::camera::{
     CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
 };
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::{self, BodySelector, Clock, RenderState, Scene};
+use crate::engine::scene::{self, BodySelector, CameraTarget, Clock, RenderState, Scene};
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
@@ -37,6 +37,11 @@ pub struct SolarSystemScene {
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); starts on the default whole-Terra view.
     camera: PtzCamera,
+    /// The body the camera orbits this frame - owned by the scene, not the
+    /// camera, and passed into every camera call that scales by or centers
+    /// on it. Refreshed from the selector each frame; a genuine switch
+    /// reframes the camera (`frame_state` compares via `same_kind`).
+    camera_target: CameraTarget,
 }
 
 impl SolarSystemScene {
@@ -54,6 +59,9 @@ impl SolarSystemScene {
             clock,
             selector: BodySelector::default(),
             camera: PtzCamera::default(),
+            // Matches the selector default (Terra) and the whole-Terra camera
+            // above, so the first frame does not reframe.
+            camera_target: CameraTarget::terra(),
         }
     }
 }
@@ -87,15 +95,16 @@ impl CameraControl for SolarSystemScene {
     }
 
     fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
-        self.camera.pointer_move(position, viewport_height)
+        self.camera
+            .pointer_move(&self.camera_target, position, viewport_height)
     }
 
     fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        self.camera.scroll(delta)
+        self.camera.scroll(&self.camera_target, delta)
     }
 
     fn tick(&mut self, viewport_height: f64) -> bool {
-        self.camera.tick(viewport_height)
+        self.camera.tick(&self.camera_target, viewport_height)
     }
 
     fn cursor_hint(&self) -> CursorHint {
@@ -105,17 +114,21 @@ impl CameraControl for SolarSystemScene {
 
 impl CameraView for SolarSystemScene {
     fn frame_state(&mut self) -> RenderState {
-        // Re-aim the camera at this frame's selected body (its moving center
-        // refreshed from the ephemeris; a genuine body switch reframes and
-        // drops in-flight animations inside `retarget`), then resolve the
-        // inertial rig into the render frame.
+        // Refresh the scene-owned camera target from the selector; a genuine
+        // body switch reframes the camera (full-frame distance, re-aim,
+        // in-flight animations dropped). Then resolve the inertial rig into
+        // the render frame (the selected body's moving center is re-resolved
+        // from the ephemeris inside `world_rig`).
         let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
         let target = self.selector.resolve();
-        self.camera
-            .retarget(target, &self.celestial_sphere, celestial_to_world);
-        let (eye, look_at, up) = self
-            .camera
-            .world_rig(&self.celestial_sphere, celestial_to_world);
+        if !self.camera_target.same_kind(&target) {
+            self.camera
+                .reframe(&target, &self.celestial_sphere, celestial_to_world);
+        }
+        self.camera_target = target;
+        let (eye, look_at, up) =
+            self.camera
+                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
 
         // No satellites: an empty marker list. The renderer derives every
         // body's position from the frame's time and uses the camera target's

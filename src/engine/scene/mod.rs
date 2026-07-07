@@ -76,11 +76,11 @@ impl CameraTarget {
         CameraTarget::Body(CelestialBody::TERRA)
     }
 
-    /// Whether two targets name the same orbit subject. The camera uses this to
-    /// detect a genuine switch (and reframe). Two `Body` targets match only
-    /// when they are the *same* body (cycling Mars -> Jupiter reframes);
-    /// two `Coordinate` targets always match (a free point never reframes
-    /// once selected).
+    /// Whether two targets name the same orbit subject. The scene (which owns
+    /// its camera target) uses this to detect a genuine switch and have the
+    /// camera reframe. Two `Body` targets match only when they are the *same*
+    /// body (cycling Mars -> Jupiter reframes); two `Coordinate` targets
+    /// always match (a free point never reframes once selected).
     pub fn same_kind(&self, other: &CameraTarget) -> bool {
         match (self, other) {
             (CameraTarget::Body(a), CameraTarget::Body(b)) => a == b,

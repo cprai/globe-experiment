@@ -23,12 +23,13 @@ celestial_to_world = star_rot_inv.transpose()
 ```
 
 Each scene's `CameraView::frame_state` derives `celestial_to_world =
-star_rot_inv.transpose()` from its **own** celestial sphere, retargets, and
-calls `camera.world_rig(celestial, c2w)` (which returns the eye, look-at
-point, and up in the render frame; the renderer rebuilds the projection from
-them). The camera takes the sphere so it can resolve its target's moving
-center (see "Camera target" below). The application never touches the sphere;
-it only consumes the finished `RenderState`.
+star_rot_inv.transpose()` from its **own** celestial sphere, resolves its
+scene-owned camera target (reframing the camera on a genuine body switch),
+and calls `camera.world_rig(&target, celestial, c2w)` (which returns the eye,
+look-at point, and up in the render frame; the renderer rebuilds the
+projection from them). The camera takes the sphere so it can resolve the
+target's moving center (see "Camera target" below). The application never
+touches the sphere; it only consumes the finished `RenderState`.
 
 Because `star_rot_inv * celestial_to_world = I`, a rig held constant in the
 celestial frame yields a constant star lookup direction — **stars are locked
@@ -44,7 +45,7 @@ the re-orientation does not move existing scenes' framing.
 `PtzCamera.longitude` / `PtzCamera.latitude` are **inertial directions**, not
 geographic coordinates. Do not move the camera into the ECEF/world frame.
 
-`PtzCamera::looking_toward(target, star_rot_inv, world_look, distance)` builds
+`PtzCamera::looking_toward(&target, star_rot_inv, world_look, distance)` builds
 a camera that orbits `target` and whose look axis points along a
 **world-frame** direction (it maps the direction back through `star_rot_inv`
 into the inertial rig). A scene seeds its `camera: PtzCamera` field with it
@@ -75,7 +76,7 @@ absolute world position.
   coordinates, which is what kills the jitter. (The renderer re-derives the
   same `CelestialSphere` the camera target's center came from - the *same* f64
   value - so the subtraction cancels exactly.)
-- `PtzCamera::world_rig(celestial, c2w)` builds the rig via
+- `PtzCamera::world_rig(&target, celestial, c2w)` builds the rig via
   `world_frame_relative`:
   `(center - render_origin) + c2w*offset`, where `center` /`render_origin` are
   resolved from the passed `&CelestialSphere` — it never forms the absolute eye
@@ -107,27 +108,35 @@ from the ephemeris; the static ones (`mean_radius_km`, `surface_position`,
 `Coordinate` variant orbits a free world point with synthetic geometry (a
 Terra-radius scale + a center look-at anchor) — future-proof scaffolding, not
 wired into any scene yet.
-`PtzCamera` holds a `target` field (identity only). The rig is built by
-`world_frame_relative(&celestial, c2w)` in the render frame (see above): for
-Terra/Luna it equals the absolute rig; for a planet (or coordinate) it is the
-small local offset. The camera stays star-fixed while tracking the body's moving
-ephemeris position (re-resolved from the sphere each frame). `same_kind` compares
-the `CelestialBody` identity (two planet targets are equal only when the *same*
-planet, so cycling Mars->Jupiter reframes; two coordinates always match);
-`retarget(target, &celestial, c2w)` re-aims at any off-origin center.
+**The scene owns the target**: each scene struct holds a `camera_target:
+CameraTarget` field (identity only); `PtzCamera` stores NO target. Every
+camera call that scales by or centers on the orbited body takes a
+`&CameraTarget` parameter (`world_rig`, `reframe`, `pointer_move` / `scroll`
+/ `tick`, `new` / `looking_toward`), so the rig state and the orbit subject
+cannot drift apart across the scene/camera boundary. The rig is built by
+`world_frame_relative(&target, &celestial, c2w)` in the render frame (see
+above): for Terra/Luna it equals the absolute rig; for a planet (or
+coordinate) it is the small local offset. The camera stays star-fixed while
+tracking the body's moving ephemeris position (re-resolved from the sphere
+on every `world_rig` call). `same_kind` compares the `CelestialBody`
+identity (two planet targets are equal only when the *same* planet, so
+cycling Mars->Jupiter reframes; two coordinates always match).
 The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
 
-Each frame the scene's `CameraView::frame_state` calls
-`PtzCamera::retarget(target, &celestial, c2w)` with its resolved target
-(Terra for the satellite scenes; the eclipse / solar-system scenes
-resolve their `TargetSelector`/`BodySelector`, driven by the panel keys). On a
-genuine **body switch** it reframes (distance = body default, tilt 0,
-re-aimed at the target's center resolved from the sphere) and internally
-drops any in-flight zoom/flick (which targets the old body's scale - the old
-`bool` return + application-side `reset_animation` coupling now lives inside
-`retarget`). The `headless` binary picks
+Each frame the scene's `CameraView::frame_state` resolves its target — the
+fixed Terra `camera_target` for the satellite scenes; the eclipse /
+solar-system scenes refresh `camera_target` from their
+`TargetSelector`/`BodySelector`, driven by the panel keys. On a genuine
+**body switch** (detected scene-side via
+`!self.camera_target.same_kind(&target)`) the scene calls
+`PtzCamera::reframe(&target, &celestial, c2w)` — distance = body default,
+tilt 0, re-aimed at the target's center resolved from the sphere, and any
+in-flight zoom/flick dropped (it targets the old body's scale) — before
+storing the new target in `camera_target`. A same-body frame needs no camera
+call at all (the moving center is resolved inside `world_rig`). The
+`headless` binary picks
 the body directly: the `--scene` `camera.target` field is `"terra"` (default),
 `"luna"`, or a planet (a center-free `CameraTargetSpec` in `src/headless.rs`;
 the center is resolved from the ephemeris at render time).
@@ -172,16 +181,16 @@ a Terra orbit this never triggers.
 
 The distance/default limits are **ratios of the target body's mean radius**
 (`<radii>` consts on `PtzCamera` in `src/engine/camera/ptz.rs`, multiplied by
-`target.mean_radius_km()` in the instance methods
-`min_distance`/`max_distance`/`default_distance`), so the old tuned Terra
+`target.mean_radius_km()` in the helper methods
+`min_distance`/`max_distance`/`default_distance`, which take the
+`&CameraTarget` the scene passes in), so the old tuned Terra
 feel is preserved and Luna gets the same feel at its own scale:
 - `MIN_DISTANCE_RADII = 0.01` (Terra ~63.7 km, Luna ~17.4 km)
 - `MAX_DISTANCE_RADII = 10.0` (Terra ~63710 km, Luna ~17374 km)
 - `MAX_TILT = 80 deg`
 - `DEFAULT_DISTANCE_RADII = 2.0` (Terra default ~12742 km); lat clamp +/- 89 deg.
-  `clamp_distance` is an **instance** method (limits depend on the target) and
-  is now private - external construction clamps via `PtzCamera::new` /
-  `looking_toward`.
+  `clamp_distance` is private and takes the target (the limits depend on it)
+  - external construction clamps via `PtzCamera::new` / `looking_toward`.
 
 The **projection** constants live in `renderer` (the renderer rebuilds
 `view_proj` from the camera rig via `view_proj_reversed_z`):

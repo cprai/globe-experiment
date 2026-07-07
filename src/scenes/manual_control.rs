@@ -74,6 +74,10 @@ pub struct ManualControlScene {
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
     camera: PtzCamera,
+    /// The body the camera orbits - owned by the scene, not the camera, and
+    /// passed into every camera call that scales by or centers on it. Fixed
+    /// at Terra here (no selector), so it never reframes.
+    camera_target: CameraTarget,
 }
 
 impl ManualControlScene {
@@ -99,6 +103,7 @@ impl ManualControlScene {
             burn_radial_out: false,
             burn_radial_in: false,
             camera: PtzCamera::default(),
+            camera_target: CameraTarget::terra(),
         }
     }
 
@@ -193,15 +198,16 @@ impl CameraControl for ManualControlScene {
     }
 
     fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
-        self.camera.pointer_move(position, viewport_height)
+        self.camera
+            .pointer_move(&self.camera_target, position, viewport_height)
     }
 
     fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        self.camera.scroll(delta)
+        self.camera.scroll(&self.camera_target, delta)
     }
 
     fn tick(&mut self, viewport_height: f64) -> bool {
-        self.camera.tick(viewport_height)
+        self.camera.tick(&self.camera_target, viewport_height)
     }
 
     fn cursor_hint(&self) -> CursorHint {
@@ -213,16 +219,15 @@ impl CameraView for ManualControlScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 
-        // Resolve the camera first: re-aim at Terra (a same-body refresh) and
-        // build the rig against this frame's sphere - the eye feeds the
-        // marker-occlusion test below.
+        // Resolve the camera first: build the rig against this frame's sphere
+        // (Terra's moving center is re-resolved inside `world_rig`; the fixed
+        // Terra target never reframes) - the eye feeds the marker-occlusion
+        // test below.
         let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
-        let target = CameraTarget::terra();
-        self.camera
-            .retarget(target, &self.celestial_sphere, celestial_to_world);
-        let (eye, look_at, up) = self
-            .camera
-            .world_rig(&self.celestial_sphere, celestial_to_world);
+        let target = self.camera_target;
+        let (eye, look_at, up) =
+            self.camera
+                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
 
         // `advance` just re-anchored the state to `now`, so this is a pure
         // frame change (GCRF -> the world-frame marker), no propagation.

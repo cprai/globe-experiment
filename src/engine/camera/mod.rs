@@ -104,8 +104,9 @@ pub trait CameraControl {
 /// [`CameraControl`] so the two concerns stay independent - a scripted or
 /// fixed camera is a `CameraView` with no input surface at all.
 pub trait CameraView {
-    /// Produce this frame's [`RenderState`]: re-aim the camera at the frame's
-    /// target, resolve the rig against the scene's own celestial sphere,
+    /// Produce this frame's [`RenderState`]: resolve the frame's camera
+    /// target (owned by the scene; a genuine body switch reframes the
+    /// camera), resolve the rig against the scene's own celestial sphere,
     /// and pack it with the frame's time and markers. The marker propagation
     /// happens here; the immediately-following `UIDrawable::get_drawables`
     /// call (the egui panel) re-derives its readouts at the same clock

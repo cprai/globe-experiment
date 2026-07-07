@@ -37,6 +37,11 @@ pub struct SolarEclipseScene {
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations), seeded on the day-side framing.
     camera: PtzCamera,
+    /// The body the camera orbits this frame - owned by the scene, not the
+    /// camera, and passed into every camera call that scales by or centers
+    /// on it. Refreshed from the selector each frame; a genuine switch
+    /// reframes the camera (`frame_state` compares via `same_kind`).
+    camera_target: CameraTarget,
 }
 
 impl SolarEclipseScene {
@@ -59,8 +64,11 @@ impl SolarEclipseScene {
         // position). The view stays fully interactive afterward.
         let terra_to_sol =
             celestial_sphere.sol_pos_world - celestial_sphere.center_world(CelestialBody::TERRA);
+        // Matches the selector default below - the camera_target must start on
+        // the body the framing above orbits, or the first frame would reframe.
+        let camera_target = CameraTarget::terra();
         let camera = PtzCamera::looking_toward(
-            CameraTarget::terra(),
+            &camera_target,
             celestial_sphere.star_rot_inv,
             -terra_to_sol.normalize(),
             VIEW_DISTANCE_KM,
@@ -72,6 +80,7 @@ impl SolarEclipseScene {
             // Default to orbiting Terra (the day-side framing above).
             selector: TargetSelector::new(false),
             camera,
+            camera_target,
         }
     }
 }
@@ -106,15 +115,16 @@ impl CameraControl for SolarEclipseScene {
     }
 
     fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
-        self.camera.pointer_move(position, viewport_height)
+        self.camera
+            .pointer_move(&self.camera_target, position, viewport_height)
     }
 
     fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        self.camera.scroll(delta)
+        self.camera.scroll(&self.camera_target, delta)
     }
 
     fn tick(&mut self, viewport_height: f64) -> bool {
-        self.camera.tick(viewport_height)
+        self.camera.tick(&self.camera_target, viewport_height)
     }
 
     fn cursor_hint(&self) -> CursorHint {
@@ -124,18 +134,22 @@ impl CameraControl for SolarEclipseScene {
 
 impl CameraView for SolarEclipseScene {
     fn frame_state(&mut self) -> RenderState {
-        // Re-aim the camera at this frame's selected target (the moving Luna
-        // center refreshed from the ephemeris; a genuine Terra<->Luna switch
-        // reframes and drops in-flight animations inside `retarget`), then
-        // resolve the inertial rig into the render frame. The target packed
-        // below is the same one the rig was built for.
+        // Refresh the scene-owned camera target from the selector; a genuine
+        // Terra<->Luna switch reframes the camera (full-frame distance,
+        // re-aim, in-flight animations dropped). Then resolve the inertial
+        // rig into the render frame (the moving Luna center is re-resolved
+        // from the ephemeris inside `world_rig`). The target packed below is
+        // the same one the rig was built for.
         let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
         let target = self.selector.resolve();
-        self.camera
-            .retarget(target, &self.celestial_sphere, celestial_to_world);
-        let (eye, look_at, up) = self
-            .camera
-            .world_rig(&self.celestial_sphere, celestial_to_world);
+        if !self.camera_target.same_kind(&target) {
+            self.camera
+                .reframe(&target, &self.celestial_sphere, celestial_to_world);
+        }
+        self.camera_target = target;
+        let (eye, look_at, up) =
+            self.camera
+                .world_rig(&target, &self.celestial_sphere, celestial_to_world);
 
         // No satellites: an empty marker list. The renderer derives the Terra
         // system from the frame's time; the selector's target (Terra or Luna)

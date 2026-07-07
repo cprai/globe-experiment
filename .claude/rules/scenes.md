@@ -13,10 +13,14 @@ paths:
   + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`, plus a
   `run()`. Add a module and a `SceneName` variant in `src/main.rs`.
 - Each scene struct holds `clock: Clock` + `celestial_sphere:
-  CelestialSphere` + `camera: PtzCamera` as direct fields (there is no shared
-  core struct), plus its own `Vec<Satellite>`. `new()` builds
-  `Clock::new(epoch)` + `CelestialSphere::at(&clock.now())` +
-  `PtzCamera::default()` (or a `looking_toward` framing, below); `advance()`
+  CelestialSphere` + `camera: PtzCamera` + `camera_target: CameraTarget` as
+  direct fields (there is no shared core struct), plus its own
+  `Vec<Satellite>`. The scene — not the camera — owns the orbit target and
+  passes `&self.camera_target` into every camera call that depends on it.
+  `new()` builds `Clock::new(epoch)` + `CelestialSphere::at(&clock.now())` +
+  `PtzCamera::default()` (or a `looking_toward` framing, below) +
+  `CameraTarget::terra()` (or the body matching the seeded framing/selector
+  default, so the first frame does not reframe); `advance()`
   ticks the clock and, while running, re-evaluates the sphere.
   `get_drawables` builds the top-left Time panel itself (UTC readout, speed
   readout, Run toggle, speed slider - the toggle/slider callbacks mutate the
@@ -26,11 +30,15 @@ paths:
   struct `<Name>Scene` (e.g. `IssScene`, `IssAndHubbleScene`).
 - The `impl CameraControl` block is six one-line forwarders to `self.camera`
   (`pointer_press`/`pointer_release`/`pointer_move`/`scroll`/`tick`/
-  `cursor_hint`); the `impl CameraView` block is `frame_state`, the frame
+  `cursor_hint`; `pointer_move`/`scroll`/`tick` pass `&self.camera_target`
+  along); the `impl CameraView` block is `frame_state`, the frame
   recipe: derive
   `celestial_to_world = self.celestial_sphere.star_rot_inv.transpose()`,
-  resolve the frame's target (`CameraTarget::terra()` or the selector),
-  `self.camera.retarget(target, &sphere, c2w)`, `world_rig` -> (eye, look_at,
+  resolve the frame's target (the fixed `self.camera_target` for satellite
+  scenes; selector scenes resolve the selector, call
+  `self.camera.reframe(&target, &sphere, c2w)` when
+  `!self.camera_target.same_kind(&target)`, and store the result in
+  `self.camera_target`), `world_rig(&target, &sphere, c2w)` -> (eye, look_at,
   up), then pack `RenderState` (packing the SAME resolved `target`). The
   forwarding block is **deliberately duplicated per scene** (like the Time
   panel) - a scene may gate input or fly a different camera type.
@@ -50,13 +58,15 @@ no TLE there is no epoch to borrow, so `new()` sets the clock start
 
 A scene's `new()` can frame its event on launch instead of the default
 whole-Terra view: after building the clock + celestial sphere, seed the
-`camera` field with `PtzCamera::looking_toward(target, star_rot_inv,
+`camera` field with `PtzCamera::looking_toward(&target, star_rot_inv,
 world_look, distance)` (orbits `target` with the look axis along a world-frame
 direction — e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna
 target aimed at Luna's center (`celestial.luna().placement.pos_world`))
-instead of `PtzCamera::default()`. The camera is fully interactive afterward
+instead of `PtzCamera::default()` — and seed `camera_target` with that same
+target, so the first frame's `same_kind` check does not reframe away the
+framing. The camera is fully interactive afterward
 (`ApplicationState::with_camera` no longer exists - the scene owns its
-camera). The solar eclipse frames the Terra day side; the lunar eclipse
+camera and its target). The solar eclipse frames the Terra day side; the lunar eclipse
 launches **orbiting Luna** (a Luna-target camera looking toward Luna's center
 sits on Luna's Terra-facing side, so Terra is behind the camera — no limb
 offset needed).
@@ -66,7 +76,8 @@ offset needed).
 A scene that offers more than Terra holds a `scene::TargetSelector`;
 its `CameraView::frame_state` resolves it (`self.selector.resolve()`, a
 `CameraTarget` identity - the center is resolved from the sphere downstream)
-into `self.camera.retarget(..)` each frame.
+into `self.camera_target` each frame, calling `self.camera.reframe(..)`
+first when the resolved target is a genuine switch (`same_kind`).
 The selector's Terra / Luna radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scene's `advance()` calls
@@ -74,7 +85,7 @@ a disjoint `request_*` flag; the scene's `advance()` calls
 (`frame_state` runs after `advance`), so
 the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
 the clock's Run toggle vs speed slider). Satellite scenes skip all this and
-retarget `CameraTarget::terra()` every frame (a same-body refresh no-op).
+keep their `camera_target` fixed at `CameraTarget::terra()` (never reframed).
 
 ### Multi-body selection (solar_system)
 
@@ -90,7 +101,8 @@ named flags (not an array, whose elements can't be captured disjointly), in
 `SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
 folds into `selected`. Its `resolve()` returns the chosen body's `CameraTarget`
 identity (the center is resolved from the sphere downstream).
-`CameraView::frame_state` retargets/rigs on it and fills the reduced
+`CameraView::frame_state` refreshes `self.camera_target` from it (reframing
+the camera on a genuine switch), rigs on it, and fills the reduced
 `RenderState` (the frame's time + camera rig + `camera_target` (= the resolved
 target) + empty markers); the renderer derives every body's geometry from the
 time and takes the render origin from the `camera_target`. The panel is appended
