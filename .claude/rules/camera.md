@@ -5,8 +5,10 @@ paths:
 
 # Camera rules
 
-The `engine::camera` module is a directory: `mod.rs` holds the **`Camera`
-trait** (implemented by every scenario) + the winit-free input vocabulary
+The `engine::camera` module is a directory: `mod.rs` holds the
+**`CameraControl` + `CameraView` trait pair** (implemented by every scenario;
+`CameraControl` = the no-op-defaulted input methods + `tick` + `cursor_hint`,
+`CameraView` = `frame_state`) + the winit-free input vocabulary
 (`PointerButton`/`ScrollDelta`/`CursorHint`); `ptz.rs` holds **`PtzCamera`**,
 the interactive pan/tilt/zoom implementation scenarios embed and forward to.
 The rig rules below are about `PtzCamera`; input rules live in `input.md`.
@@ -20,7 +22,7 @@ celestial frame and rotated into the world by:
 celestial_to_world = star_rot_inv.transpose()
 ```
 
-Each scenario's `Camera::frame_state` derives `celestial_to_world =
+Each scenario's `CameraView::frame_state` derives `celestial_to_world =
 star_rot_inv.transpose()` from its **own** celestial sphere, retargets, and
 calls `camera.world_rig(celestial, c2w)` (which returns the eye, look-at
 point, and up in the render frame; the renderer rebuilds the projection from
@@ -117,7 +119,7 @@ The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
 
-Each frame the scenario's `Camera::frame_state` calls
+Each frame the scenario's `CameraView::frame_state` calls
 `PtzCamera::retarget(target, &celestial, c2w)` with its resolved target
 (Terra for the satellite scenarios; the eclipse / solar-system scenarios
 resolve their `TargetSelector`/`BodySelector`, driven by the panel keys). On a

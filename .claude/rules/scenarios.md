@@ -9,9 +9,9 @@ paths:
 ## Adding a scenario
 
 - One module per past scenario under `src/scenarios/`, each defining a
-  `<Name>Simulation` struct that implements the **three traits** `Simulation`
-  + `camera::Camera` + `ui::UIDrawable`, plus a `run()`. Add a module and a
-  `ScenarioName` variant in `src/main.rs`.
+  `<Name>Simulation` struct that implements the **four traits** `Simulation`
+  + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`, plus a
+  `run()`. Add a module and a `ScenarioName` variant in `src/main.rs`.
 - Each scenario struct holds `clock: Clock` + `celestial_sphere:
   CelestialSphere` + `camera: PtzCamera` as direct fields (there is no shared
   core struct), plus its own `Vec<Satellite>`. `new()` builds
@@ -24,9 +24,10 @@ paths:
   The Time-panel code is **deliberately duplicated across scenarios** (like
   the propagation loop) so each can diverge in what it exposes. Name the
   struct `<Name>Simulation` (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
-- The `impl Camera` block is six one-line forwarders to `self.camera`
+- The `impl CameraControl` block is six one-line forwarders to `self.camera`
   (`pointer_press`/`pointer_release`/`pointer_move`/`scroll`/`tick`/
-  `cursor_hint`) plus `frame_state`, the frame recipe: derive
+  `cursor_hint`); the `impl CameraView` block is `frame_state`, the frame
+  recipe: derive
   `celestial_to_world = self.celestial_sphere.star_rot_inv.transpose()`,
   resolve the frame's target (`CameraTarget::terra()` or the selector),
   `self.camera.retarget(target, &sphere, c2w)`, `world_rig` -> (eye, look_at,
@@ -38,7 +39,7 @@ paths:
 
 Some scenarios track **no** objects and just wind the celestial sphere to an
 event (e.g. `solar_eclipse`, `lunar_eclipse`). They omit the `Vec<Satellite>`
-and `last_telemetry` fields entirely: `Camera::frame_state` returns `markers:
+and `last_telemetry` fields entirely: `CameraView::frame_state` returns `markers:
 Vec::new()` and the time from the scenario's own clock; `get_drawables`
 returns the Time panel (plus a selector panel if the scenario has one). With
 no TLE there is no epoch to borrow, so `new()` sets the clock start
@@ -63,7 +64,7 @@ offset needed).
 ### Camera-target selection (Terra or Luna)
 
 A scenario that offers more than Terra holds a `simulation::TargetSelector`;
-its `Camera::frame_state` resolves it (`self.selector.resolve()`, a
+its `CameraView::frame_state` resolves it (`self.selector.resolve()`, a
 `CameraTarget` identity - the center is resolved from the sphere downstream)
 into `self.camera.retarget(..)` each frame.
 The selector's Terra / Luna radio panel is appended in `get_drawables` (after the
@@ -89,7 +90,7 @@ named flags (not an array, whose elements can't be captured disjointly), in
 `SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
 folds into `selected`. Its `resolve()` returns the chosen body's `CameraTarget`
 identity (the center is resolved from the sphere downstream).
-`Camera::frame_state` retargets/rigs on it and fills the reduced
+`CameraView::frame_state` retargets/rigs on it and fills the reduced
 `RenderState` (the frame's time + camera rig + `camera_target` (= the resolved
 target) + empty markers); the renderer derives every body's geometry from the
 time and takes the render origin from the `camera_target`. The panel is appended
@@ -112,14 +113,14 @@ request-flag pattern, six named bools); `advance()` folds the flags into a
 unit GCRF direction (prograde = v-hat, radial = r-hat, normal = (r x v)-hat,
 opposing keys cancel) and applies `dv = BURN_ACCEL_M_S2 * dt * dir`
 (10 m/s^2, deliberately game-like ~1 g; dt-scaled so a paused clock burns
-nothing), then clears them. `Camera::frame_state` resolves the marker with
+nothing), then clears them. `CameraView::frame_state` resolves the marker with
 `satellite::resolve_orbit` (pure frame change — the state is already at
 `now`), fills `Propagation::Numerical(self.orbit)` so the predicted path
 reshapes live, and stashes lat/lon/alt + `satellite::orbit_shape`
 (apo/peri/speed; `None` on an escape orbit, shown as dashes — the path
 renderer likewise draws nothing for e >= 1).
 
-- The `Camera` impl's `frame_state` resolves the rig first (its eye feeds the
+- The `CameraView` impl's `frame_state` resolves the rig first (its eye feeds the
   occlusion test), then propagates `self.satellites` using
   `self.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, fills each `SatelliteMarker`'s

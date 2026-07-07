@@ -15,7 +15,9 @@
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
+use crate::engine::camera::{
+    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
+};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::{self, BodySelector, Clock, RenderState, Simulation};
 use crate::engine::ui::{
@@ -72,7 +74,7 @@ impl Simulation for SolarSystemSimulation {
     }
 }
 
-impl Camera for SolarSystemSimulation {
+impl CameraControl for SolarSystemSimulation {
     // The input methods forward to the embedded PtzCamera; the forwarding
     // block is deliberately duplicated per scenario (like the Time panel) so
     // a scenario can diverge - e.g. gate input or swap the camera kind.
@@ -99,7 +101,9 @@ impl Camera for SolarSystemSimulation {
     fn cursor_hint(&self) -> CursorHint {
         self.camera.cursor_hint()
     }
+}
 
+impl CameraView for SolarSystemSimulation {
     fn frame_state(&mut self) -> RenderState {
         // Re-aim the camera at this frame's selected body (its moving center
         // refreshed from the ephemeris; a genuine body switch reframes and

@@ -1,9 +1,9 @@
 //! [`PtzCamera`]: the pan/tilt/zoom orbital camera - the rig math *and* the
 //! input response that drives it (drag pan with flick inertia, drag tilt,
 //! smoothed wheel zoom). One struct owns both halves so all camera state,
-//! including in-flight animation, lives behind the `Camera` trait a scenario
-//! forwards to; the application passes translated input through and keeps
-//! none of it.
+//! including in-flight animation, lives behind the `CameraControl` +
+//! `CameraView` traits a scenario forwards to; the application passes
+//! translated input through and keeps none of it.
 //!
 //! The camera lives in the **inertial (star-fixed) frame** and orbits a
 //! chosen subject (the [`CameraTarget`] - Terra, Luna, a planet, or a free

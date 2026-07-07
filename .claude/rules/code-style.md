@@ -20,22 +20,23 @@ module (no lib crate) plus their own top-level extra (`scenarios` for main,
 `offscreen` for headless). The engine modules:
 - **`application`** — window, egui logic, and the windowed presenter. Keeps
   NO camera or input state: `translate_camera_event` statelessly maps each
-  winit input event onto one `Camera`-trait call. Owns `gfx.rs` (`Gfx`:
+  winit input event onto one `CameraControl`-trait call. Owns `gfx.rs` (`Gfx`:
   surface/swapchain/present around the shared `renderer::SceneRenderer`). All
   the winit-touching code lives here; only the main tree calls it (the
   headless tree compiles it dead).
 - **`camera`** — directory module, winit-free, shared by both trees.
-  `camera/mod.rs`: the `Camera` trait every scenario implements + the
+  `camera/mod.rs`: the `CameraControl` + `CameraView` traits every scenario
+  implements (input/tick/cursor_hint vs frame_state) + the
   device-neutral input types (`PointerButton`/`ScrollDelta`/`CursorHint`).
   `camera/ptz.rs`: `PtzCamera`, the interactive pan/tilt/zoom rig + ALL its
-  input/animation state; scenarios embed one and forward the trait to it, the
+  input/animation state; scenarios embed one and forward both traits to it, the
   headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
 - **`simulation`** — the `Simulation` trait (UI-agnostic), `RenderState`,
   `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
   helpers. The clock + celestial sphere are held **directly by each scenario
   struct** (there is no shared core struct). **No winit/wgpu dependency. No
   camera type** (the trait shrank to `advance()`; the frame's `RenderState` -
-  plain data defined here - is produced by the scenario's `camera::Camera`
+  plain data defined here - is produced by the scenario's `camera::CameraView`
   impl, the UI readout pulled separately via `ui::UIDrawable`). Depends on
   `ui` (hence egui) only for the selector panel builders.
 - **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
@@ -57,10 +58,11 @@ The top-level (non-engine) modules:
   bin's surfaceless presenter + readback around `SceneRenderer`. Headless bin
   tree only.
 - **`scenarios`** — one `<Name>Simulation` struct per past scenario
-  implementing `Simulation` + `Camera` + `UIDrawable`, each with a `run()`.
+  implementing `Simulation` + `CameraControl` + `CameraView` + `UIDrawable`,
+  each with a `run()`.
   Each struct holds its `Clock` + `CelestialSphere` + `camera: PtzCamera`
   directly and builds its own Time panel (the panel code and the
-  `Camera`-forwarding block are deliberately duplicated per scenario so
+  camera-trait forwarding block are deliberately duplicated per scenario so
   scenarios can diverge). Satellites live here, not in `simulation`.
 - **`headless` bin root** (`src/headless.rs`) — the single-frame render
   binary: flat `--scene`/`--output` CLI, scene-spec parsing, mock-UI

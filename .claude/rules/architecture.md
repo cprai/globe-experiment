@@ -66,21 +66,25 @@ src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
-src/engine/application/mod.rs   ApplicationState<S: Simulation + Camera + UIDrawable>
+src/engine/application/mod.rs   ApplicationState<S: Simulation + CameraControl +
+                         CameraView + UIDrawable>
                          + winit ApplicationHandler + run(). Keeps NO camera or
                          input state: translate_camera_event statelessly maps
-                         each winit input event onto one device-neutral Camera-
-                         trait call (raw positions/deltas pass through), and
-                         cursor_icon maps CursorHint back onto winit
+                         each winit input event onto one device-neutral
+                         CameraControl-trait call (raw positions/deltas pass
+                         through), and cursor_icon maps CursorHint back onto winit
 src/engine/application/gfx.rs   Gfx: the windowed presenter - GPU surface/swapchain
                          config/present + egui_wgpu overlay around the shared
                          renderer::SceneRenderer; FrameOutcome drives window
                          visibility/redraw. The winit-bound half of rendering
                          (called only by the main tree - the headless tree
                          compiles it dead; offscreen.rs is its headless twin)
-src/engine/camera/mod.rs        the Camera TRAIT every scenario implements (input
-                         methods with default no-op impls + tick + cursor_hint +
-                         frame_state) and the winit-free input vocabulary
+src/engine/camera/mod.rs        the CameraControl + CameraView TRAIT PAIR every
+                         scenario implements (CameraControl = the input methods
+                         with default no-op impls + tick + cursor_hint;
+                         CameraView = frame_state, so a non-interactive camera
+                         implements only CameraView) and the winit-free input
+                         vocabulary
                          (PointerButton, ScrollDelta (Lines|Pixels), CursorHint).
                          Winit-free so BOTH bin trees build it and future
                          gamepad/touch input stays device-neutral
@@ -90,9 +94,9 @@ src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
                          also cancels in-flight animation on a body switch) AND
                          all input/animation state (drag pan/tilt, flick
                          inertia, smoothed zoom glide; feel constants at file
-                         top). Scenarios embed one and forward the Camera trait
-                         to it; headless.rs constructs one from the --scene JSON
-                         (PtzCamera::new)
+                         top). Scenarios embed one and forward both camera
+                         traits to it; headless.rs constructs one from the
+                         --scene JSON (PtzCamera::new)
 src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          + PanelAnchor (egui-free data), and the egui
                          control_panel that frames each panel at its anchored
@@ -282,7 +286,8 @@ headless (bin headless)     -> engine, offscreen (NO scenarios; compiles
                                        # its crate-level allow(dead_code))
 engine      = application, camera, planet, renderer, simulation, ui
                                        # - declared identically by both roots
-application -> camera (the Camera trait + its input types, NOT PtzCamera),
+application -> camera (the CameraControl/CameraView traits + their input
+                                       # types, NOT PtzCamera),
                                        # simulation (Simulation trait +
                                        # RenderState only - NO CelestialSphere
                                        # access anymore), renderer, ui, (winit,
@@ -302,22 +307,25 @@ renderer    -> simulation (RenderState + CelestialSphere::at),
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
 simulation  -> planet, ui, (satkit, egui via ui, glam)  # selector
-                                       # panel builders use ui; NO winit/wgpu/Camera
+                                       # panel builders use ui; NO winit/wgpu/
+                                       # camera types
 planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with simulation::body)
-scenarios   -> simulation, ui, application, camera (Camera trait + PtzCamera)
+scenarios   -> simulation, ui, application, camera (CameraControl/CameraView
+                                       # traits + PtzCamera)
 ```
 
 ## `Simulation` trait
 
-Defined in `src/engine/simulation/mod.rs`. One of the three traits every
+Defined in `src/engine/simulation/mod.rs`. One of the four traits every
 scenario implements (`ApplicationState<S>` bounds
-`S: Simulation + Camera + UIDrawable`); adding a scenario requires no changes
+`S: Simulation + CameraControl + CameraView + UIDrawable`); adding a scenario
+requires no changes
 to the application layer. It is **UI- and camera-agnostic** - the panel
 reads/drives a scenario through a *separate* `ui::UIDrawable` impl, and the
-frame's `RenderState` comes from the scenario's *separate* `camera::Camera`
+frame's `RenderState` comes from the scenario's *separate* `camera::CameraView`
 impl. (The `Simulation` trait itself takes no UI or camera types; the
 `simulation` module does depend on `ui` for the selector panel builders,
 `TargetSelector::panel` / `BodySelector::panel`.)
@@ -328,18 +336,24 @@ advance(&mut self) -> bool
     clock is running (keeps frames coming; paused = app goes idle).
 ```
 
-## `Camera` trait + `PtzCamera`
+## `CameraControl` + `CameraView` traits + `PtzCamera`
 
-The trait + the winit-free input vocabulary (`PointerButton`,
+The camera interface is a trait PAIR: **`CameraControl`** (the interactive
+surface - the input methods, `tick`, `cursor_hint`; every method has a no-op
+default) and **`CameraView`** (`frame_state`, the frame production). Both +
+the winit-free input vocabulary (`PointerButton`,
 `ScrollDelta::{Lines,Pixels}`, `CursorHint::{Default,Grab,Grabbing}`) live in
 `src/engine/camera/mod.rs`; the reusable interactive implementation
-`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scenario implements the
-trait itself, usually by embedding a `camera: PtzCamera` field and forwarding
+`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scenario implements both
+traits itself, usually by embedding a `camera: PtzCamera` field and forwarding
 (the forwarding block is deliberately duplicated per scenario, like the Time
 panel, so a scenario can diverge - gate input, or fly a future scripted/fixed
-camera type by implementing the trait differently).
+camera type by implementing only `CameraView` and leaving `CameraControl`'s
+defaults).
 
 ```
+CameraControl:
+
 pointer_press(&mut self, button) -> bool      [default: no-op, false]
 pointer_release(&mut self, button) -> bool    [default: no-op, false]
 pointer_move(&mut self, position, viewport_height) -> bool   [default no-op]
@@ -361,6 +375,8 @@ tick(&mut self, viewport_height) -> bool      [default: no-op, false]
 cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
     The scene cursor while the pointer is not over an egui panel; the
     application maps it onto winit's icon set.
+
+CameraView:
 
 frame_state(&mut self) -> RenderState
     Produce the frame: re-aim the camera at the frame's target (PtzCamera::
@@ -467,8 +483,8 @@ submodule path.
 
 - **`simulation` imports neither winit/wgpu nor any camera type.**
   `RenderState` is plain data (time + resolved `DVec3` rig + `CameraTarget` +
-  markers), produced by the scenario's `camera::Camera` impl and consumed by
-  the renderer. This keeps input scheme changes local to `camera` (+ one
+  markers), produced by the scenario's `camera::CameraView` impl and consumed
+  by the renderer. This keeps input scheme changes local to `camera` (+ one
   translation arm in `application`) and each scenario independently testable.
   `simulation` *does* depend on `ui` (hence egui, transitively) for the
   selector panel builders (`TargetSelector::panel` / `BodySelector::panel`).
@@ -477,9 +493,10 @@ submodule path.
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.
-- **The `Camera` trait and `PtzCamera` live in the shared `engine::camera`
-  module, winit-free** (so the `headless` binary builds the same rig without
-  calling any winit code, and the trait's input vocabulary stays
+- **The `CameraControl`/`CameraView` traits and `PtzCamera` live in the shared
+  `engine::camera` module, winit-free** (so the `headless` binary builds the
+  same rig without calling any winit code, and the traits' input vocabulary
+  stays
   device-neutral). ALL camera mechanics - the rig math AND the input/animation
   state that used to be `application`'s `Controller` (drag, flick inertia,
   zoom glide, cursor tracking) - live in `PtzCamera`; `application` keeps no
@@ -509,7 +526,7 @@ submodule path.
   `main.rs` must never declare `offscreen`.
 - **`application` does not touch the `CelestialSphere`.** (The 2026-07 camera
   re-home reinstated this: retargeting and rig resolution moved into each
-  scenario's `Camera::frame_state`, which reads the scenario's own sphere, so
+  scenario's `CameraView::frame_state`, which reads the scenario's own sphere, so
   the old "relaxed" exception - `application` reading it via
   `Simulation::celestial()` - is gone along with that method.) `application`
   consumes only the finished `RenderState`.

@@ -3,7 +3,9 @@
 //! a single marker renders (CLI: `globe-experiment scenario iss`).
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
+use crate::engine::camera::{
+    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
+};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite::{Propagation, Satellite};
 use crate::engine::simulation::{
@@ -83,7 +85,7 @@ impl Simulation for IssSimulation {
     }
 }
 
-impl Camera for IssSimulation {
+impl CameraControl for IssSimulation {
     // The input methods forward to the embedded PtzCamera; the forwarding
     // block is deliberately duplicated per scenario (like the Time panel) so
     // a scenario can diverge - e.g. gate input or swap the camera kind.
@@ -110,7 +112,9 @@ impl Camera for IssSimulation {
     fn cursor_hint(&self) -> CursorHint {
         self.camera.cursor_hint()
     }
+}
 
+impl CameraView for IssSimulation {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 

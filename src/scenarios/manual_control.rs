@@ -11,7 +11,9 @@ use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
+use crate::engine::camera::{
+    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
+};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
 use crate::engine::simulation::{
@@ -191,7 +193,7 @@ impl Simulation for ManualControlSimulation {
     }
 }
 
-impl Camera for ManualControlSimulation {
+impl CameraControl for ManualControlSimulation {
     // The input methods forward to the embedded PtzCamera; the forwarding
     // block is deliberately duplicated per scenario (like the Time panel) so
     // a scenario can diverge - e.g. gate input or swap the camera kind.
@@ -218,7 +220,9 @@ impl Camera for ManualControlSimulation {
     fn cursor_hint(&self) -> CursorHint {
         self.camera.cursor_hint()
     }
+}
 
+impl CameraView for ManualControlSimulation {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 

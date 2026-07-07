@@ -4,7 +4,9 @@
 //! `globe-experiment scenario iss_and_hubble`).
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
+use crate::engine::camera::{
+    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
+};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite::{Propagation, Satellite};
 use crate::engine::simulation::{
@@ -96,7 +98,7 @@ impl Simulation for IssAndHubbleSimulation {
     }
 }
 
-impl Camera for IssAndHubbleSimulation {
+impl CameraControl for IssAndHubbleSimulation {
     // The input methods forward to the embedded PtzCamera; the forwarding
     // block is deliberately duplicated per scenario (like the Time panel) so
     // a scenario can diverge - e.g. gate input or swap the camera kind.
@@ -123,7 +125,9 @@ impl Camera for IssAndHubbleSimulation {
     fn cursor_hint(&self) -> CursorHint {
         self.camera.cursor_hint()
     }
+}
 
+impl CameraView for IssAndHubbleSimulation {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
 

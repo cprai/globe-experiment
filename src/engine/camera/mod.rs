@@ -1,8 +1,10 @@
-//! The camera layer: the [`Camera`] trait every scenario implements
-//! (alongside `Simulation` + `UIDrawable`), the winit-free input vocabulary
-//! it speaks, and the reusable [`PtzCamera`] pan/tilt/zoom implementation a
-//! scenario can embed - or not: a future scenario may fly a scripted, fixed,
-//! or chase camera by implementing the trait differently.
+//! The camera layer: the [`CameraControl`] + [`CameraView`] trait pair every
+//! scenario implements (alongside `Simulation` + `UIDrawable`), the winit-free
+//! input vocabulary they speak, and the reusable [`PtzCamera`] pan/tilt/zoom
+//! implementation a scenario can embed - or not: a future scenario may fly a
+//! scripted, fixed, or chase camera by implementing the traits differently
+//! (a non-interactive camera implements only `CameraView` and leaves every
+//! `CameraControl` method at its no-op default).
 //!
 //! Winit-free on purpose: both bin trees build this module (the headless
 //! binary constructs a `PtzCamera` straight from its `--scene` JSON), and the
@@ -51,14 +53,14 @@ pub enum CursorHint {
     Grabbing,
 }
 
-/// The camera interface every scenario implements. It owns everything
-/// view-related for its scenario: responding to (already-translated) window
-/// input, advancing camera animation, and producing the frame's
-/// [`RenderState`] from the scenario's own simulation state. The input
-/// methods return whether the camera changed (or an animation started) so
-/// the application knows a redraw is needed; their defaults are no-ops, so a
-/// scenario with a non-interactive camera implements only `frame_state`.
-pub trait Camera {
+/// The interactive-input half of the camera interface: responding to
+/// (already-translated) window input, advancing the animation those gestures
+/// spawn (flick coasting, the zoom glide), and reporting the cursor
+/// affordance that reflects the drag state. The methods return whether the
+/// camera changed (or an animation started/continues) so the application
+/// knows a redraw is needed; every method defaults to a no-op, so a scenario
+/// with a non-interactive camera implements only [`CameraView`].
+pub trait CameraControl {
     /// A pointer button went down. Carries no position: winit press events
     /// have none, so a camera uses the position last given to
     /// [`pointer_move`](Self::pointer_move) (the cursor tracking state lives
@@ -95,7 +97,13 @@ pub trait Camera {
     fn cursor_hint(&self) -> CursorHint {
         CursorHint::Default
     }
+}
 
+/// The frame-production half of the camera interface: turning the scenario's
+/// own simulation state into the frame's [`RenderState`]. Split from
+/// [`CameraControl`] so the two concerns stay independent - a scripted or
+/// fixed camera is a `CameraView` with no input surface at all.
+pub trait CameraView {
     /// Produce this frame's [`RenderState`]: re-aim the camera at the frame's
     /// target, resolve the rig against the scenario's own celestial sphere,
     /// and pack it with the frame's time and markers. Satellite propagation

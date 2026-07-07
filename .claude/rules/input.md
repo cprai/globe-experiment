@@ -11,7 +11,8 @@ All input **state and response** live in `PtzCamera`
 cursor tracking (winit press events carry no position, so `pointer_press`
 uses the position last given to `pointer_move`). The application keeps NO
 input state: `translate_camera_event` in `src/engine/application/mod.rs` maps
-each winit event onto one device-neutral `Camera`-trait call, statelessly.
+each winit event onto one device-neutral `CameraControl`-trait call,
+statelessly.
 The take/put-back `Option` plumbing inside `PtzCamera` (drag/inertia/zoom
 taken out and put back around `self.pan`/`self.clamp_distance` calls) is the
 only sanctioned deviation from the original `Controller` code shape - the
