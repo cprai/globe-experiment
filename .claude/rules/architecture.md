@@ -382,11 +382,12 @@ frame_state(&mut self) -> RenderState
     Produce the frame: re-aim the camera at the frame's target (PtzCamera::
     retarget - which itself cancels in-flight animation on a genuine body
     switch), resolve the rig against the scene's own celestial sphere
-    (world_rig), propagate all satellites once, fill RenderState (time +
-    rig + camera_target + markers). Stashes the same-propagation
-    per-satellite readout on the scene for the immediately-following
-    get_drawables call. The camera_target packed into RenderState MUST be
-    the same one the rig was retargeted to.
+    (world_rig), propagate all satellites, fill RenderState (time +
+    rig + camera_target + markers). The immediately-following
+    get_drawables call re-derives its readouts at the same clock instant
+    (Clock::now() is pure, propagation deterministic), so they match the
+    rendered markers with no stashed state. The camera_target packed into
+    RenderState MUST be the same one the rig was retargeted to.
 ```
 
 Per-frame application order: `tick` -> `Scene::advance` ->
@@ -456,7 +457,9 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   panel-building code is **deliberately duplicated per scene** (like the
   propagation loop) so each scene can diverge in what it exposes.
 - After the Time panel, each scene pushes its own panel(s): top-right
-  telemetry from the stashed `last_telemetry` (a disjoint field) or the
+  telemetry (re-propagated on the spot at the frame's clock instant, into
+  owned values before the callback captures - deterministic, so it matches
+  the rendered markers) or the
   selector panel, plus manual_control's bottom-center Burns panel. All panels
   are independently anchored - no stacking constant.
   `ui::control_panel(&mut impl UIDrawable)` frames each panel and lays out its

@@ -106,10 +106,9 @@ pub trait CameraControl {
 pub trait CameraView {
     /// Produce this frame's [`RenderState`]: re-aim the camera at the frame's
     /// target, resolve the rig against the scene's own celestial sphere,
-    /// and pack it with the frame's time and markers. Satellite propagation
-    /// happens here, once per frame per satellite; the per-satellite readout
-    /// from the same propagation is stashed on the scene so the
-    /// immediately-following `UIDrawable::get_drawables` call (the egui
-    /// panel) reports values matching the rendered markers.
+    /// and pack it with the frame's time and markers. The marker propagation
+    /// happens here; the immediately-following `UIDrawable::get_drawables`
+    /// call (the egui panel) re-derives its readouts at the same clock
+    /// instant, so they match the rendered markers.
     fn frame_state(&mut self) -> RenderState;
 }

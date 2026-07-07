@@ -19,15 +19,13 @@ time window) and wires it into the clap CLI.
      **deliberately duplicated** per scene — do not factor it into a
      shared const.
    - defines a `pub struct <Name>Scene { clock: Clock, celestial_sphere:
-     CelestialSphere, satellites: Vec<Satellite>, last_telemetry:
-     Vec<SatelliteTelemetry> }` (the clock + celestial sphere are direct
-     fields; there is no shared core struct).
+     CelestialSphere, satellites: Vec<Satellite> }` (the clock + celestial
+     sphere are direct fields; there is no shared core struct).
    - implements `Scene` for it (`advance`, `celestial`, `frame_state`).
      `advance` ticks the clock and, while it is running, re-evaluates
      `CelestialSphere::at(&self.clock.now())`. The `frame_state` impl
-     propagates `self.satellites` using `self.clock.now()`, fills in
-     `RenderState`, and stashes the per-satellite readout into
-     `self.last_telemetry`. Use `marker_occluded` from `crate::scene`
+     propagates `self.satellites` using `self.clock.now()` and fills in
+     `RenderState`. Use `marker_occluded` from `crate::scene`
      for visibility testing.
    - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
      `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
@@ -37,7 +35,10 @@ time window) and wires it into the clap CLI.
      `self.clock.multiplier` fields directly — the panel code is deliberately
      duplicated per scene), then push **one** scene `UIDrawablePanel`
      (e.g. `anchor: PanelAnchor::TopRight`) whose rows are per-satellite
-     readouts from `self.last_telemetry` (e.g. `Box::new(Header { .. })`).
+     readouts (e.g. `Box::new(Header { .. })`) built into an owned
+     `Vec<SatelliteTelemetry>` at the top of `get_drawables` by
+     re-propagating `self.satellites` at `self.clock.now()` — the same
+     instant `frame_state` used, so the values match the rendered markers.
    - has a `run()` function that: calls `scene::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
      use), then calls

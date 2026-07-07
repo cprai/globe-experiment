@@ -240,13 +240,12 @@ pub struct SatelliteMarker {
     pub propagation: satellite::Propagation,
 }
 
-/// One tracked satellite's readout for the UI panel. A scene stashes a
-/// `Vec<SatelliteTelemetry>` each frame in its
-/// `crate::engine::camera::CameraView::frame_state` impl, built from the same
-/// propagation that fills [`RenderState::markers`] (so readout and marker can
-/// never disagree, and the orbit is propagated once per frame), and turns it
-/// into `crate::engine::ui` instruments in its
-/// `crate::engine::ui::UIDrawable` impl.
+/// One tracked satellite's readout for the UI panel. A scene builds a
+/// `Vec<SatelliteTelemetry>` on demand in its `crate::engine::ui::UIDrawable`
+/// impl by re-propagating each satellite at the frame's clock instant - the
+/// same instant its `crate::engine::camera::CameraView::frame_state` impl
+/// filled [`RenderState::markers`] from, and propagation is deterministic, so
+/// the readout matches the rendered markers with no stashed state.
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").

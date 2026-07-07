@@ -44,11 +44,6 @@ pub struct IssScene {
     /// clock runs.
     celestial_sphere: CelestialSphere,
     satellites: Vec<Satellite>,
-    /// Per-satellite readout from this frame's propagation, stashed by
-    /// `frame_state` for the immediately-following `get_drawables` (the panel),
-    /// so the readout matches the rendered markers. Empty until the first
-    /// frame.
-    last_telemetry: Vec<SatelliteTelemetry>,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
     camera: PtzCamera,
@@ -65,7 +60,6 @@ impl IssScene {
             celestial_sphere: CelestialSphere::at(&clock.now()),
             clock,
             satellites,
-            last_telemetry: Vec::new(),
             camera: PtzCamera::default(),
         }
     }
@@ -130,7 +124,6 @@ impl CameraView for IssScene {
             .world_rig(&self.celestial_sphere, celestial_to_world);
 
         let mut markers = Vec::with_capacity(self.satellites.len());
-        let mut sat_telemetry = Vec::with_capacity(self.satellites.len());
         for sat in &mut self.satellites {
             let state = sat.state_at(&now);
             markers.push(SatelliteMarker {
@@ -140,17 +133,7 @@ impl CameraView for IssScene {
                 // The renderer propagates this ahead for the orbit path.
                 propagation: Propagation::Sgp4(Box::new(sat.tle().clone())),
             });
-            sat_telemetry.push(SatelliteTelemetry {
-                name: sat.name.clone(),
-                latitude_deg: state.latitude_deg as f32,
-                longitude_deg: state.longitude_deg as f32,
-                altitude_km: state.altitude_km as f32,
-            });
         }
-
-        // Stash for this frame's `get_drawables` (the panel), so the readout
-        // comes from the same propagation as the markers.
-        self.last_telemetry = sat_telemetry;
 
         RenderState {
             time: now,
@@ -167,17 +150,36 @@ impl CameraView for IssScene {
 
 impl UIDrawable for IssScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The Time panel first, then this scene's own panel built from the
-        // disjoint `self.last_telemetry` field (so it coexists with the clock
-        // borrows). Both the panel builder and the readout loop are
-        // deliberately kept per-scene (like the propagation loop) -
-        // scenes may diverge in what they expose and how.
+        // The Time panel first, then this scene's own telemetry panel. Both
+        // the panel builder and the readout loop are deliberately kept
+        // per-scene (like the propagation loop) - scenes may diverge in what
+        // they expose and how.
         //
-        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
-        // so no shared borrow of the clock outlives into the mutable callback
-        // captures below. The two control callbacks capture disjoint clock
-        // fields (`paused` vs `multiplier`) via direct field assignment - a
-        // `Clock` method would borrow the whole clock and collide.
+        // Snapshot the displayed values up front (owned values only), so no
+        // borrow of the clock or the satellites outlives into the mutable
+        // callback captures below. The two control callbacks capture disjoint
+        // clock fields (`paused` vs `multiplier`) via direct field assignment
+        // - a `Clock` method would borrow the whole clock and collide.
+        //
+        // The readout re-propagates each satellite at the same instant
+        // `frame_state` used (`Clock::now()` is pure and nothing ticks the
+        // clock between the two calls) and SGP4 is deterministic, so the
+        // values match the rendered markers with no stashed state.
+        let now = self.clock.now();
+        let telemetry: Vec<SatelliteTelemetry> = self
+            .satellites
+            .iter_mut()
+            .map(|sat| {
+                let state = sat.state_at(&now);
+                SatelliteTelemetry {
+                    name: sat.name.clone(),
+                    latitude_deg: state.latitude_deg as f32,
+                    longitude_deg: state.longitude_deg as f32,
+                    altitude_km: state.altitude_km as f32,
+                }
+            })
+            .collect();
+
         let datetime = self.clock.datetime_label();
         // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
         // font is monospace, so a fixed-width value keeps the digit window
@@ -229,9 +231,8 @@ impl UIDrawable for IssScene {
             anchor: PanelAnchor::TopLeft,
             rows: time_rows,
         }];
-        let mut rows: Vec<Vec<Box<dyn Instrument>>> =
-            Vec::with_capacity(self.last_telemetry.len() * 3);
-        for sat in &self.last_telemetry {
+        let mut rows: Vec<Vec<Box<dyn Instrument>>> = Vec::with_capacity(telemetry.len() * 3);
+        for sat in &telemetry {
             // One header + two readout rows per satellite; taffy stacks the
             // groups (the repeated header rules the panel into sections).
             rows.push(vec![Box::new(Header {

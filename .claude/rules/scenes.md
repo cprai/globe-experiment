@@ -39,7 +39,7 @@ paths:
 
 Some scenes track **no** objects and just wind the celestial sphere to an
 event (e.g. `solar_eclipse`, `lunar_eclipse`). They omit the `Vec<Satellite>`
-and `last_telemetry` fields entirely: `CameraView::frame_state` returns `markers:
+field entirely: `CameraView::frame_state` returns `markers:
 Vec::new()` and the time from the scene's own clock; `get_drawables`
 returns the Time panel (plus a selector panel if the scene has one). With
 no TLE there is no epoch to borrow, so `new()` sets the clock start
@@ -115,8 +115,9 @@ opposing keys cancel) and applies `dv = BURN_ACCEL_M_S2 * dt * dir`
 (10 m/s^2, deliberately game-like ~1 g; dt-scaled so a paused clock burns
 nothing), then clears them. `CameraView::frame_state` resolves the marker with
 `satellite::resolve_orbit` (pure frame change — the state is already at
-`now`), fills `Propagation::Numerical(self.orbit)` so the predicted path
-reshapes live, and stashes lat/lon/alt + `satellite::orbit_shape`
+`now`) and fills `Propagation::Numerical(self.orbit)` so the predicted path
+reshapes live. `get_drawables` re-derives lat/lon/alt with the same
+`resolve_orbit` at the same clock instant, plus `satellite::orbit_shape`
 (apo/peri/speed; `None` on an escape orbit, shown as dashes — the path
 renderer likewise draws nothing for e >= 1).
 

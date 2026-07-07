@@ -216,18 +216,18 @@ impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
         // frames; when paused nothing advances and the app can go idle.
         animating |= self.simulation.advance();
 
-        // Produce this frame's RenderState *and* the UI snapshots in one shot
-        // (a single satellite propagation feeds both). The scene's
-        // CameraView impl resolves its own view - it re-aims at the frame's target and
+        // Produce this frame's RenderState. The scene's CameraView impl
+        // resolves its own view - it re-aims at the frame's target and
         // builds the rig against its own celestial sphere - so the
         // application never touches the ephemeris; the renderer rebuilds the
         // projection from the rig in the returned state.
         let render_state = self.simulation.frame_state();
 
         // Run the egui UI: the panel pulls the scene's drawable elements
-        // (read from the propagation just done above, so the readout matches the
-        // rendered markers) and renders them, firing the elements' callbacks for
-        // any interaction. The logic and tessellation live here (the renderer
+        // (readouts re-derived at the same clock instant as the frame_state
+        // above, so they match the rendered markers) and renders them, firing
+        // the elements' callbacks for any interaction. The logic and
+        // tessellation live here (the renderer
         // only draws the primitives). `self.simulation` and `self.egui_ctx` are
         // disjoint fields, so the panel's `&mut self.simulation` borrow coexists
         // with the `run_ui` receiver borrow.
