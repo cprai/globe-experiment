@@ -45,7 +45,7 @@ use std::time::UNIX_EPOCH;
 use clap::Parser;
 use satkit::Instant;
 
-use crate::engine::camera::Camera;
+use crate::engine::camera::PtzCamera;
 use crate::engine::renderer::UiFrame;
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::{self, CameraTarget, CelestialBody, RenderState};
@@ -116,8 +116,8 @@ struct SimulationSpec {
     datetime: String,
 }
 
-/// The `camera` section: the orbital camera placement, mirroring the `Camera`
-/// fields the windowed path drives.
+/// The `camera` section: the orbital camera placement, mirroring the
+/// `PtzCamera` pose fields the windowed path drives.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CameraSpec {
@@ -230,18 +230,17 @@ fn run(params: Cli) {
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
     // Resolve the orbit body by identity; its center (and the render origin) is
-    // looked up from the celestial sphere where needed. The distance clamp uses
-    // the chosen target's radius-scaled limits.
+    // looked up from the celestial sphere where needed. `PtzCamera::new` clamps
+    // the distance into the chosen target's radius-scaled limits.
     let target = CameraTarget::Body(scene.camera.target.body());
-    let camera = Camera {
-        longitude: scene.camera.longitude,
-        latitude: scene.camera.latitude,
-        distance: scene.camera.distance,
-        tilt: scene.camera.tilt,
+    let camera = PtzCamera::new(
         target,
-    };
-    let distance = camera.clamp_distance(scene.camera.distance);
-    let camera = Camera { distance, ..camera };
+        scene.camera.longitude,
+        scene.camera.latitude,
+        scene.camera.distance,
+        scene.camera.tilt,
+    );
+    let distance = camera.distance;
     let (eye, look_at, up) = camera.world_rig(&celestial, celestial_to_world);
 
     let render = RenderState {

@@ -21,8 +21,8 @@ paths:
   frames).
 - **f64 everywhere; f32 only at the GPU/egui boundary.** All CPU-side
   computation - the celestial sphere (positions AND rotations, `DMat3`), the
-  camera rig (`DVec3`/`DQuat`), the satellite/orbit-path pipeline, the input
-  controller, and the renderer's `prepare` math (view/projection in `DMat4`) -
+  camera (`PtzCamera` rig + input, `DVec3`/`DQuat`), the satellite/orbit-path
+  pipeline, and the renderer's `prepare` math (view/projection in `DMat4`) -
   runs in f64 end to end. Values are cast to f32 only when packed into a GPU
   uniform/instance buffer or handed to egui (telemetry readouts, slider
   values). Do not introduce intermediate f32 casts into computation paths.

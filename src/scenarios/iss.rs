@@ -2,13 +2,13 @@
 //! ~2024-001.5 TLE epoch. Same as `iss_and_hubble` but with Hubble omitted, so
 //! a single marker renders (CLI: `globe-experiment scenario iss`).
 
-use glam::DVec3;
-
 use crate::engine::application::{self, ApplicationState};
+use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite::{Propagation, Satellite};
 use crate::engine::simulation::{
-    self, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation, marker_occluded,
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Simulation,
+    marker_occluded,
 };
 use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
@@ -47,6 +47,9 @@ pub struct IssSimulation {
     /// so the readout matches the rendered markers. Empty until the first
     /// frame.
     last_telemetry: Vec<SatelliteTelemetry>,
+    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// animations); the default whole-Terra view.
+    camera: PtzCamera,
 }
 
 impl IssSimulation {
@@ -61,6 +64,7 @@ impl IssSimulation {
             clock,
             satellites,
             last_telemetry: Vec::new(),
+            camera: PtzCamera::default(),
         }
     }
 }
@@ -77,13 +81,49 @@ impl Simulation for IssSimulation {
         }
         running
     }
+}
 
-    fn celestial(&self) -> &CelestialSphere {
-        &self.celestial_sphere
+impl Camera for IssSimulation {
+    // The input methods forward to the embedded PtzCamera; the forwarding
+    // block is deliberately duplicated per scenario (like the Time panel) so
+    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    fn pointer_press(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_press(button)
     }
 
-    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
+    fn pointer_release(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_release(button)
+    }
+
+    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
+        self.camera.pointer_move(position, viewport_height)
+    }
+
+    fn scroll(&mut self, delta: ScrollDelta) -> bool {
+        self.camera.scroll(delta)
+    }
+
+    fn tick(&mut self, viewport_height: f64) -> bool {
+        self.camera.tick(viewport_height)
+    }
+
+    fn cursor_hint(&self) -> CursorHint {
+        self.camera.cursor_hint()
+    }
+
+    fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
+
+        // Resolve the camera first: re-aim at Terra (a same-body refresh) and
+        // build the rig against this frame's sphere - the eye feeds the
+        // marker-occlusion test below.
+        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let target = CameraTarget::terra();
+        self.camera
+            .retarget(target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self
+            .camera
+            .world_rig(&self.celestial_sphere, celestial_to_world);
 
         let mut markers = Vec::with_capacity(self.satellites.len());
         let mut sat_telemetry = Vec::with_capacity(self.satellites.len());
@@ -92,7 +132,7 @@ impl Simulation for IssSimulation {
             markers.push(SatelliteMarker {
                 position_km: state.position_km,
                 // Terra target, so the render-frame eye is the absolute eye.
-                visible: !marker_occluded(camera_pos, state.position_km),
+                visible: !marker_occluded(eye, state.position_km),
                 // The renderer propagates this ahead for the orbit path.
                 propagation: Propagation::Sgp4(Box::new(sat.tle().clone())),
             });
@@ -110,10 +150,10 @@ impl Simulation for IssSimulation {
 
         RenderState {
             time: now,
-            // Terra target (the default): the renderer derives the Terra system
-            // from the time and keeps the origin at Terra.
-            camera_target: self.camera_target(),
-            camera_pos,
+            // Terra target: the renderer derives the Terra system from the
+            // time and keeps the origin at Terra.
+            camera_target: target,
+            camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
             markers,

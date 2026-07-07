@@ -44,11 +44,12 @@ src/scenarios/iss_and_hubble.rs  IssAndHubbleSimulation (Simulation impl); ISS_T
 src/scenarios/iss.rs     IssSimulation (Simulation impl); own ISS_TLE const (duplicated on purpose)
 src/scenarios/solar_eclipse.rs  SolarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
-                         run() frames the Terra day side via Camera::looking_toward;
+                         new() seeds its PtzCamera framing the Terra day side
+                         (PtzCamera::looking_toward);
                          TargetSelector (default Terra) for the Terra/Luna panel
 src/scenarios/lunar_eclipse.rs  LunarEclipseSimulation: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
-                         run() launches orbiting Luna (Luna-target
+                         new() seeds its PtzCamera orbiting Luna (Luna-target
                          looking_toward); TargetSelector (default Luna)
 src/scenarios/manual_control.rs  ManualControlSimulation: ONE user-thrustable
                          satellite; own ISS_TLE const (duplicated on purpose),
@@ -65,20 +66,33 @@ src/scenarios/solar_system.rs  SolarSystemSimulation: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
-src/engine/application/mod.rs   ApplicationState<S: Simulation> + winit ApplicationHandler + run()
+src/engine/application/mod.rs   ApplicationState<S: Simulation + Camera + UIDrawable>
+                         + winit ApplicationHandler + run(). Keeps NO camera or
+                         input state: translate_camera_event statelessly maps
+                         each winit input event onto one device-neutral Camera-
+                         trait call (raw positions/deltas pass through), and
+                         cursor_icon maps CursorHint back onto winit
 src/engine/application/gfx.rs   Gfx: the windowed presenter - GPU surface/swapchain
                          config/present + egui_wgpu overlay around the shared
                          renderer::SceneRenderer; FrameOutcome drives window
                          visibility/redraw. The winit-bound half of rendering
                          (called only by the main tree - the headless tree
                          compiles it dead; offscreen.rs is its headless twin)
-src/engine/application/input.rs    Controller: drag/tilt/wheel, flick inertia, smoothed
-                         zoom, reset_animation (on target switch)
-src/engine/camera.rs            orbital camera (inertial-frame rig, km world space)
-                         orbiting a CameraTarget (Terra/Luna/planet); per-frame
-                         retarget. Winit-free so BOTH bin trees
-                         build the same rig (application drives it interactively;
-                         headless.rs constructs it from the --scene JSON)
+src/engine/camera/mod.rs        the Camera TRAIT every scenario implements (input
+                         methods with default no-op impls + tick + cursor_hint +
+                         frame_state) and the winit-free input vocabulary
+                         (PointerButton, ScrollDelta (Lines|Pixels), CursorHint).
+                         Winit-free so BOTH bin trees build it and future
+                         gamepad/touch input stays device-neutral
+src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
+                         camera - the inertial-frame rig (km world space,
+                         orbiting a CameraTarget; per-frame retarget, which now
+                         also cancels in-flight animation on a body switch) AND
+                         all input/animation state (drag pan/tilt, flick
+                         inertia, smoothed zoom glide; feel constants at file
+                         top). Scenarios embed one and forward the Camera trait
+                         to it; headless.rs constructs one from the --scene JSON
+                         (PtzCamera::new)
 src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
                          + PanelAnchor (egui-free data), and the egui
                          control_panel that frames each panel at its anchored
@@ -202,8 +216,8 @@ src/engine/simulation/body.rs   the celestial-body hierarchy: CelestialBody iden
                          from it), Placement (pos+rot), BodyState (identity
                          + placement). The shared vocabulary for the celestial
                          sphere, CameraTarget, and the selectors
-src/engine/simulation/mod.rs    Simulation trait (UI-agnostic; camera_target() defaults
-                         to Terra; the clock + celestial sphere live directly
+src/engine/simulation/mod.rs    Simulation trait (UI- and camera-agnostic; just
+                         advance(); the clock + celestial sphere live directly
                          in each scenario struct), RenderState
                          (time + camera rig (camera_pos/camera_look_at/camera_up)
                          + camera_target + markers (each SatelliteMarker carries
@@ -268,13 +282,14 @@ headless (bin headless)     -> engine, offscreen (NO scenarios; compiles
                                        # its crate-level allow(dead_code))
 engine      = application, camera, planet, renderer, simulation, ui
                                        # - declared identically by both roots
-application -> camera, simulation (incl. CelestialSphere, to resolve the camera
-                                       # target's center), renderer, ui,
-                                       # (winit, egui, egui_winit, glam).
-                                       # Contains gfx.rs (the windowed Gfx
-                                       # presenter around renderer's
-                                       # SceneRenderer)
-camera      -> simulation (CameraTarget + CelestialSphere),
+application -> camera (the Camera trait + its input types, NOT PtzCamera),
+                                       # simulation (Simulation trait +
+                                       # RenderState only - NO CelestialSphere
+                                       # access anymore), renderer, ui, (winit,
+                                       # egui, egui_winit). Contains gfx.rs
+                                       # (the windowed Gfx presenter around
+                                       # renderer's SceneRenderer)
+camera      -> simulation (CameraTarget + CelestialSphere + RenderState),
                                        # renderer::FOV_Y_DEG, (glam)  # winit-free
 offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
                                        # simulation (RenderState), (wgpu,
@@ -292,43 +307,75 @@ planet      -> simulation::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with simulation::body)
-scenarios   -> simulation, ui, application, camera
+scenarios   -> simulation, ui, application, camera (Camera trait + PtzCamera)
 ```
 
 ## `Simulation` trait
 
-Defined in `src/engine/simulation/mod.rs`. The sole simulation interface
-`ApplicationState` uses; adding a scenario requires no changes to the
-application layer. It is **UI-agnostic** - the panel reads/drives a scenario
-through a *separate* `ui::UIDrawable` impl, kept distinct from `Simulation`.
-(The `Simulation` trait itself takes no UI types; the `simulation` module does
-depend on `ui` for the selector panel builders, `TargetSelector::panel` /
-`BodySelector::panel`.) `ApplicationState<S>` bounds `S: Simulation + UIDrawable`.
+Defined in `src/engine/simulation/mod.rs`. One of the three traits every
+scenario implements (`ApplicationState<S>` bounds
+`S: Simulation + Camera + UIDrawable`); adding a scenario requires no changes
+to the application layer. It is **UI- and camera-agnostic** - the panel
+reads/drives a scenario through a *separate* `ui::UIDrawable` impl, and the
+frame's `RenderState` comes from the scenario's *separate* `camera::Camera`
+impl. (The `Simulation` trait itself takes no UI or camera types; the
+`simulation` module does depend on `ui` for the selector panel builders,
+`TargetSelector::panel` / `BodySelector::panel`.)
 
 ```
 advance(&mut self) -> bool
     Tick the clock + re-evaluate the celestial sphere. Returns whether the
     clock is running (keeps frames coming; paused = app goes idle).
-
-celestial(&self) -> &CelestialSphere
-    This frame's celestial sphere (Sol/Luna/planets + star matrices). The
-    application reads it to map the rig into world space (celestial_to_world =
-    star_rot_inv.transpose()) and to resolve the camera target's moving center.
-    (The renderer separately re-derives the sphere from RenderState.time.)
-
-camera_target(&self) -> CameraTarget   [defaulted: CameraTarget::terra()]
-    Which subject the orbital camera orbits this frame. The application reads it
-    and calls Camera::retarget before resolving the camera rig. Terra-only
-    scenarios inherit the default; the eclipse scenarios override it from a
-    TargetSelector (panel-driven).
-
-frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState
-    Propagate all satellites once, fill RenderState (the frame's time + the
-    camera rig + camera_target + markers - the renderer derives Sol/Luna/planet
-    geometry from the time). Stashes the same-propagation per-satellite readout
-    (Vec<SatelliteTelemetry>) on the scenario for the immediately-following
-    get_drawables call.
 ```
+
+## `Camera` trait + `PtzCamera`
+
+The trait + the winit-free input vocabulary (`PointerButton`,
+`ScrollDelta::{Lines,Pixels}`, `CursorHint::{Default,Grab,Grabbing}`) live in
+`src/engine/camera/mod.rs`; the reusable interactive implementation
+`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scenario implements the
+trait itself, usually by embedding a `camera: PtzCamera` field and forwarding
+(the forwarding block is deliberately duplicated per scenario, like the Time
+panel, so a scenario can diverge - gate input, or fly a future scripted/fixed
+camera type by implementing the trait differently).
+
+```
+pointer_press(&mut self, button) -> bool      [default: no-op, false]
+pointer_release(&mut self, button) -> bool    [default: no-op, false]
+pointer_move(&mut self, position, viewport_height) -> bool   [default no-op]
+scroll(&mut self, delta) -> bool              [default: no-op, false]
+    Device-neutral input, called by the application's stateless
+    translate_camera_event (one winit event -> one call; raw pixel
+    positions/deltas pass through). Presses carry NO position (winit gives
+    none) - the camera uses the position last given to pointer_move; ALL
+    input state, cursor tracking included, lives in the camera. Return =
+    "camera changed, request a redraw". A future gamepad/touch scheme = new
+    defaulted methods here + translation arms in application.
+
+tick(&mut self, viewport_height) -> bool      [default: no-op, false]
+    Advance one frame of camera animation (flick coast, zoom glide) with
+    real frame time. Called at the top of every redraw, BEFORE
+    Simulation::advance. Returns true while another frame is needed; with a
+    paused clock this reaching false is what lets the app go idle.
+
+cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
+    The scene cursor while the pointer is not over an egui panel; the
+    application maps it onto winit's icon set.
+
+frame_state(&mut self) -> RenderState
+    Produce the frame: re-aim the camera at the frame's target (PtzCamera::
+    retarget - which itself cancels in-flight animation on a genuine body
+    switch), resolve the rig against the scenario's own celestial sphere
+    (world_rig), propagate all satellites once, fill RenderState (time +
+    rig + camera_target + markers). Stashes the same-propagation
+    per-satellite readout on the scenario for the immediately-following
+    get_drawables call. The camera_target packed into RenderState MUST be
+    the same one the rig was retargeted to.
+```
+
+Per-frame application order: `tick` -> `Simulation::advance` ->
+`frame_state` (idle invariant: redraw is re-requested only while
+`tick() || advance()` reports motion, or egui asks for a repaint).
 
 ## `UIDrawable` trait + `UIDrawablePanel` + `Instrument`
 
@@ -418,11 +465,11 @@ submodule path.
 
 ## Purity rules (compiler-enforced)
 
-- **`simulation` imports neither winit/wgpu nor the `Camera` type.**
-  The `Simulation` trait takes resolved `DVec3` values for the camera rig (eye,
-  look-at point, up) and returns a `RenderState`. This keeps input scheme
-  changes local to `application` and each scenario's `frame_state` impl
-  independently testable.
+- **`simulation` imports neither winit/wgpu nor any camera type.**
+  `RenderState` is plain data (time + resolved `DVec3` rig + `CameraTarget` +
+  markers), produced by the scenario's `camera::Camera` impl and consumed by
+  the renderer. This keeps input scheme changes local to `camera` (+ one
+  translation arm in `application`) and each scenario independently testable.
   `simulation` *does* depend on `ui` (hence egui, transitively) for the
   selector panel builders (`TargetSelector::panel` / `BodySelector::panel`).
   The `UIDrawable`/`UIDrawablePanel`/`Instrument`
@@ -430,24 +477,26 @@ submodule path.
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.
-- **`Camera` type lives in the shared `engine::camera` module** (winit-free;
-  owner-approved re-home from `application` for the two-binary split, so the
-  `headless` binary builds the same rig without calling any winit code). Its
-  *input mechanics* (the `Controller`, all drag/zoom/animation) stay in
-  `application`; other modules see only the resolved rig (eye / look-at / up);
-  the renderer rebuilds the projection from it via
+- **The `Camera` trait and `PtzCamera` live in the shared `engine::camera`
+  module, winit-free** (so the `headless` binary builds the same rig without
+  calling any winit code, and the trait's input vocabulary stays
+  device-neutral). ALL camera mechanics - the rig math AND the input/animation
+  state that used to be `application`'s `Controller` (drag, flick inertia,
+  zoom glide, cursor tracking) - live in `PtzCamera`; `application` keeps no
+  camera or input state and only translates winit events into trait calls
+  (`translate_camera_event`, stateless). Other modules see only the resolved
+  rig inside `RenderState`; the renderer rebuilds the projection from it via
   `renderer::view_proj_reversed_z` (the FOV/near/far projection consts also
   live in `renderer`). (`RenderState` is defined in `simulation` but consumed
   by `renderer`, and `CameraTarget` is defined in `simulation` but consumed by
   `camera` — the two allowed edges. `CameraTarget` is plain **identity** data:
-  it names no `Camera`/winit/wgpu type, only the orbit subject (a
+  it names no camera/winit/wgpu type, only the orbit subject (a
   `CelestialBody` identity, or a free `Coordinate`). It does **not** store the
   body's moving center; the center is resolved from the `CelestialSphere` on
   demand via `center_world(&sphere)` / `render_origin(&sphere)`, with the
-  static geometry accessors delegating through the identity to
-  `terra`/`planet`. The scenario→application *camera* channel is the
-  `Simulation::camera_target` return value, so the application still owns all
-  camera mechanics.)
+  static geometry accessors delegating through the identity to `planet`. The
+  scenario owns its camera outright - there is no scenario→application camera
+  channel anymore.)
 - **`renderer` is winit-free (by convention, kept by review).** The windowed
   `Gfx` presenter (the only winit-touching render code) lives in
   `application/gfx.rs`; the headless bin's `offscreen.rs` is its surfaceless
@@ -458,10 +507,9 @@ submodule path.
   compiler-enforced module-by-module. What the compiler still enforces is the
   top level: the `headless` bin root must never declare `scenarios`, and
   `main.rs` must never declare `offscreen`.
-- **Relaxed: `application` may read the `CelestialSphere`.** The camera now
-  resolves its target's center from the sphere (via `Simulation::celestial()`),
-  so `application` touches `simulation`'s ephemeris-backed type and pulls in
-  satkit transitively at runtime. This was a deliberate trade (owner-approved)
-  to make `CameraTarget` a pure identity with a single source of truth for
-  centers, rather than baking a resolved snapshot into the type. `application`
-  still imports no winit-in-`simulation` / wgpu types.
+- **`application` does not touch the `CelestialSphere`.** (The 2026-07 camera
+  re-home reinstated this: retargeting and rig resolution moved into each
+  scenario's `Camera::frame_state`, which reads the scenario's own sphere, so
+  the old "relaxed" exception - `application` reading it via
+  `Simulation::celestial()` - is gone along with that method.) `application`
+  consumes only the finished `RenderState`.

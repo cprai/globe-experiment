@@ -9,25 +9,36 @@ paths:
 ## Adding a scenario
 
 - One module per past scenario under `src/scenarios/`, each defining a
-  `<Name>Simulation` struct that implements the `Simulation` trait, plus a
-  `run()`. Add a module and a `ScenarioName` variant in `src/main.rs`.
+  `<Name>Simulation` struct that implements the **three traits** `Simulation`
+  + `camera::Camera` + `ui::UIDrawable`, plus a `run()`. Add a module and a
+  `ScenarioName` variant in `src/main.rs`.
 - Each scenario struct holds `clock: Clock` + `celestial_sphere:
-  CelestialSphere` as direct fields (there is no shared core struct), plus its
-  own `Vec<Satellite>`. `new()` builds `Clock::new(epoch)` +
-  `CelestialSphere::at(&clock.now())`; `advance()` ticks the clock and, while
-  running, re-evaluates the sphere. `get_drawables` builds the top-left Time
-  panel itself (UTC readout, speed readout, Run toggle, speed slider - the
-  toggle/slider callbacks mutate the disjoint `clock.paused` /
-  `clock.multiplier` fields by direct assignment). The Time-panel code is
-  **deliberately duplicated across scenarios** (like the propagation loop) so
-  each can diverge in what it exposes. Name the struct `<Name>Simulation`
-  (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
+  CelestialSphere` + `camera: PtzCamera` as direct fields (there is no shared
+  core struct), plus its own `Vec<Satellite>`. `new()` builds
+  `Clock::new(epoch)` + `CelestialSphere::at(&clock.now())` +
+  `PtzCamera::default()` (or a `looking_toward` framing, below); `advance()`
+  ticks the clock and, while running, re-evaluates the sphere.
+  `get_drawables` builds the top-left Time panel itself (UTC readout, speed
+  readout, Run toggle, speed slider - the toggle/slider callbacks mutate the
+  disjoint `clock.paused` / `clock.multiplier` fields by direct assignment).
+  The Time-panel code is **deliberately duplicated across scenarios** (like
+  the propagation loop) so each can diverge in what it exposes. Name the
+  struct `<Name>Simulation` (e.g. `IssSimulation`, `IssAndHubbleSimulation`).
+- The `impl Camera` block is six one-line forwarders to `self.camera`
+  (`pointer_press`/`pointer_release`/`pointer_move`/`scroll`/`tick`/
+  `cursor_hint`) plus `frame_state`, the frame recipe: derive
+  `celestial_to_world = self.celestial_sphere.star_rot_inv.transpose()`,
+  resolve the frame's target (`CameraTarget::terra()` or the selector),
+  `self.camera.retarget(target, &sphere, c2w)`, `world_rig` -> (eye, look_at,
+  up), then pack `RenderState` (packing the SAME resolved `target`). The
+  forwarding block is **deliberately duplicated per scenario** (like the Time
+  panel) - a scenario may gate input or fly a different camera type.
 
 ### Empty (no-satellite) scenarios
 
 Some scenarios track **no** objects and just wind the celestial sphere to an
 event (e.g. `solar_eclipse`, `lunar_eclipse`). They omit the `Vec<Satellite>`
-and `last_telemetry` fields entirely: `frame_state` returns `markers:
+and `last_telemetry` fields entirely: `Camera::frame_state` returns `markers:
 Vec::new()` and the time from the scenario's own clock; `get_drawables`
 returns the Time panel (plus a selector panel if the scenario has one). With
 no TLE there is no epoch to borrow, so `new()` sets the clock start
@@ -36,31 +47,33 @@ no TLE there is no epoch to borrow, so `new()` sets the clock start
 
 ### Initial camera framing (optional)
 
-A scenario's `run()` can frame its event on launch instead of the default
-whole-Terra view: build the simulation, read its `celestial_sphere`, compute a
-`Camera` with `Camera::looking_toward(target, star_rot_inv, world_look,
-distance)` (orbits `target` with the look axis along a world-frame direction —
-e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna target aimed
-at Luna's center (`celestial.luna().placement.pos_world`)), and pass it to
-`ApplicationState::with_camera(sim, camera)`
-instead of `::new`. The camera is fully interactive afterward. The solar eclipse
-frames the Terra day side; the lunar eclipse launches **orbiting Luna** (a
-Luna-target camera looking toward Luna's center sits on Luna's
-Terra-facing side, so Terra is behind the camera — no limb offset needed).
+A scenario's `new()` can frame its event on launch instead of the default
+whole-Terra view: after building the clock + celestial sphere, seed the
+`camera` field with `PtzCamera::looking_toward(target, star_rot_inv,
+world_look, distance)` (orbits `target` with the look axis along a world-frame
+direction — e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna
+target aimed at Luna's center (`celestial.luna().placement.pos_world`))
+instead of `PtzCamera::default()`. The camera is fully interactive afterward
+(`ApplicationState::with_camera` no longer exists - the scenario owns its
+camera). The solar eclipse frames the Terra day side; the lunar eclipse
+launches **orbiting Luna** (a Luna-target camera looking toward Luna's center
+sits on Luna's Terra-facing side, so Terra is behind the camera — no limb
+offset needed).
 
 ### Camera-target selection (Terra or Luna)
 
-A scenario that offers more than Terra holds a `simulation::TargetSelector`
-and overrides `Simulation::camera_target()` to return `self.selector.resolve()`
-(a `CameraTarget` identity - the center is resolved from the sphere downstream,
-no longer passed in).
+A scenario that offers more than Terra holds a `simulation::TargetSelector`;
+its `Camera::frame_state` resolves it (`self.selector.resolve()`, a
+`CameraTarget` identity - the center is resolved from the sphere downstream)
+into `self.camera.retarget(..)` each frame.
 The selector's Terra / Luna radio panel is appended in `get_drawables` (after the
 shared-core panel; the two panels borrow disjoint fields). A key press only sets
 a disjoint `request_*` flag; the scenario's `advance()` calls
-`self.selector.apply_requests()` *before* the frame's `camera_target` is read, so
+`self.selector.apply_requests()` *before* the frame's target is resolved
+(`frame_state` runs after `advance`), so
 the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
 the clock's Run toggle vs speed slider). Satellite scenarios skip all this and
-inherit the Terra-only default.
+retarget `CameraTarget::terra()` every frame (a same-body refresh no-op).
 
 ### Multi-body selection (solar_system)
 
@@ -75,8 +88,8 @@ lit), so each key callback needs a **disjoint** `request_*` field — hence nine
 named flags (not an array, whose elements can't be captured disjointly), in
 `SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
 folds into `selected`. Its `resolve()` returns the chosen body's `CameraTarget`
-identity (the center is resolved from the sphere downstream). `frame_state` just
-fills the reduced
+identity (the center is resolved from the sphere downstream).
+`Camera::frame_state` retargets/rigs on it and fills the reduced
 `RenderState` (the frame's time + camera rig + `camera_target` (= the resolved
 target) + empty markers); the renderer derives every body's geometry from the
 time and takes the render origin from the `camera_target`. The panel is appended
@@ -99,14 +112,15 @@ request-flag pattern, six named bools); `advance()` folds the flags into a
 unit GCRF direction (prograde = v-hat, radial = r-hat, normal = (r x v)-hat,
 opposing keys cancel) and applies `dv = BURN_ACCEL_M_S2 * dt * dir`
 (10 m/s^2, deliberately game-like ~1 g; dt-scaled so a paused clock burns
-nothing), then clears them. `frame_state` resolves the marker with
+nothing), then clears them. `Camera::frame_state` resolves the marker with
 `satellite::resolve_orbit` (pure frame change — the state is already at
 `now`), fills `Propagation::Numerical(self.orbit)` so the predicted path
 reshapes live, and stashes lat/lon/alt + `satellite::orbit_shape`
 (apo/peri/speed; `None` on an escape orbit, shown as dashes — the path
 renderer likewise draws nothing for e >= 1).
 
-- The `Simulation` impl's `frame_state` propagates `self.satellites` using
+- The `Camera` impl's `frame_state` resolves the rig first (its eye feeds the
+  occlusion test), then propagates `self.satellites` using
   `self.clock.now()`, calls `marker_occluded` from
   `crate::simulation` for visibility, fills each `SatelliteMarker`'s
   `propagation` (the renderer propagates it ahead for the predicted orbit

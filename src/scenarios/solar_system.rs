@@ -12,12 +12,12 @@
 //! scene is drawn relative to the orbited planet's center; see
 //! `CameraTarget::render_origin`). Terra/Luna targets keep the origin at Terra.
 
-use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
+use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
-use crate::engine::simulation::{self, BodySelector, CameraTarget, Clock, RenderState, Simulation};
+use crate::engine::simulation::{self, BodySelector, Clock, RenderState, Simulation};
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
@@ -32,6 +32,9 @@ pub struct SolarSystemSimulation {
     /// clock runs.
     celestial_sphere: CelestialSphere,
     selector: BodySelector,
+    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// animations); starts on the default whole-Terra view.
+    camera: PtzCamera,
 }
 
 impl SolarSystemSimulation {
@@ -48,6 +51,7 @@ impl SolarSystemSimulation {
             celestial_sphere: CelestialSphere::at(&clock.now()),
             clock,
             selector: BodySelector::default(),
+            camera: PtzCamera::default(),
         }
     }
 }
@@ -66,24 +70,57 @@ impl Simulation for SolarSystemSimulation {
         }
         running
     }
+}
 
-    fn celestial(&self) -> &CelestialSphere {
-        &self.celestial_sphere
+impl Camera for SolarSystemSimulation {
+    // The input methods forward to the embedded PtzCamera; the forwarding
+    // block is deliberately duplicated per scenario (like the Time panel) so
+    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    fn pointer_press(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_press(button)
     }
 
-    fn camera_target(&self) -> CameraTarget {
-        self.selector.resolve()
+    fn pointer_release(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_release(button)
     }
 
-    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
+    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
+        self.camera.pointer_move(position, viewport_height)
+    }
+
+    fn scroll(&mut self, delta: ScrollDelta) -> bool {
+        self.camera.scroll(delta)
+    }
+
+    fn tick(&mut self, viewport_height: f64) -> bool {
+        self.camera.tick(viewport_height)
+    }
+
+    fn cursor_hint(&self) -> CursorHint {
+        self.camera.cursor_hint()
+    }
+
+    fn frame_state(&mut self) -> RenderState {
+        // Re-aim the camera at this frame's selected body (its moving center
+        // refreshed from the ephemeris; a genuine body switch reframes and
+        // drops in-flight animations inside `retarget`), then resolve the
+        // inertial rig into the render frame.
+        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let target = self.selector.resolve();
+        self.camera
+            .retarget(target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self
+            .camera
+            .world_rig(&self.celestial_sphere, celestial_to_world);
+
         // No satellites: an empty marker list. The renderer derives every
         // body's position from the frame's time and uses the camera target's
         // render origin (which must match the one the camera built its rig
-        // against - both come from `camera_target()` this frame).
+        // against - both are the single `target` resolved above).
         RenderState {
             time: self.clock.now(),
-            camera_target: self.camera_target(),
-            camera_pos,
+            camera_target: target,
+            camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
             markers: Vec::new(),

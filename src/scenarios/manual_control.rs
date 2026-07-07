@@ -11,10 +11,11 @@ use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
+use crate::engine::camera::{Camera, CursorHint, PointerButton, PtzCamera, ScrollDelta};
 use crate::engine::simulation::celestial_sphere::CelestialSphere;
 use crate::engine::simulation::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
 use crate::engine::simulation::{
-    self, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded,
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, Simulation, marker_occluded,
 };
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
@@ -80,6 +81,9 @@ pub struct ManualControlSimulation {
     burn_radial_in: bool,
     /// See [`ManualTelemetry`]. `None` until the first frame.
     last_telemetry: Option<ManualTelemetry>,
+    /// The scenario's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// animations); the default whole-Terra view.
+    camera: PtzCamera,
 }
 
 impl ManualControlSimulation {
@@ -105,6 +109,7 @@ impl ManualControlSimulation {
             burn_radial_out: false,
             burn_radial_in: false,
             last_telemetry: None,
+            camera: PtzCamera::default(),
         }
     }
 
@@ -184,13 +189,49 @@ impl Simulation for ManualControlSimulation {
 
         running
     }
+}
 
-    fn celestial(&self) -> &CelestialSphere {
-        &self.celestial_sphere
+impl Camera for ManualControlSimulation {
+    // The input methods forward to the embedded PtzCamera; the forwarding
+    // block is deliberately duplicated per scenario (like the Time panel) so
+    // a scenario can diverge - e.g. gate input or swap the camera kind.
+    fn pointer_press(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_press(button)
     }
 
-    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState {
+    fn pointer_release(&mut self, button: PointerButton) -> bool {
+        self.camera.pointer_release(button)
+    }
+
+    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
+        self.camera.pointer_move(position, viewport_height)
+    }
+
+    fn scroll(&mut self, delta: ScrollDelta) -> bool {
+        self.camera.scroll(delta)
+    }
+
+    fn tick(&mut self, viewport_height: f64) -> bool {
+        self.camera.tick(viewport_height)
+    }
+
+    fn cursor_hint(&self) -> CursorHint {
+        self.camera.cursor_hint()
+    }
+
+    fn frame_state(&mut self) -> RenderState {
         let now = self.clock.now();
+
+        // Resolve the camera first: re-aim at Terra (a same-body refresh) and
+        // build the rig against this frame's sphere - the eye feeds the
+        // marker-occlusion test below.
+        let celestial_to_world = self.celestial_sphere.star_rot_inv.transpose();
+        let target = CameraTarget::terra();
+        self.camera
+            .retarget(target, &self.celestial_sphere, celestial_to_world);
+        let (eye, look_at, up) = self
+            .camera
+            .world_rig(&self.celestial_sphere, celestial_to_world);
 
         // `advance` just re-anchored the state to `now`, so this is a pure
         // frame change (GCRF -> the world-frame marker), no propagation.
@@ -198,7 +239,7 @@ impl Simulation for ManualControlSimulation {
         let markers = vec![SatelliteMarker {
             position_km: state.position_km,
             // Terra target, so the render-frame eye is the absolute eye.
-            visible: !marker_occluded(camera_pos, state.position_km),
+            visible: !marker_occluded(eye, state.position_km),
             // Numerical propagation from the live post-burn state: the
             // predicted orbit path reshapes as the burn happens.
             propagation: Propagation::Numerical(self.orbit),
@@ -213,8 +254,8 @@ impl Simulation for ManualControlSimulation {
 
         RenderState {
             time: now,
-            camera_target: self.camera_target(),
-            camera_pos,
+            camera_target: target,
+            camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
             markers,

@@ -1,36 +1,37 @@
 //! The application layer: windowing, the winit event loop, per-frame redraw
-//! orchestration, and all camera input/animation. It is generic over any
-//! `S: Simulation`, owns the windowed `Gfx` renderer (the `gfx` submodule),
-//! updates the camera from window input, advances the simulation, and drives
-//! each render.
+//! orchestration, and the windowed presenter. It is generic over any
+//! `S: Simulation + Camera + UIDrawable`, owns the windowed `Gfx` renderer
+//! (the `gfx` submodule), advances the simulation, and drives each render.
 //!
-//! The camera's input controller lives here so that swapping the input scheme
-//! (e.g. adding touch controls) stays local to this module; the `Camera` rig
-//! type itself lives in the shared top-level `camera` module (winit-free, so
-//! the headless binary builds the same rig), and the simulation and renderer
-//! only ever consume a resolved camera position/view.
+//! The application keeps NO camera or input state: each winit input event is
+//! translated **statelessly** into one device-neutral `Camera`-trait call
+//! (see `translate_camera_event`), so all camera state - the rig, drag/flick/
+//! zoom animation, even cursor tracking - lives behind the scenario's
+//! `Camera` impl (usually a `PtzCamera`). Swapping or extending the input
+//! scheme (gamepad, touch) means a new trait method plus a translation arm
+//! here, nothing more. The simulation and renderer only ever consume the
+//! resolved `RenderState`; the application never touches the
+//! `CelestialSphere`.
 
 mod gfx;
-mod input;
 
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, Window, WindowId};
 
-use crate::engine::camera::Camera;
+use crate::engine::camera::{Camera, CursorHint, PointerButton, ScrollDelta};
 use crate::engine::renderer::UiFrame;
 use crate::engine::simulation::Simulation;
 use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
-use input::Controller;
 
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
-pub fn run<S: Simulation + UIDrawable>(mut app: ApplicationState<S>) {
+pub fn run<S: Simulation + Camera + UIDrawable>(mut app: ApplicationState<S>) {
     let event_loop = build_event_loop();
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
@@ -56,14 +57,12 @@ fn build_event_loop() -> EventLoop<()> {
 }
 
 /// The application: owns the window, the egui logic side (`Context` +
-/// `egui_winit::State`), the camera and its input controller, the simulation,
-/// and the renderer. The window/egui_state/gfx are created on `resumed`.
-/// Generic over `S: Simulation` so any scenario can be plugged in without
-/// changing the application layer.
-pub struct ApplicationState<S: Simulation + UIDrawable> {
-    camera: Camera,
+/// `egui_winit::State`), the simulation (which carries its own camera behind
+/// the `Camera` trait), and the renderer. The window/egui_state/gfx are
+/// created on `resumed`. Generic over `S: Simulation + Camera + UIDrawable`
+/// so any scenario can be plugged in without changing the application layer.
+pub struct ApplicationState<S: Simulation + Camera + UIDrawable> {
     simulation: S,
-    controller: Controller,
     /// The window, created on `resumed`. Shared with the renderer's surface.
     window: Option<Arc<Window>>,
     /// egui's logic/platform side (the GPU side lives in `Gfx`).
@@ -75,19 +74,18 @@ pub struct ApplicationState<S: Simulation + UIDrawable> {
     shown: bool,
 }
 
-impl<S: Simulation + UIDrawable> ApplicationState<S> {
-    /// Builds the application around an already-constructed simulation. The
-    /// window, egui platform state, and renderer are created later, on the
-    /// first `resumed`.
+impl<S: Simulation + Camera + UIDrawable> ApplicationState<S> {
+    /// Builds the application around an already-constructed simulation (which
+    /// carries its own camera - a scenario that frames a specific event on
+    /// launch seeds its `PtzCamera` in its `new()`). The window, egui platform
+    /// state, and renderer are created later, on the first `resumed`.
     pub fn new(simulation: S) -> Self {
         let egui_ctx = egui::Context::default();
         // Stamp the Apollo-panel theme onto the context once; the live UI and a
         // headless mock share the same `install_theme`, so they look identical.
         ui::install_theme(&egui_ctx);
         Self {
-            camera: Camera::default(),
             simulation,
-            controller: Controller::default(),
             window: None,
             egui_ctx,
             egui_state: None,
@@ -95,20 +93,9 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             shown: false,
         }
     }
-
-    /// Builds the application with a specific initial camera instead of the
-    /// default whole-body view. Used by scenarios that want to frame a specific
-    /// event on launch (e.g. the eclipse scenarios aim at the Sol/Luna); the
-    /// camera is fully interactive afterward.
-    pub fn with_camera(simulation: S, camera: Camera) -> Self {
-        Self {
-            camera,
-            ..Self::new(simulation)
-        }
-    }
 }
 
-impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
+impl<S: Simulation + Camera + UIDrawable> ApplicationHandler for ApplicationState<S> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -129,7 +116,7 @@ impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
         );
 
         let gfx = Gfx::init(window.clone(), event_loop.owned_display_handle());
-        window.set_cursor(self.controller.cursor_icon());
+        window.set_cursor(cursor_icon(self.simulation.cursor_hint()));
 
         // egui's platform side needs the window; the GPU side already went
         // into Gfx. The context is shared with the input/redraw paths.
@@ -174,9 +161,10 @@ impl<S: Simulation + UIDrawable> ApplicationHandler for ApplicationState<S> {
     }
 }
 
-impl<S: Simulation + UIDrawable> ApplicationState<S> {
+impl<S: Simulation + Camera + UIDrawable> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
-    /// hover); whatever it doesn't consume drives the orbital camera.
+    /// hover); whatever it doesn't consume is translated into the
+    /// scenario's `Camera` impl.
     fn handle_input(&mut self, event: WindowEvent) {
         let Some(window) = self.window.clone() else {
             return;
@@ -196,10 +184,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             return;
         }
 
-        if self
-            .controller
-            .handle_event(&event, &mut self.camera, gfx.viewport().1)
-        {
+        if translate_camera_event(&mut self.simulation, &event, gfx.viewport().1) {
             window.request_redraw();
         }
     }
@@ -215,9 +200,9 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
             return;
         };
 
-        // Step flick inertia with real frame time; while it's coasting,
-        // each frame requests the next one.
-        let mut animating = self.controller.tick(&mut self.camera, gfx.viewport().1);
+        // Step camera animation (flick inertia, zoom glide) with real frame
+        // time; while something is coasting, each frame requests the next one.
+        let mut animating = self.simulation.tick(gfx.viewport().1);
 
         // Advance the simulation: the clock steps and, while it runs, the
         // ephemeris-driven celestial sphere is re-evaluated at the new time.
@@ -227,34 +212,13 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         // frames; when paused nothing advances and the app can go idle.
         animating |= self.simulation.advance();
 
-        // Resolve the inertial-frame camera into the Earth-fixed world frame
-        // using the celestial sphere's current orientation, then hand the
-        // finished view to the simulation to produce this frame's RenderState
-        // *and* the UI snapshots in one shot (a single satellite propagation
-        // feeds both). All the camera math lives here (with the camera); the
-        // simulation only consumes the resolved eye/view and fills in the
-        // astronomical positions.
-        // The current celestial sphere; the camera reads it to resolve its
-        // target's moving center and to map the inertial rig into world space
-        // (`celestial_to_world = star_rot_inv.transpose()`).
-        let celestial = self.simulation.celestial();
-        let celestial_to_world = celestial.star_rot_inv.transpose();
-
-        // Re-aim the orbital camera at this frame's target (the scenario's
-        // chosen body, with Luna's center refreshed from the ephemeris). On
-        // a genuine body switch the reframe invalidates any in-flight zoom/flick
-        // (they target the old body's scale), so cancel them.
-        let target = self.simulation.camera_target();
-        if self.camera.retarget(target, celestial, celestial_to_world) {
-            self.controller.reset_animation();
-        }
-
-        // The rig: eye + look-at point + up, all in the floating-origin (render)
-        // frame. The renderer rebuilds the projection from these (and derives
-        // every body's position from the frame's time), so far planet targets
-        // stay f32-precise.
-        let (eye, look_at, up) = self.camera.world_rig(celestial, celestial_to_world);
-        let render_state = self.simulation.frame_state(eye, look_at, up);
+        // Produce this frame's RenderState *and* the UI snapshots in one shot
+        // (a single satellite propagation feeds both). The scenario's Camera
+        // impl resolves its own view - it re-aims at the frame's target and
+        // builds the rig against its own celestial sphere - so the
+        // application never touches the ephemeris; the renderer rebuilds the
+        // projection from the rig in the returned state.
+        let render_state = self.simulation.frame_state();
 
         // Run the egui UI: the panel pulls the scenario's drawable elements
         // (read from the propagation just done above, so the readout matches the
@@ -273,7 +237,7 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         // egui resets the cursor icon every frame; restore the scene's
         // grab cursor whenever the pointer isn't on the panel.
         if !self.egui_ctx.is_pointer_over_egui() {
-            window.set_cursor(self.controller.cursor_icon());
+            window.set_cursor(cursor_icon(self.simulation.cursor_hint()));
         }
 
         // Tessellate egui into render-ready primitives for the renderer.
@@ -321,5 +285,55 @@ impl<S: Simulation + UIDrawable> ApplicationState<S> {
         if animating || egui_repaint {
             window.request_redraw();
         }
+    }
+}
+
+/// Translates one winit window event into the matching device-neutral
+/// `Camera`-trait call, statelessly - raw positions/deltas pass straight
+/// through and nothing is remembered here (cursor tracking lives in the
+/// camera, which is why presses carry no position: winit gives them none).
+/// Returns whether the camera changed and a redraw is needed.
+fn translate_camera_event<C: Camera>(
+    camera: &mut C,
+    event: &WindowEvent,
+    viewport_height: f64,
+) -> bool {
+    match event {
+        WindowEvent::MouseInput { state, button, .. } => {
+            // Only the buttons the camera vocabulary names; middle/back/
+            // forward are dropped here (no camera has a gesture for them).
+            let button = match button {
+                MouseButton::Left => PointerButton::Left,
+                MouseButton::Right => PointerButton::Right,
+                _ => return false,
+            };
+            match state {
+                ElementState::Pressed => camera.pointer_press(button),
+                ElementState::Released => camera.pointer_release(button),
+            }
+        }
+        WindowEvent::CursorMoved { position, .. } => {
+            camera.pointer_move((position.x, position.y), viewport_height)
+        }
+        WindowEvent::MouseWheel { delta, .. } => {
+            // Both variants are load-bearing (Windows/X11 wheels deliver
+            // lines, macOS precision trackpads pixels); the per-variant zoom
+            // feel lives with the camera.
+            let delta = match delta {
+                MouseScrollDelta::LineDelta(_, y) => ScrollDelta::Lines(f64::from(*y)),
+                MouseScrollDelta::PixelDelta(position) => ScrollDelta::Pixels(position.y),
+            };
+            camera.scroll(delta)
+        }
+        _ => false,
+    }
+}
+
+/// Maps the camera's winit-free cursor hint onto the winit icon set.
+fn cursor_icon(hint: CursorHint) -> CursorIcon {
+    match hint {
+        CursorHint::Default => CursorIcon::Default,
+        CursorHint::Grab => CursorIcon::Grab,
+        CursorHint::Grabbing => CursorIcon::Grabbing,
     }
 }

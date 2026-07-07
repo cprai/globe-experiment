@@ -3,10 +3,11 @@
 //! trait that every scenario implements; the clock + celestial sphere live
 //! directly in each scenario struct, which also builds its own Time panel
 //! (deliberately per-scenario, so scenarios can diverge). It stays free of
-//! any windowing (winit) or GPU (wgpu) dependency and never references the
-//! camera type (the camera lives in the shared top-level `camera` module,
-//! driven by `application`); it does depend on `ui` for the
-//! `UIDrawablePanel`/`Instrument` types the selector panels are built from.
+//! any windowing (winit) or GPU (wgpu) dependency and never references any
+//! camera type (the `Camera` trait + `PtzCamera` live in the shared
+//! `engine::camera` module, implemented/held by each scenario); it does
+//! depend on `ui` for the `UIDrawablePanel`/`Instrument` types the selector
+//! panels are built from.
 
 pub mod body;
 pub mod celestial_sphere;
@@ -43,8 +44,8 @@ const COORDINATE_RADIUS_KM: f64 = planet::TERRA_MEAN_RADIUS_KM;
 /// every center. The position-dependent accessors ([`center_world`],
 /// [`render_origin`]) take the sphere; the body-frame ones (radius, surface
 /// anchor) are static and do not. Defined here in `simulation` but consumed by
-/// the camera in `application`, which now also reads the `CelestialSphere` (see
-/// the relaxed purity note in `architecture.md`).
+/// the camera module (a sanctioned `simulation` -> `camera` data edge, like
+/// `RenderState`).
 ///
 /// [`center_world`]: CameraTarget::center_world
 /// [`render_origin`]: CameraTarget::render_origin
@@ -137,7 +138,7 @@ impl CameraTarget {
 
     /// Look-at anchor at `(lat, lon)` (radians), in the body frame (km) - an
     /// offset from the target center. The camera treats this as an
-    /// inertial-frame direction (see `application::camera`); the magnitude is
+    /// inertial-frame direction (see `crate::engine::camera`); the magnitude is
     /// what differs per body. A free coordinate has no surface, so the anchor
     /// is the center itself (zero offset). Body-frame, so no sphere is needed.
     pub fn surface_position(&self, latitude: f64, longitude: f64) -> DVec3 {
@@ -160,45 +161,20 @@ impl CameraTarget {
     }
 }
 
-/// The interface every scenario implements. `ApplicationState` is generic over
-/// `S: Simulation` and calls only these methods, so adding or swapping a
-/// scenario requires no changes to the application layer.
+/// The simulation half of the interface every scenario implements.
+/// `ApplicationState` bounds `S: Simulation + Camera + UIDrawable` and calls
+/// only those traits' methods, so adding or swapping a scenario requires no
+/// changes to the application layer.
 ///
-/// This trait is UI-agnostic. The egui panel reads/drives a scenario through a
-/// separate `crate::engine::ui::UIDrawable` impl (no `clock_mut`, no UI
-/// snapshots from `frame_state`); the rendering trait is kept distinct from
-/// `Simulation`.
+/// This trait is UI- and camera-agnostic. The egui panel reads/drives a
+/// scenario through a separate `crate::engine::ui::UIDrawable` impl, and the
+/// frame's `RenderState` (camera rig included) comes from the scenario's
+/// `crate::engine::camera::Camera` impl - each concern is a distinct trait on
+/// the same scenario struct.
 pub trait Simulation {
     /// Advance the clock and re-evaluate the celestial sphere. Returns whether
     /// the clock is running, i.e. the app should keep requesting frames.
     fn advance(&mut self) -> bool;
-
-    /// The current celestial sphere (Sol, Luna, the planets, star matrices for
-    /// this frame's time). The application reads it to resolve the camera rig
-    /// into world space - it derives `celestial_to_world` from
-    /// `star_rot_inv.transpose()` and looks up the camera target's center
-    /// through it. (The renderer separately re-derives the sphere from
-    /// `RenderState.time`; both agree because `CelestialSphere::at` is
-    /// deterministic.)
-    fn celestial(&self) -> &CelestialSphere;
-
-    /// Which subject the orbital camera should orbit this frame, by identity.
-    /// Defaults to Terra, so every Terra-only scenario inherits it untouched;
-    /// the eclipse / solar-system scenarios override it with the user-selected
-    /// body. The application reads this each frame and re-aims the camera (see
-    /// `application::camera`).
-    fn camera_target(&self) -> CameraTarget {
-        CameraTarget::terra()
-    }
-
-    /// Produce this frame's render state from the application-resolved camera
-    /// rig: the eye in the floating-origin (render) frame and the world-frame
-    /// look direction + up. Satellite propagation happens here, once per frame
-    /// per satellite. The per-satellite readout produced by the same
-    /// propagation is stashed on the scenario so the immediately-following
-    /// `crate::engine::ui::UIDrawable::get_drawables` call (the egui panel)
-    /// reports values matching the rendered markers.
-    fn frame_state(&mut self, camera_pos: DVec3, look_at: DVec3, up: DVec3) -> RenderState;
 }
 
 /// The minimal render contract for one frame: the simulation time plus the
@@ -206,9 +182,10 @@ pub trait Simulation {
 /// body's position and orientation from `time` itself (via
 /// `CelestialSphere::at`), so this carries no body list, Sol position, or star
 /// matrices - only what the renderer cannot recompute: the time, the camera,
-/// and the satellite markers. Returned by [`Simulation::frame_state`] from the
-/// application-resolved camera; the UI readout for the same frame is pulled
-/// separately via `crate::engine::ui::UIDrawable`.
+/// and the satellite markers. Returned by the scenario's
+/// `crate::engine::camera::Camera::frame_state` impl (which resolves its own
+/// camera rig); the UI readout for the same frame is pulled separately via
+/// `crate::engine::ui::UIDrawable`.
 #[derive(Clone)]
 pub struct RenderState {
     /// The instant the frame depicts. The renderer evaluates the ephemeris at
@@ -263,10 +240,11 @@ pub struct SatelliteMarker {
 }
 
 /// One tracked satellite's readout for the UI panel. A scenario stashes a
-/// `Vec<SatelliteTelemetry>` each frame in [`Simulation::frame_state`], built
-/// from the same propagation that fills [`RenderState::markers`] (so readout
-/// and marker can never disagree, and the orbit is propagated once per frame),
-/// and turns it into `crate::engine::ui` instruments in its
+/// `Vec<SatelliteTelemetry>` each frame in its
+/// `crate::engine::camera::Camera::frame_state` impl, built from the same
+/// propagation that fills [`RenderState::markers`] (so readout and marker can
+/// never disagree, and the orbit is propagated once per frame), and turns it
+/// into `crate::engine::ui` instruments in its
 /// `crate::engine::ui::UIDrawable` impl.
 #[derive(Clone, Debug)]
 pub struct SatelliteTelemetry {
@@ -320,10 +298,11 @@ impl TargetSelector {
     }
 
     /// Applies any pending key press into the live selection, then clears the
-    /// flags. Call once per frame *before* [`Simulation::camera_target`] is
-    /// read (i.e. at the top of the scenario's `advance`). A simultaneous
-    /// press of both keys in one frame is impossible from a mouse, but
-    /// resolve it to Luna for determinism.
+    /// flags. Call once per frame *before* the frame's camera target is
+    /// resolved (i.e. at the top of the scenario's `advance` - the scenario's
+    /// `Camera::frame_state` resolves the selection later the same frame). A
+    /// simultaneous press of both keys in one frame is impossible from a
+    /// mouse, but resolve it to Luna for determinism.
     pub fn apply_requests(&mut self) {
         if self.request_luna {
             self.luna_selected = true;
@@ -408,8 +387,8 @@ const TERRA_INDEX: usize = 2;
 /// mutable field (the same rule the clock's Run toggle and speed slider
 /// follow); hence one `request_*` flag per body rather than a single shared
 /// selection a key could write. A click sets that body's flag;
-/// [`apply_requests`] folds it into `selected` once per frame, before
-/// [`Simulation::camera_target`] reads it
+/// [`apply_requests`] folds it into `selected` once per frame, before the
+/// scenario's `Camera::frame_state` resolves it
 /// - the same one-frame latency as [`TargetSelector`].
 pub struct BodySelector {
     /// Index into [`SELECTABLE_BODIES`].
@@ -448,10 +427,11 @@ impl Default for BodySelector {
 
 impl BodySelector {
     /// Applies any pending key press into the live selection, then clears every
-    /// flag. Call once per frame *before* [`Simulation::camera_target`] is read
-    /// (at the top of the scenario's `advance`). At most one key can be pressed
-    /// per frame from a mouse; the branch order only breaks an impossible tie.
-    /// The indices match [`SELECTABLE_BODIES`].
+    /// flag. Call once per frame *before* the frame's camera target is resolved
+    /// (at the top of the scenario's `advance`; the scenario's
+    /// `Camera::frame_state` resolves the selection later the same frame). At
+    /// most one key can be pressed per frame from a mouse; the branch order
+    /// only breaks an impossible tie. The indices match [`SELECTABLE_BODIES`].
     pub fn apply_requests(&mut self) {
         if self.request_mercury {
             self.selected = 0;

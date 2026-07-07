@@ -205,7 +205,7 @@ OZONE_ABSORPTION [0.650, 1.881, 0.085]e-3       (tent peak 25 km, +/-15)
 TRANSMITTANCE 256x64 / 40 steps   INSCATTER 256x128 / 32 steps
 ```
 
-**`src/engine/application/input.rs`**:
+**`src/engine/camera/ptz.rs`** (input feel, file-top consts):
 ```
 FLICK_SPEED 50   STOP_SPEED 15   HALF_LIFE 0.3   FLICK_TIMEOUT 0.1
 ZOOM_HALF_LIFE_MIN 0.01   ZOOM_HALF_LIFE_MAX 0.1   WHEEL_GAP_CAP 0.25
@@ -220,7 +220,8 @@ TERRA_GRAVITATIONAL_PARAMETER_KM3_S2 398600.4418
 TERRA_ANGULAR_VELOCITY_RAD_S 7.292115e-5
 ```
 
-**`src/engine/camera.rs`** (orbit limits are radius *ratios* `*_RADII`,
+**`src/engine/camera/ptz.rs`** (`PtzCamera` associated consts; orbit limits
+are radius *ratios* `*_RADII`,
 scaled by the orbit target's `mean_radius_km()`; values below are the Terra
 target). FOV/near/far moved to `renderer`:
 ```

@@ -81,8 +81,8 @@ the orbited body sits at a bit-exact zero and far planets do not jitter. (The
 `CelestialSphere` itself is **heliocentric** — Sol at the origin, Terra at
 `-sol_geo` — and stores body placements as **f64** (`DVec3` centers, `DMat3`
 rotations); **all CPU-side computation is f64 end to end** — celestial sphere,
-camera rig (`DVec3`/`DQuat`), satellite pipeline, input controller, and the
-renderer's `prepare`/view-projection math (`DMat4`) — with f32 appearing only
+the camera (`PtzCamera` rig + input, `DVec3`/`DQuat`), satellite pipeline, and
+the renderer's `prepare`/view-projection math (`DMat4`) — with f32 appearing only
 at the GPU uniform/instance upload and in egui-facing readouts. f64 is
 required: an f32 heliocentric-minus-origin cancels catastrophically.) The
 renderer derives every body's position/orientation from the frame's **time**
