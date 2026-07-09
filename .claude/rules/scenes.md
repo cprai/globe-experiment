@@ -172,10 +172,12 @@ The pattern:
   callbacks; pyclass method calls can't overlap by construction, so the
   disjoint-field capture gymnastics of the Rust panels aren't needed on the
   Python side (the per-key flags are kept anyway for identical semantics).
-- **run() order**: `scene::init()` then `engine::py::init()` (inittab before
-  interpreter init, Once-guarded) then construct the scene — construction
-  loads `scenes/<name>.py` at **runtime** (CARGO_MANIFEST_DIR fallback
-  `./scenes`; edit + relaunch, no rebuild).
+- **run() order**: `run(script: PathBuf)` takes the CLI-given script path
+  (the `*_py` scenes' required positional; the repo ships the reference
+  scripts under the repo-root `scenes/`), then `scene::init()` then
+  `engine::py::init()` (inittab before interpreter init, Once-guarded) then
+  construct the scene — construction loads the script at **runtime** (no
+  path resolution; edit + relaunch, no rebuild).
 - **Script contract**: module-level `get_drawables(scene) -> list[Panel]`,
   importing from the embedded `globe` module; the ln/exp speed-slider mapping
   is done in Python (`math.log`/`math.exp` against `Clock.MIN_MULTIPLIER`/

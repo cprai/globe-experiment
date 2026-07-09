@@ -101,10 +101,11 @@ reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 **Python scene scripting (pyo3 0.29, embedded CPython — unconditional
 dependency, every build needs Python 3 dev headers):** the `manual_control_py`
 and `solar_system_py` scenes are clones of their Rust siblings whose
-`UIDrawable::get_drawables` delegates to a script in the repo-root `scenes/`
-directory (`manual_control_py.py` / `solar_system_py.py`), **read at runtime**
-— edit + relaunch, no rebuild (the one deliberate exception to
-"everything embedded"). The script imports the embedded `globe` module
+`UIDrawable::get_drawables` delegates to a script whose path is a **required
+CLI argument** (`scene manual_control_py scenes/manual_control_py.py`; the
+non-Python scenes reject a path; the repo ships the reference scripts in the
+repo-root `scenes/` directory), **read at runtime** — edit + relaunch, no
+rebuild (the one deliberate exception to "everything embedded"). The script imports the embedded `globe` module
 (instruments, `Panel`/`PanelAnchor`, `Interactive*` twins holding Python
 callables, `Clock`, `BodySelector`, readout types — the dual Rust/Python UI
 API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`).

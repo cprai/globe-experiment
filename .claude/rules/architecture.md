@@ -22,8 +22,12 @@ build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
                          Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              bin root of `globe-experiment` (the windowed app;
-                         default-run): clap CLI with only the `scene <name>`
-                         subcommand; declares `mod engine;` + `mod scenes;`
+                         default-run): clap CLI with only the `scene <name>
+                         [script]` subcommand (the script positional is
+                         required by, and only valid for, the *_py scenes -
+                         clap can't tie a positional to ValueEnum variants,
+                         so main enforces the pairing with clap-styled
+                         errors); declares `mod engine;` + `mod scenes;`
                          (NO offscreen/headless code)
 src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          EOP range check): flat clap flags --scene --output
@@ -49,17 +53,19 @@ src/engine/py.rs         embedded Python: Once-guarded init() (append_to_inittab
                          *_py scene pyclasses are NOT registered - they live in
                          src/scenes, which engine must not reference, and reach
                          Python as instances), and load_get_drawables (reads
-                         scenes/<file>.py at RUNTIME - CARGO_MANIFEST_DIR
-                         fallback ./scenes - and returns the script's
-                         get_drawables; load/compile failure = traceback +
-                         panic). Compiled dead by the headless tree (links
-                         libpython, never initializes it)
+                         the caller-given script path at RUNTIME - the *_py
+                         scenes' required CLI argument, no resolution here -
+                         and returns the script's get_drawables; load/compile
+                         failure = traceback + panic). Compiled dead by the
+                         headless tree (links libpython, never initializes it)
 scenes/*.py              the repo-root scene-script directory (NOT src/scenes):
-                         manual_control_py.py + solar_system_py.py, the Python
-                         panel producers the *_py scenes load at startup. Read
-                         at runtime - edit + relaunch, no rebuild (the one
-                         deliberate exception to everything-embedded). Contract:
-                         module-level get_drawables(scene) -> list[Panel]
+                         manual_control_py.py + solar_system_py.py, the
+                         reference panel producers a *_py scene is pointed at
+                         via its required CLI script path (also what the two
+                         scene tests load explicitly). Read at runtime - edit +
+                         relaunch, no rebuild (the one deliberate exception to
+                         everything-embedded). Contract: module-level
+                         get_drawables(scene) -> list[Panel]
 src/scenes/mod.rs     scene registry
 src/scenes/iss_and_hubble.rs  IssAndHubbleScene (Scene impl); ISS_TLE/HST_TLE consts
 src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on purpose)
@@ -84,8 +90,9 @@ src/scenes/manual_control.rs  ManualControlScene: ONE user-thrustable
                          Propagation::Numerical; apo/peri/speed readouts from
                          satellite::orbit_shape (dashes on escape)
 src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
-                         delegates to scenes/manual_control_py.py (side by side
-                         for API comparison). ManualControlSceneInner is a
+                         delegates to the CLI-given script (the repo ships
+                         scenes/manual_control_py.py; side by side for API
+                         comparison). ManualControlSceneInner is a
                          #[pyclass] (clock: Py<Clock> shared live with the
                          script; telemetry()/orbit_shape()/speed_m_s readout
                          methods; six request_* burn methods - the script's
@@ -100,7 +107,8 @@ src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
 src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
-                         delegates to scenes/solar_system_py.py; same
+                         delegates to the CLI-given script (the repo ships
+                         scenes/solar_system_py.py); same
                          Inner-pyclass + wrapper pattern as manual_control_py,
                          with clock: Py<Clock> + selector: Py<BodySelector>
                          shared live with the script (the script rebuilds the

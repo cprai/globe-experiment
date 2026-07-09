@@ -1,8 +1,10 @@
 //! The solar-system scene with its UI panels produced by **Python**: a clone
 //! of `solar_system` (same nine-body selector, camera, and clock) whose
-//! `UIDrawable::get_drawables` delegates to `scenes/solar_system_py.py`. The
+//! `UIDrawable::get_drawables` delegates to a Python script whose path is a
+//! required CLI argument (the repo ships `scenes/solar_system_py.py`). The
 //! two scenes live side by side so the Rust and Python panel APIs can be
-//! compared (CLI: `globe-experiment scene solar_system_py`).
+//! compared (CLI: `globe-experiment scene solar_system_py
+//! scenes/solar_system_py.py`).
 //!
 //! Same structure as `manual_control_py`: the scene state is a `#[pyclass]`
 //! ([`SolarSystemSceneInner`]) handed live to the script, wrapped by
@@ -13,6 +15,8 @@
 //! `selector.request(i)`, the index twin of the Rust panel's disjoint
 //! request flags. Script errors fail fast (traceback + panic); callback
 //! errors only print (see `ui::py`).
+
+use std::path::PathBuf;
 
 use pyo3::prelude::*;
 use satkit::Instant;
@@ -25,9 +29,6 @@ use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{self, BodySelector, CameraTarget, Clock, RenderState, Scene};
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
-
-/// The scene's script, resolved under the repo-root `scenes/` directory.
-const SCRIPT_FILE: &str = "solar_system_py.py";
 
 /// The live scene state, as a pyclass: the script reads/drives the shared
 /// `clock` and `selector`; the camera and its target stay Rust-private.
@@ -109,13 +110,17 @@ impl SolarSystemSceneInner {
 pub struct SolarSystemPyScene {
     inner: Py<SolarSystemSceneInner>,
     get_drawables_fn: Py<PyAny>,
+    /// The script's CLI-given path, kept only so per-frame failures name the
+    /// file that raised (the function itself is already loaded).
+    script: PathBuf,
 }
 
 impl SolarSystemPyScene {
-    fn new() -> Self {
+    fn new(script: PathBuf) -> Self {
         Python::attach(|py| Self {
             inner: Py::new(py, SolarSystemSceneInner::new(py)).expect("scene pyclass"),
-            get_drawables_fn: py::load_get_drawables(py, SCRIPT_FILE),
+            get_drawables_fn: py::load_get_drawables(py, &script),
+            script,
         })
     }
 }
@@ -186,22 +191,23 @@ impl UIDrawable for SolarSystemPyScene {
                 .and_then(|panels| ui::py::panels_from_python(py, &panels))
                 .unwrap_or_else(|err| {
                     err.print(py);
-                    panic!("scenes/{SCRIPT_FILE}: get_drawables failed");
+                    panic!("{}: get_drawables failed", self.script.display());
                 })
         })
     }
 }
 
-/// Builds the Python-paneled solar-system scene and hands off to the winit
-/// event loop. Starts on the default whole-Terra view.
-pub fn run() {
+/// Builds the Python-paneled solar-system scene around the CLI-given panel
+/// script and hands off to the winit event loop. Starts on the default
+/// whole-Terra view.
+pub fn run(script: PathBuf) {
     // satkit globals first, then the embedded interpreter (inittab before
     // init - see `engine::py`), then the scene, whose construction loads the
     // script.
     scene::init();
     py::init();
 
-    application::run(ApplicationState::new(SolarSystemPyScene::new()));
+    application::run(ApplicationState::new(SolarSystemPyScene::new(script)));
 }
 
 #[cfg(test)]
@@ -216,10 +222,18 @@ mod tests {
     /// satkit seeding: this path only reads the clock (pure time math) and
     /// the selector. The interactive callback plumbing is proven once, by
     /// manual_control_py's round-trip test.
+    /// The repo's reference script, resolved against the manifest dir so the
+    /// test runs from any cwd - the same file the CLI example passes.
+    fn repo_script() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scenes")
+            .join("solar_system_py.py")
+    }
+
     #[test]
     fn solar_system_script_builds_selector() {
         py::init();
-        let mut scene = SolarSystemPyScene::new();
+        let mut scene = SolarSystemPyScene::new(repo_script());
 
         let panels = scene.get_drawables();
         assert_eq!(panels.len(), 2, "script must return two panels");

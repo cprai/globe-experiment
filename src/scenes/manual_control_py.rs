@@ -1,8 +1,10 @@
 //! The manual-control scene with its UI panels produced by **Python**: a
 //! clone of `manual_control` (same physics, camera, and burn semantics) whose
-//! `UIDrawable::get_drawables` delegates to `scenes/manual_control_py.py`.
+//! `UIDrawable::get_drawables` delegates to a Python script whose path is a
+//! required CLI argument (the repo ships `scenes/manual_control_py.py`).
 //! The two scenes live side by side so the Rust and Python panel APIs can be
-//! compared line for line (CLI: `globe-experiment scene manual_control_py`).
+//! compared line for line (CLI: `globe-experiment scene manual_control_py
+//! scenes/manual_control_py.py`).
 //!
 //! Structure: the scene state lives in [`ManualControlSceneInner`], itself a
 //! `#[pyclass]` - the script receives the *live* scene object and reads/
@@ -18,6 +20,8 @@
 //! `get_drawables` exception) panics with the traceback printed - it would
 //! recur every frame, so fail-fast beats limping. A failing *callback* only
 //! prints (see `ui::py`).
+
+use std::path::PathBuf;
 
 use glam::DVec3;
 use pyo3::prelude::*;
@@ -35,9 +39,6 @@ use crate::engine::scene::{
     marker_occluded,
 };
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
-
-/// The scene's script, resolved under the repo-root `scenes/` directory.
-const SCRIPT_FILE: &str = "manual_control_py.py";
 
 // This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
 // format notes. (Deliberately duplicated per scene.) Used ONCE, to bootstrap
@@ -281,13 +282,17 @@ impl ManualControlSceneInner {
 pub struct ManualControlPyScene {
     inner: Py<ManualControlSceneInner>,
     get_drawables_fn: Py<PyAny>,
+    /// The script's CLI-given path, kept only so per-frame failures name the
+    /// file that raised (the function itself is already loaded).
+    script: PathBuf,
 }
 
 impl ManualControlPyScene {
-    fn new() -> Self {
+    fn new(script: PathBuf) -> Self {
         Python::attach(|py| Self {
             inner: Py::new(py, ManualControlSceneInner::new(py)).expect("scene pyclass"),
-            get_drawables_fn: py::load_get_drawables(py, SCRIPT_FILE),
+            get_drawables_fn: py::load_get_drawables(py, &script),
+            script,
         })
     }
 }
@@ -360,22 +365,23 @@ impl UIDrawable for ManualControlPyScene {
                 .and_then(|panels| ui::py::panels_from_python(py, &panels))
                 .unwrap_or_else(|err| {
                     err.print(py);
-                    panic!("scenes/{SCRIPT_FILE}: get_drawables failed");
+                    panic!("{}: get_drawables failed", self.script.display());
                 })
         })
     }
 }
 
-/// Builds the Python-paneled manual-control scene and hands off to the winit
-/// event loop. Blocks until the window closes.
-pub fn run() {
+/// Builds the Python-paneled manual-control scene around the CLI-given panel
+/// script and hands off to the winit event loop. Blocks until the window
+/// closes.
+pub fn run(script: PathBuf) {
     // satkit globals first (TLE parse + propagation), then the embedded
     // interpreter (inittab before init - see `engine::py`), then the scene,
     // whose construction loads the script.
     scene::init();
     py::init();
 
-    application::run(ApplicationState::new(ManualControlPyScene::new()));
+    application::run(ApplicationState::new(ManualControlPyScene::new(script)));
 }
 
 #[cfg(test)]
@@ -420,6 +426,14 @@ mod tests {
         Python::attach(|py| scene.inner.borrow(py).clock.borrow(py).paused)
     }
 
+    /// The repo's reference script, resolved against the manifest dir so the
+    /// test runs from any cwd - the same file the CLI example passes.
+    fn repo_script() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scenes")
+            .join("manual_control_py.py")
+    }
+
     /// The full Python round trip, render-free of the GPU but driving the
     /// real script: three panels come back converted, and a synthetic click
     /// on the top-left panel's Run key flips the live clock through the
@@ -428,7 +442,7 @@ mod tests {
     fn python_scene_round_trip() {
         celestial_sphere::init_satkit_for_tests();
         py::init();
-        let mut scene = ManualControlPyScene::new();
+        let mut scene = ManualControlPyScene::new(repo_script());
 
         // Shape: the script returns the same three panels as the Rust
         // sibling (Time top-left, telemetry top-right, Burns bottom-center).

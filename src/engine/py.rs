@@ -1,8 +1,9 @@
 //! Embedded Python for scene scripting.
 //!
-//! The `*_py` scenes delegate their `UIDrawable::get_drawables` to a
-//! repo-root `scenes/*.py` script, loaded once at scene startup and re-read
-//! on every launch (edit the script, relaunch, no rebuild). The script
+//! The `*_py` scenes delegate their `UIDrawable::get_drawables` to a Python
+//! script whose path is a required CLI argument (the repo ships reference
+//! scripts under the repo-root `scenes/`), loaded once at scene startup and
+//! re-read on every launch (edit the script, relaunch, no rebuild). The script
 //! imports the engine's Python surface from the embedded `globe` module
 //! registered here, and receives the live scene pyclass each frame.
 //!
@@ -10,7 +11,7 @@
 //! libpython yet never initializes the interpreter.
 
 use std::ffi::CString;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Once;
 
 use pyo3::prelude::*;
@@ -67,32 +68,16 @@ pub fn init() {
     });
 }
 
-/// Loads `scenes/<file_name>` and returns its module-level `get_drawables`
-/// function.
+/// Loads the scene script at `path` and returns its module-level
+/// `get_drawables` function.
 ///
-/// The path resolves against `CARGO_MANIFEST_DIR` (dev + `cargo test`: works
-/// from any cwd) and falls back to `./scenes/<file_name>` (a deployed binary
-/// run beside its scripts). Failures - missing file, compile error, missing
+/// The path is caller-chosen (the `*_py` scenes take it as a required CLI
+/// argument; their tests pass the repo's `scenes/*.py` explicitly) - no
+/// resolution happens here. Failures - missing file, compile error, missing
 /// function - panic with the Python traceback printed: the script is loaded
 /// once at startup, so fail-fast beats limping into a per-frame error loop.
-pub fn load_get_drawables(py: Python<'_>, file_name: &str) -> Py<PyAny> {
-    let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("scenes")
-        .join(file_name);
-    let cwd_path = PathBuf::from("scenes").join(file_name);
-    let path = if manifest_path.is_file() {
-        manifest_path
-    } else if cwd_path.is_file() {
-        cwd_path
-    } else {
-        panic!(
-            "scene script not found at {} or {}",
-            manifest_path.display(),
-            cwd_path.display()
-        );
-    };
-
-    let source = std::fs::read_to_string(&path)
+pub fn load_get_drawables(py: Python<'_>, path: &Path) -> Py<PyAny> {
+    let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     let source = CString::new(source)
         .unwrap_or_else(|_| panic!("{} contains an interior NUL byte", path.display()));

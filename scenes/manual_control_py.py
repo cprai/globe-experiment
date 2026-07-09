@@ -1,7 +1,9 @@
 # UI-panel producer for the `manual_control_py` scene - the Python twin of
 # the panel builder in `src/scenes/manual_control.rs` (kept side by side so
-# the two APIs can be compared line for line). Loaded at scene startup and
-# re-read on every launch: edit this file and relaunch, no rebuild.
+# the two APIs can be compared line for line). Passed to the scene as its
+# required CLI script path (`scene manual_control_py scenes/manual_control_py.py`),
+# loaded at startup and re-read on every launch: edit this file and relaunch,
+# no rebuild.
 #
 # Contract: define `get_drawables(scene) -> list[Panel]`. It runs every
 # frame with the live scene object (`globe.ManualControlScene`); panel

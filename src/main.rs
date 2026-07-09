@@ -1,7 +1,10 @@
 mod engine;
 mod scenes;
 
-use clap::{Parser, ValueEnum};
+use std::path::PathBuf;
+
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, ValueEnum};
 
 // Deriving `Parser` directly on an enum makes each variant a top-level
 // subcommand - no wrapper struct or separate `Subcommand` enum needed. (Switch
@@ -21,13 +24,20 @@ use clap::{Parser, ValueEnum};
 #[command(version, about)]
 enum Cli {
     /// Run a named scene, e.g. `scene iss_and_hubble`. Omit the name to
-    /// list the available scenes.
+    /// list the available scenes. The Python-paneled scenes additionally
+    /// take the path to their panel script, e.g. `scene manual_control_py
+    /// scenes/manual_control_py.py`.
     Scene {
         /// Which scene to simulate. If omitted, the available scenes are
         /// listed instead of running one. `Option` (not a required positional)
         /// is what makes the bare `scene` invocation valid.
         #[arg(value_enum)]
         name: Option<SceneName>,
+        /// Path to the scene's Python panel script. Required by - and only
+        /// valid for - the `*_py` scenes; clap cannot tie a positional to
+        /// individual `ValueEnum` variants, so `Option` here and the pairing
+        /// is enforced in `main` (with clap-styled errors).
+        script: Option<PathBuf>,
     },
 }
 
@@ -50,8 +60,9 @@ enum SceneName {
     /// Burns panel keys to thrust and reshape the orbit.
     #[value(name = "manual_control")]
     ManualControl,
-    /// `manual_control` with its UI panels produced by the Python script
-    /// `scenes/manual_control_py.py` (edit + relaunch, no rebuild).
+    /// `manual_control` with its UI panels produced by the Python script at
+    /// the given path, e.g. `scenes/manual_control_py.py` (edit + relaunch,
+    /// no rebuild).
     #[value(name = "manual_control_py")]
     ManualControlPy,
     /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
@@ -62,26 +73,85 @@ enum SceneName {
     /// Luna, or the seven planets (no satellites).
     #[value(name = "solar_system")]
     SolarSystem,
-    /// `solar_system` with its UI panels produced by the Python script
-    /// `scenes/solar_system_py.py` (edit + relaunch, no rebuild).
+    /// `solar_system` with its UI panels produced by the Python script at
+    /// the given path, e.g. `scenes/solar_system_py.py` (edit + relaunch,
+    /// no rebuild).
     #[value(name = "solar_system_py")]
     SolarSystemPy,
 }
 
 fn main() {
     match Cli::parse() {
-        Cli::Scene { name: Some(name) } => match name {
-            SceneName::Iss => scenes::iss::run(),
-            SceneName::IssAndHubble => scenes::iss_and_hubble::run(),
-            SceneName::LunarEclipse => scenes::lunar_eclipse::run(),
-            SceneName::ManualControl => scenes::manual_control::run(),
-            SceneName::ManualControlPy => scenes::manual_control_py::run(),
-            SceneName::SolarEclipse => scenes::solar_eclipse::run(),
-            SceneName::SolarSystem => scenes::solar_system::run(),
-            SceneName::SolarSystemPy => scenes::solar_system_py::run(),
+        Cli::Scene {
+            name: Some(name),
+            script,
+        } => match name {
+            // The Python-paneled scenes are the only consumers of the script
+            // positional; everything else must run without one.
+            SceneName::ManualControlPy => {
+                scenes::manual_control_py::run(require_script(&name, script));
+            }
+            SceneName::SolarSystemPy => {
+                scenes::solar_system_py::run(require_script(&name, script));
+            }
+            _ => {
+                reject_script(&name, &script);
+                match name {
+                    SceneName::Iss => scenes::iss::run(),
+                    SceneName::IssAndHubble => scenes::iss_and_hubble::run(),
+                    SceneName::LunarEclipse => scenes::lunar_eclipse::run(),
+                    SceneName::ManualControl => scenes::manual_control::run(),
+                    SceneName::SolarEclipse => scenes::solar_eclipse::run(),
+                    SceneName::SolarSystem => scenes::solar_system::run(),
+                    SceneName::ManualControlPy | SceneName::SolarSystemPy => unreachable!(),
+                }
+            }
         },
-        // Bare `scene` with no name: list what's available instead of erroring.
-        Cli::Scene { name: None } => list_scenes(),
+        // Bare `scene` with no name: list what's available instead of
+        // erroring. (A lone path can't reach here - positionals fill in
+        // order, so a scriptless invocation is also nameless.)
+        Cli::Scene { name: None, .. } => list_scenes(),
+    }
+}
+
+/// The CLI token for a scene variant, for error messages.
+fn scene_token(name: &SceneName) -> String {
+    name.to_possible_value()
+        .expect("scene variants are not skipped")
+        .get_name()
+        .to_owned()
+}
+
+/// Unwraps the script positional for a `*_py` scene, exiting with a
+/// clap-styled missing-argument error (usage line included) when absent.
+fn require_script(name: &SceneName, script: Option<PathBuf>) -> PathBuf {
+    script.unwrap_or_else(|| {
+        Cli::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                format!(
+                    "scene `{}` requires the path to its Python panel script \
+                     (e.g. `scene {0} scenes/{0}.py`)",
+                    scene_token(name)
+                ),
+            )
+            .exit()
+    })
+}
+
+/// Rejects a script positional handed to a non-Python scene - silently
+/// ignoring it would look like the script was being used.
+fn reject_script(name: &SceneName, script: &Option<PathBuf>) {
+    if script.is_some() {
+        Cli::command()
+            .error(
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "scene `{}` is not Python-paneled and takes no script path",
+                    scene_token(name)
+                ),
+            )
+            .exit()
     }
 }
 

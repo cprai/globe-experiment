@@ -1,8 +1,10 @@
 # UI-panel producer for the `solar_system_py` scene - the Python twin of the
 # panel builder in `src/scenes/solar_system.rs` and of
 # `BodySelector::panel()` in `src/engine/scene/mod.rs` (kept side by side so
-# the two APIs can be compared). Loaded at scene startup and re-read on every
-# launch: edit this file and relaunch, no rebuild.
+# the two APIs can be compared). Passed to the scene as its required CLI
+# script path (`scene solar_system_py scenes/solar_system_py.py`), loaded at
+# startup and re-read on every launch: edit this file and relaunch, no
+# rebuild.
 #
 # Contract: define `get_drawables(scene) -> list[Panel]`. It runs every
 # frame with the live scene object (`globe.SolarSystemScene`); panel
