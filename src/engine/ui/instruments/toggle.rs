@@ -1,5 +1,6 @@
 use egui::Stroke;
 use egui_taffy::{Tui, TuiBuilderLogic, taffy};
+use pyo3::prelude::*;
 
 use super::Instrument;
 use crate::engine::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
@@ -12,12 +13,24 @@ use crate::engine::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// `active` flag still drives its lit look); `Clone` so
 /// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`.
+/// `get_drawables` (and the Python bridge out of its pyclass cell); `pyclass`
+/// for the dual Rust/Python UI API.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Toggle {
+    #[pyo3(get, set)]
     pub label: String,
+    #[pyo3(get, set)]
     pub active: bool,
+}
+
+#[pymethods]
+impl Toggle {
+    #[new]
+    fn py_new(label: String, active: bool) -> Self {
+        Self { label, active }
+    }
 }
 
 impl Toggle {

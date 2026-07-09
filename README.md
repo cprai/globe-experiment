@@ -22,7 +22,11 @@ parameters (`EOP-All.csv`) are downloaded automatically (into the build's
 first build, so the first build needs a network connection and takes a little
 longer (the ephemeris is ~98 MB). The textures, ephemeris, and EOP data are all
 embedded into the binary, so the build is self-contained and needs no data
-files at runtime.
+files at runtime - except the optional Python scene scripts below.
+
+Building also requires **Python 3** with its development library ([pyo3](https://pyo3.rs)
+embeds the interpreter for the Python-scripted scenes), alongside the usual C
+compiler.
 
 ## Rendering a single frame (the `headless` binary)
 
@@ -134,3 +138,10 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   predicted orbit path and the apoapsis / periapsis / speed readouts respond
   live. Burn hard enough and you escape (the closed path disappears) or
   come back down.
+- Python-scripted UI panels: the `manual_control_py` and `solar_system_py`
+  scenes are clones of their Rust siblings whose control panels are produced
+  by Python scripts (`scenes/manual_control_py.py` /
+  `scenes/solar_system_py.py`, read at launch - edit a script and relaunch,
+  no rebuild). The scripts drive the live scene through an embedded `globe`
+  module exposing the same instrument/panel/clock/selector API as Rust; the
+  two scene pairs live side by side so the APIs can be compared.

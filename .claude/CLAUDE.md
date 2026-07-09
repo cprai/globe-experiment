@@ -98,15 +98,28 @@ Terra occlude Luna. **Past scenes only** (before build date) — what makes full
 attainable. The crate is named `globe-experiment`; `iced` is gone, do not
 reintroduce it. **Saturn's rings are not yet rendered** (deferred).
 
+**Python scene scripting (pyo3 0.29, embedded CPython — unconditional
+dependency, every build needs Python 3 dev headers):** the `manual_control_py`
+and `solar_system_py` scenes are clones of their Rust siblings whose
+`UIDrawable::get_drawables` delegates to a script in the repo-root `scenes/`
+directory (`manual_control_py.py` / `solar_system_py.py`), **read at runtime**
+— edit + relaunch, no rebuild (the one deliberate exception to
+"everything embedded"). The script imports the embedded `globe` module
+(instruments, `Panel`/`PanelAnchor`, `Interactive*` twins holding Python
+callables, `Clock`, `BodySelector`, readout types — the dual Rust/Python UI
+API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`).
+Both scene pairs live side by side so the two APIs can be compared.
+
 The crate builds **two binaries over one shared `src/engine/`** (no lib
 crate): `globe-experiment` (`src/main.rs`, the windowed app + scenes) and
 `headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
 declare `mod engine;` (everything used to run the app: `application`, `camera`,
-`planet`, `renderer`, `scene`, `ui`); the trees differ
+`planet`, `py`, `renderer`, `scene`, `ui`); the trees differ
 only at the top level — `scenes` exists only in the main tree, `offscreen`
 only in the headless tree. The headless binary compiles (but never calls) the
-winit-bound `engine::application`; its crate-level `allow(dead_code)` covers
-that.
+winit-bound `engine::application` and links libpython without ever
+initializing the interpreter; its crate-level `allow(dead_code)` covers
+both.
 
 ---
 

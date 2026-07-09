@@ -17,6 +17,11 @@
   compile natively on all six targets (including aarch64). No single-arch
   prebuilt build tools or platform-gated link flags without owner sign-off.
   `intel_tex_2` was deleted for this reason and must not return.
+- **Every build machine needs Python 3 + dev library** (pyo3 embeds the
+  interpreter, unconditional — owner-approved 2026-07-07). pyo3 itself
+  compiles on all six targets; the new requirement is the installed Python,
+  which the pyo3 build script probes (`PYO3_PYTHON` overrides). Windows/macOS
+  builds need hardware confirmation (the dev sandbox is Linux).
 - **Dev sandbox is x86_64 Linux + lavapipe** — cannot prove macOS/aarch64
   behavior. Reason portability through against this rule; call out anything
   that needs hardware confirmation before shipping.

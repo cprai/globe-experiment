@@ -28,10 +28,19 @@
 - **Build requires a C compiler** (`ring` via `ureq` in `build.rs`, build-
   time only). Portable across all six targets. No pure-Rust workaround exists
   without replacing `ureq`'s TLS (swapping to `aws-lc-rs` also uses C).
+- **Build requires Python 3 with its dev library** (`pyo3`, unconditional —
+  owner-approved 2026-07-07). Both binaries link libpython; only the `*_py`
+  scenes ever initialize the interpreter. Override the probed interpreter
+  with `PYO3_PYTHON` if needed.
+- **No `assets/` dir, with ONE deliberate exception**: the repo-root
+  `scenes/*.py` scene scripts are read at **runtime** (edit + relaunch, no
+  rebuild — the point of the Python scenes). Resolved via
+  `CARGO_MANIFEST_DIR` falling back to `./scenes` beside the binary.
 - **WSLg flakiness**: transient libEGL/MESA errors on app launch — retry,
   not a code bug.
 - **Windows `cargo add`**: can emit a bogus "found cargo.toml please rename"
   error — edit `Cargo.toml` directly and trust `cargo metadata`.
 - **No `assets/` dir.** Everything in `OUT_DIR`, `include_bytes!`-ed at
   compile time. `build.rs` downloads verbatim into `OUT_DIR`; the LUTs are
-  the only baked artifacts.
+  the only baked artifacts. (Runtime exception: the `scenes/*.py` scripts,
+  above.)

@@ -5,9 +5,11 @@
 Rust edition 2024. `wgpu 29` (GPU), `winit 0.30` (window), `egui 0.34`
 (overlay), `egui_taffy 0.12` (taffy flexbox layout for the panels),
 `satkit 0.18` (SGP4 + ephemeris + EOP), `glam 0.33` (math),
-`rayon 1.10` (parallel init), `image 0.25` (texture decode + PNG encode),
-`ktx2 0.5` (LUT parse/write), `humantime 2` (render-mode datetime parse).
-Build-only: `ureq 3.3` (asset download), `half 2.7` (f16 LUT bake).
+`pyo3 0.29` (embedded CPython for the `*_py` scenes' script-produced UI
+panels; unconditional - every build links libpython and needs Python 3 dev
+headers), `rayon 1.10` (parallel init), `image 0.25` (texture decode + PNG
+encode), `ktx2 0.5` (LUT parse/write), `humantime 2` (render-mode datetime
+parse). Build-only: `ureq 3.3` (asset download), `half 2.7` (f16 LUT bake).
 Crate name: `globe-experiment`.
 
 ## File map
@@ -36,9 +38,28 @@ src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          overlay (build_ui_frame)
 src/engine/mod.rs        the engine module root, declared identically by BOTH
                          bin roots: everything used to run the app (application,
-                         camera, planet, renderer, scene, terra, ui).
+                         camera, planet, py, renderer, scene, ui).
                          The top level keeps only the bin roots, scenes
                          (main tree), and offscreen (headless tree)
+src/engine/py.rs         embedded Python: Once-guarded init() (append_to_inittab
+                         of the `globe` pymodule STRICTLY before
+                         Python::initialize), the `globe` module registration
+                         (instruments + PanelAnchor/LampStatus + ui::py types +
+                         Clock/BodySelector/SatelliteTelemetry/OrbitShape; the
+                         *_py scene pyclasses are NOT registered - they live in
+                         src/scenes, which engine must not reference, and reach
+                         Python as instances), and load_get_drawables (reads
+                         scenes/<file>.py at RUNTIME - CARGO_MANIFEST_DIR
+                         fallback ./scenes - and returns the script's
+                         get_drawables; load/compile failure = traceback +
+                         panic). Compiled dead by the headless tree (links
+                         libpython, never initializes it)
+scenes/*.py              the repo-root scene-script directory (NOT src/scenes):
+                         manual_control_py.py + solar_system_py.py, the Python
+                         panel producers the *_py scenes load at startup. Read
+                         at runtime - edit + relaunch, no rebuild (the one
+                         deliberate exception to everything-embedded). Contract:
+                         module-level get_drawables(scene) -> list[Panel]
 src/scenes/mod.rs     scene registry
 src/scenes/iss_and_hubble.rs  IssAndHubbleScene (Scene impl); ISS_TLE/HST_TLE consts
 src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on purpose)
@@ -62,10 +83,29 @@ src/scenes/manual_control.rs  ManualControlScene: ONE user-thrustable
                          * dt; marker via satellite::resolve_orbit +
                          Propagation::Numerical; apo/peri/speed readouts from
                          satellite::orbit_shape (dashes on escape)
+src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
+                         delegates to scenes/manual_control_py.py (side by side
+                         for API comparison). ManualControlSceneInner is a
+                         #[pyclass] (clock: Py<Clock> shared live with the
+                         script; telemetry()/orbit_shape()/speed_m_s readout
+                         methods; six request_* burn methods - the script's
+                         hold-key callbacks) wrapped by ManualControlPyScene
+                         (Py<Inner> + the stashed script fn), whose four trait
+                         impls each attach + borrow the cell for their own
+                         duration only (no borrow ever spans a call into
+                         Python). Script errors: traceback + panic. Own
+                         duplicated ISS_TLE. Holds the round-trip unit test
 src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
                          pos/scale; BodySelector (one key per body: Terra, Luna,
                          the 7 planets) drives camera_target; default Terra view
+src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
+                         delegates to scenes/solar_system_py.py; same
+                         Inner-pyclass + wrapper pattern as manual_control_py,
+                         with clock: Py<Clock> + selector: Py<BodySelector>
+                         shared live with the script (the script rebuilds the
+                         9-key selector panel via selector.selected /
+                         BodySelector.body_names() / selector.request(i))
 src/engine/application/mod.rs   ApplicationState<S: Scene + CameraControl +
                          CameraView + UIDrawable>
                          + winit ApplicationHandler + run(). Keeps NO camera or
@@ -111,7 +151,21 @@ src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawab
                          implements UIDrawable itself (its own Time panel +
                          scene panels). Re-exports the instrument structs
                          (bare + Interactive*) + theme install_theme + the spec
-                         types (PanelSet/UiPanel).
+                         types (PanelSet/UiPanel). PanelAnchor is also a
+                         pyclass (eq) - part of the dual Rust/Python UI API.
+src/engine/ui/py.rs             the Python face of the panel API: the Panel pyclass
+                         (anchor + rows of instrument objects - the
+                         UIDrawablePanel twin a script returns), the four
+                         Interactive* script twins (same names as the Rust
+                         wrappers, deliberately; each = bare instrument +
+                         Py<PyAny> callable instead of a Box<dyn FnMut>), and
+                         panels_from_python - the per-frame conversion: cast
+                         chain over the 11 instrument pyclasses, bare
+                         instruments clone out inert (the spec.rs path), twins
+                         become the Rust Interactive* with a GIL-attaching
+                         'static closure. Callback exceptions print + continue;
+                         a bad element type is a TypeError the scene fail-fasts
+                         on. Holds the render-free conversion round-trip tests
 src/engine/ui/instruments/mod.rs  the Instrument trait (render(&mut Tui): each
                          instrument adds its own flex node into its row, owning
                          its node style - e.g. keys grow to share the row) + the
@@ -132,7 +186,11 @@ src/engine/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider
                          slider.rs value track (percent-width node - the track
                          follows the panel width without driving it)). Each
                          control is split in two: a bare data struct (inert,
-                         derives Deserialize) + an Interactive* wrapper holding
+                         derives Deserialize; also a #[pyclass] with a #[new]
+                         constructor + get/set fields - the dual Rust/Python
+                         API, Slider's range surfacing in Python as a
+                         (min, max) tuple since RangeInclusive has no pyo3
+                         conversion) + an Interactive* wrapper holding
                          the bare struct + a moved Box<dyn FnMut> callback
                          (InteractiveButton/InteractiveHoldButton/
                          InteractiveToggle/InteractiveSlider; the Hold variant
@@ -240,7 +298,11 @@ src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
                          moving center from the CelestialSphere on demand),
                          TargetSelector (Terra/Luna, eclipses), BodySelector (one
                          latching key per body, 9 bodies ordered by distance from
-                         Sol, solar_system)
+                         Sol, solar_system; also a #[pyclass] - selected getter +
+                         body_names() staticmethod + request(index), the index
+                         twin of the disjoint request flags, so a *_py scene's
+                         script can rebuild the panel). SatelliteTelemetry is a
+                         #[pyclass(get_all)] readout
 src/engine/scene/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          + Luna position (DE440) and IAU lunar rotation;
                          sol_pos_world + the 7 planets' position (DE440) and IAU
@@ -262,9 +324,16 @@ src/engine/scene/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversi
                          propagate_numerical (one orbitprop step, the per-frame
                          re-anchor), resolve_orbit (GCRF state -> the same
                          SatelliteState as the SGP4 arm), orbit_shape
-                         (osculating apo/peri/speed, None for e >= 1); plus a
+                         (osculating apo/peri/speed, None for e >= 1;
+                         OrbitShape is a #[pyclass(get_all)] readout); plus a
                          render-free circular-LEO unit test of that pipeline
-src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause
+src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause. Also
+                         a #[pyclass] (get/set multiplier + paused;
+                         datetime_label and the MIN/MAX_MULTIPLIER classattr
+                         consts live in the #[pymethods] block - still plain
+                         Rust items; new/now/tick stay Rust-only, they speak
+                         satkit::Instant). The *_py scenes hold Py<Clock> so
+                         script callbacks mutate the same clock Rust ticks
 shaders/scene.wgsl       ALL shader code (5 passes in one module: a single
                          distance-adaptive body impostor for all 9 bodies
                          (perspective/orthographic ray trace, writes
@@ -290,7 +359,7 @@ main (bin globe-experiment) -> engine, scenes (NO offscreen/headless code)
 headless (bin headless)     -> engine, offscreen (NO scenes; compiles
                                        # engine::application dead - covered by
                                        # its crate-level allow(dead_code))
-engine      = application, camera, planet, renderer, scene, ui
+engine      = application, camera, planet, py, renderer, scene, ui
                                        # - declared identically by both roots
 application -> camera (the CameraControl/CameraView traits + their input
                                        # types, NOT PtzCamera),
@@ -305,22 +374,36 @@ camera      -> scene (CameraTarget + CelestialSphere + RenderState),
 offscreen   -> renderer (SceneRenderer + shared device/depth helpers + UiFrame),
                                        # scene (RenderState), (wgpu,
                                        # egui_wgpu, image)  # headless tree only
-ui          -> (egui, egui_taffy)   # defines UIDrawable trait + control_panel
+ui          -> (egui, egui_taffy, pyo3)   # defines UIDrawable trait +
+                                       # control_panel; the bare instruments are
+                                       # pyclasses and ui::py holds the Panel/
+                                       # Interactive* twins + panel conversion
+py          -> ui (class registration + ui::py types), scene (Clock,
+                                       # BodySelector, SatelliteTelemetry,
+                                       # satellite::OrbitShape), (pyo3)
+                                       # interpreter init + the `globe` module +
+                                       # the runtime script loader; never
+                                       # references src/scenes. Compiled dead by
+                                       # the headless tree (links libpython,
+                                       # never initializes it)
 renderer    -> scene (RenderState + CelestialSphere::at),
                                        # planet, (wgpu, egui_wgpu, ktx2, glam).
                                        # winit-free (Gfx moved to application);
                                        # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-scene       -> planet, ui, (satkit, egui via ui, glam)  # selector
+scene       -> planet, ui, (satkit, egui via ui, glam, pyo3)  # selector
                                        # panel builders use ui; NO winit/wgpu/
-                                       # camera types
+                                       # camera types; pyo3 only for the
+                                       # Clock/BodySelector/readout pyclasses
 planet      -> scene::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with scene::body)
 scenes      -> scene, ui, application, camera (CameraControl/CameraView
-                                       # traits + PtzCamera)
+                                       # traits + PtzCamera); the *_py scenes
+                                       # also -> py (init + script loader) and
+                                       # ui::py (panel conversion), (pyo3)
 ```
 
 ## `Scene` trait

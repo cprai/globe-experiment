@@ -43,6 +43,12 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   plain data defined here - is produced by the scene's `camera::CameraView`
   impl, the UI readout pulled separately via `ui::UIDrawable`). Depends on
   `ui` (hence egui) only for the selector panel builders.
+- **`py`** — embedded Python (`src/engine/py.rs`): the Once-guarded
+  interpreter `init()` (`append_to_inittab!` of the `globe` pymodule strictly
+  before `Python::initialize()`), the `globe` module registration, and the
+  runtime script loader (`load_get_drawables`). Never references
+  `src/scenes`. The headless tree compiles it dead (links libpython, never
+  initializes the interpreter).
 - **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
   device/depth helpers + `UiFrame` + projection consts. Camera is NOT here;
   `Gfx` is NOT here (it is winit-bound, in `application/gfx.rs`).
@@ -52,7 +58,10 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   its rows of boxed `Instrument`s with taffy (`egui_taffy`; content-sized, no
   pixel positions; no `Clock`/scene knowledge). Each scene implements
   `UIDrawable` itself (its own Time panel + scene panels).
-  `ui/instruments/*.rs` is one `Instrument`-impl struct per file;
+  `ui/instruments/*.rs` is one `Instrument`-impl struct per file (each bare
+  struct doubling as a `#[pyclass]` — the dual Rust/Python UI API);
+  `ui/py.rs` the Python face (the `Panel` pyclass, the `Interactive*` script
+  twins holding Python callables, and the Python->Rust panel conversion);
   `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
   panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
   straight into the bare instrument structs).
@@ -63,7 +72,10 @@ The top-level (non-engine) modules:
   tree only.
 - **`scenes`** — one `<Name>Scene` struct per past scene
   implementing `Scene` + `CameraControl` + `CameraView` + `UIDrawable`,
-  each with a `run()`.
+  each with a `run()`. (The `*_py` scenes split this into an Inner
+  `#[pyclass]` + a thin trait-impl wrapper and load their panels from a
+  repo-root `scenes/*.py` script — see the "Python-paneled scenes" section
+  in `scenes.md`.)
   Each struct holds its `Clock` + `camera: PtzCamera` +
   `camera_target: CameraTarget` directly (no stored `CelestialSphere`;
   `frame_state` evaluates one at the frame's clock instant) and builds its

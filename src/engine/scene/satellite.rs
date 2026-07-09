@@ -37,6 +37,7 @@
 //! docs (the numerical arm's EGM96 gravity model is seeded the same way).
 
 use glam::DVec3;
+use pyo3::prelude::*;
 use satkit::frametransform::{qgcrf2itrf, qteme2gcrf, qteme2itrf};
 use satkit::itrfcoord::ITRFCoord;
 use satkit::orbitprop::{self, PropSettings, SimpleState};
@@ -262,7 +263,10 @@ pub fn propagate_numerical(state: &OrbitState, from: &Instant, to: &Instant) -> 
 }
 
 /// The shape of the osculating orbit through a GCRF state vector, as plain
-/// panel-readout data: apsis altitudes and current speed.
+/// panel-readout data: apsis altitudes and current speed. `pyclass` (fields
+/// readable via `get_all`) so a `*_py` scene's script can pull the same
+/// readouts its Rust sibling formats - the dual Rust/Python API.
+#[pyclass(module = "globe", get_all)]
 pub struct OrbitShape {
     /// Apoapsis height above Terra's mean radius, km.
     pub apoapsis_alt_km: f64,

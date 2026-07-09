@@ -9,8 +9,17 @@
 
 use std::time::Instant as WallClock;
 
+use pyo3::prelude::*;
 use satkit::{Duration, Instant};
 
+/// `pyclass`: a `*_py` scene holds its clock as `Py<Clock>` and hands the
+/// live handle to its script, whose Run/speed callbacks mutate the same
+/// `paused`/`multiplier` the Rust side ticks - the Python face of the dual
+/// clock API. `new`/`now`/`tick` stay Rust-only below (they speak
+/// `satkit::Instant`, which has no Python conversion); `datetime_label` and
+/// the multiplier bounds live in the `#[pymethods]` block (still plain Rust
+/// items - a duplicate inherent definition would not compile).
+#[pyclass(module = "globe")]
 pub struct Clock {
     /// Simulation time zero - the TLE's epoch.
     epoch: Instant,
@@ -19,19 +28,37 @@ pub struct Clock {
     /// Time scale: 1.0 = real time, up to 100.0 = 100x real time. The UI
     /// drives this on an exponential (base e) slider, but it is stored as the
     /// plain linear factor.
+    #[pyo3(get, set)]
     pub multiplier: f32,
     /// When true, time is frozen.
+    #[pyo3(get, set)]
     pub paused: bool,
     /// Wall-clock instant of the previous advance; `None` whenever the clock
     /// is not running, so resuming doesn't jump by the paused interval.
     last: Option<WallClock>,
 }
 
+#[pymethods]
 impl Clock {
-    /// Real time to 100x real time.
+    /// Real time to 100x real time. `classattr` so a script can read
+    /// `Clock.MIN_MULTIPLIER` for its speed-slider range; unchanged as Rust
+    /// associated consts.
+    #[classattr]
     pub const MIN_MULTIPLIER: f32 = 1.0;
+    #[classattr]
     pub const MAX_MULTIPLIER: f32 = 100.0;
 
+    /// The current simulation datetime formatted for display (UTC).
+    pub fn datetime_label(&self) -> String {
+        let (year, month, day, hour, minute, second) = self.now().as_datetime();
+        format!(
+            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{:02} UTC",
+            second as i32
+        )
+    }
+}
+
+impl Clock {
     pub fn new(epoch: Instant) -> Self {
         Self {
             epoch,
@@ -65,14 +92,5 @@ impl Clock {
         self.last = Some(now);
         self.elapsed_seconds += dt * self.multiplier as f64;
         true
-    }
-
-    /// The current simulation datetime formatted for display (UTC).
-    pub fn datetime_label(&self) -> String {
-        let (year, month, day, hour, minute, second) = self.now().as_datetime();
-        format!(
-            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{:02} UTC",
-            second as i32
-        )
     }
 }

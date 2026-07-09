@@ -50,6 +50,10 @@ enum SceneName {
     /// Burns panel keys to thrust and reshape the orbit.
     #[value(name = "manual_control")]
     ManualControl,
+    /// `manual_control` with its UI panels produced by the Python script
+    /// `scenes/manual_control_py.py` (edit + relaunch, no rebuild).
+    #[value(name = "manual_control_py")]
+    ManualControlPy,
     /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
     /// side).
     #[value(name = "solar_eclipse")]
@@ -58,6 +62,10 @@ enum SceneName {
     /// Luna, or the seven planets (no satellites).
     #[value(name = "solar_system")]
     SolarSystem,
+    /// `solar_system` with its UI panels produced by the Python script
+    /// `scenes/solar_system_py.py` (edit + relaunch, no rebuild).
+    #[value(name = "solar_system_py")]
+    SolarSystemPy,
 }
 
 fn main() {
@@ -67,8 +75,10 @@ fn main() {
             SceneName::IssAndHubble => scenes::iss_and_hubble::run(),
             SceneName::LunarEclipse => scenes::lunar_eclipse::run(),
             SceneName::ManualControl => scenes::manual_control::run(),
+            SceneName::ManualControlPy => scenes::manual_control_py::run(),
             SceneName::SolarEclipse => scenes::solar_eclipse::run(),
             SceneName::SolarSystem => scenes::solar_system::run(),
+            SceneName::SolarSystemPy => scenes::solar_system_py::run(),
         },
         // Bare `scene` with no name: list what's available instead of erroring.
         Cli::Scene { name: None } => list_scenes(),

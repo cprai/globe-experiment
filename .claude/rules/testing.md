@@ -6,10 +6,23 @@
   `celestial_sphere.rs` covering the galactic star-frame matrix and the IAU
   lunar rotation (`luna_near_side_faces_terra`), in `satellite.rs`
   covering the TLE-free numerical pipeline
-  (`numerical_pipeline_holds_circular_leo`), and in `ui/instruments/button.rs`
+  (`numerical_pipeline_holds_circular_leo`), in `ui/instruments/button.rs`
   covering hold-key press persistence past egui's 0.8 s click timeout
-  (`hold_key_fires_past_click_timeout`, CPU-only egui passes, no satkit) — run
-  them after touching those modules. Any test needing satkit globals must seed via the `Once`-guarded
+  (`hold_key_fires_past_click_timeout`, CPU-only egui passes, no satkit), in
+  `ui/py.rs` covering the Python->Rust panel conversion over every registered
+  instrument class (+ the non-instrument TypeError path), and in
+  `scenes/manual_control_py.rs` the full Python-scene round trip
+  (`python_scene_round_trip`: loads the real `scenes/manual_control_py.py`,
+  asserts the three converted panels, and click-probes a CPU-only egui pass
+  until the script's Run-toggle callback flips the shared `Py<Clock>` —
+  main-bin harness only), and in `scenes/solar_system_py.rs` the second
+  script's load + selector shape (`solar_system_script_builds_selector`,
+  no satkit — the panel path only reads the clock and selector) — run
+  them after touching those modules. The two scene tests read the real
+  `scenes/*.py` at runtime, so they also stand in for the edit-without-
+  rebuild check. Tests touching Python must call
+  `engine::py::init()` **before** any `Python::attach` (no auto-initialize;
+  the `Once` makes repeated calls safe). Any test needing satkit globals must seed via the `Once`-guarded
   `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is set-once
   per process; a second bare `init_satkit` panics in the shared test binary).
   `cargo test` builds and runs the shared-engine tests **twice** — once per

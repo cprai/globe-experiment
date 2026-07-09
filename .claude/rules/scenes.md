@@ -141,6 +141,52 @@ reshapes live. `get_drawables` re-derives lat/lon/alt with the same
 (apo/peri/speed; `None` on an escape orbit, shown as dashes — the path
 renderer likewise draws nothing for e >= 1).
 
+### Python-paneled scenes (manual_control_py, solar_system_py)
+
+Clones of their Rust siblings whose `UIDrawable::get_drawables` delegates to a
+Python script — kept **side by side** with the Rust originals so the two panel
+APIs can be compared; keep the pairs in sync when either side's panels change.
+The pattern:
+
+- **Split struct**: the scene state lives in a `<Name>SceneInner` that is
+  itself a `#[pyclass]` (Python-side name `<Name>Scene`, module `globe`, NOT
+  registered in the `globe` module — it reaches Python only as the instance
+  handed into the script). Shared-mutable state the script drives is held as
+  `Py<..>` fields with `#[pyo3(get)]` (`clock: Py<Clock>`; solar_system_py
+  adds `selector: Py<BodySelector>`), so a script callback like
+  `clock.paused = ...` mutates the very object Rust ticks. Rust-private state
+  (orbit, camera, camera_target) stays in plain fields. The Rust side of the
+  Inner mirrors the sibling's `new`/`advance`/`frame_state` body for body,
+  each taking `py: Python` and borrowing the shared cells
+  (`self.clock.borrow_mut(py).tick()`).
+- **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
+  Py<PyAny> }` implements the four engine traits; every method is
+  `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
+  rule: never hold a pyclass borrow across a call into Python.** The trait
+  bodies call no Python; `get_drawables` holds NO Rust borrow at all — it
+  passes `self.inner.bind(py)` into the script, whose property/method
+  accesses each take their own transient borrow. Script callbacks fire later,
+  during `control_panel`'s render, when no borrow is live.
+- **Burn keys / selector keys**: the script passes the Inner's bound `&mut
+  self` methods (`scene.request_prograde`, `selector.request(i)`) as
+  callbacks; pyclass method calls can't overlap by construction, so the
+  disjoint-field capture gymnastics of the Rust panels aren't needed on the
+  Python side (the per-key flags are kept anyway for identical semantics).
+- **run() order**: `scene::init()` then `engine::py::init()` (inittab before
+  interpreter init, Once-guarded) then construct the scene — construction
+  loads `scenes/<name>.py` at **runtime** (CARGO_MANIFEST_DIR fallback
+  `./scenes`; edit + relaunch, no rebuild).
+- **Script contract**: module-level `get_drawables(scene) -> list[Panel]`,
+  importing from the embedded `globe` module; the ln/exp speed-slider mapping
+  is done in Python (`math.log`/`math.exp` against `Clock.MIN_MULTIPLIER`/
+  `MAX_MULTIPLIER`). The 9-key selector loop needs the `lambda i=i:` capture
+  (Python's late binding).
+- **Error policy**: script load/compile failure and a per-frame
+  `get_drawables` exception print the traceback and **panic** (they would
+  recur every frame — fail fast); a **callback** exception prints and
+  continues (one missed mutation; panicking mid-egui-pass would unwind
+  through the presenter).
+
 - The `CameraView` impl's `frame_state` resolves the rig first (its eye feeds the
   occlusion test), then propagates `self.satellites` using
   `self.clock.now()`, calls `marker_occluded` from

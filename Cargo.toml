@@ -38,6 +38,14 @@ humantime = "2"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff"] }
 ktx2 = "0.5"
 pollster = "0.4"
+# Embedded CPython for scene scripting: the *_py scenes load a repo-root
+# scenes/*.py script at runtime and delegate their UIDrawable panel production
+# to it. No `auto-initialize` - the interpreter is initialized explicitly
+# (engine::py::init), after append_to_inittab registers the `globe` module.
+# Unconditional (owner decision 2026-07-07): every build links libpython and
+# needs the Python dev headers; the headless bin links it but never
+# initializes it.
+pyo3 = "0.29"
 rayon = "1.10"
 # SGP4 satellite propagation, the JPL DE440 ephemeris reader, and the
 # IERS-2010 frame transforms behind the celestial sphere. default-features off

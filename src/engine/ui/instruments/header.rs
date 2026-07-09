@@ -1,5 +1,6 @@
 use egui::Stroke;
 use egui_taffy::{Tui, taffy};
+use pyo3::prelude::*;
 
 use super::{Instrument, leaf};
 use crate::engine::ui::theme::{
@@ -12,11 +13,23 @@ use crate::engine::ui::theme::{
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
-/// borrowing `get_drawables`.
+/// borrowing `get_drawables` (and so the Python bridge can clone one out of
+/// its pyclass cell); `pyclass` for the dual Rust/Python UI API (a scene
+/// script builds the same bare struct - see `engine::ui::py`).
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Header {
+    #[pyo3(get, set)]
     pub title: String,
+}
+
+#[pymethods]
+impl Header {
+    #[new]
+    fn py_new(title: String) -> Self {
+        Self { title }
+    }
 }
 
 impl Instrument for Header {

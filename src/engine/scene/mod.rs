@@ -18,6 +18,7 @@ pub mod clock;
 pub mod satellite;
 
 use glam::DVec3;
+use pyo3::prelude::*;
 use satkit::Instant;
 
 pub use body::CelestialBody;
@@ -249,7 +250,12 @@ pub struct SatelliteMarker {
 /// same instant its `crate::engine::camera::CameraView::frame_state` impl
 /// filled [`RenderState::markers`] from, and propagation is deterministic, so
 /// the readout matches the rendered markers with no stashed state.
+///
+/// `pyclass` (fields readable via `get_all`; `skip_from_py_object` - Python
+/// only ever receives one, never hands one back) so a `*_py` scene's script
+/// reads the same readout its Rust sibling formats.
 #[derive(Clone, Debug)]
+#[pyclass(module = "globe", get_all, skip_from_py_object)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").
     pub name: String,
@@ -393,6 +399,13 @@ const TERRA_INDEX: usize = 2;
 /// [`apply_requests`] folds it into `selected` once per frame, before the
 /// scene's `CameraView::frame_state` resolves it
 /// - the same one-frame latency as [`TargetSelector`].
+///
+/// `pyclass`: a `*_py` scene holds `Py<BodySelector>` and hands the live
+/// handle to its script, which rebuilds this panel in Python - reading
+/// `selected`, listing [`body_names`](Self::body_names), and requesting a
+/// switch through [`request`](Self::request) (the index twin of the per-body
+/// flags, so the Python callbacks keep the same disjoint-request semantics).
+#[pyclass(module = "globe")]
 pub struct BodySelector {
     /// Index into [`SELECTABLE_BODIES`].
     selected: usize,
@@ -425,6 +438,51 @@ impl Default for BodySelector {
             request_uranus: false,
             request_neptune: false,
         }
+    }
+}
+
+#[pymethods]
+impl BodySelector {
+    /// The selected body's index into [`SELECTABLE_BODIES`] (= the panel's
+    /// key order).
+    #[getter]
+    fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Every selectable body's display name, in [`SELECTABLE_BODIES`] (panel)
+    /// order - what a script labels its keys with.
+    #[staticmethod]
+    fn body_names() -> Vec<String> {
+        SELECTABLE_BODIES
+            .iter()
+            .map(|body| body.name().to_string())
+            .collect()
+    }
+
+    /// Requests a switch to `SELECTABLE_BODIES[index]` - sets the same
+    /// disjoint per-body flag the Rust panel's key callbacks set, folded into
+    /// `selected` by the next `apply_requests`.
+    fn request(&mut self, index: usize) -> PyResult<()> {
+        let flag = match index {
+            0 => &mut self.request_mercury,
+            1 => &mut self.request_venus,
+            2 => &mut self.request_terra,
+            3 => &mut self.request_luna,
+            4 => &mut self.request_mars,
+            5 => &mut self.request_jupiter,
+            6 => &mut self.request_saturn,
+            7 => &mut self.request_uranus,
+            8 => &mut self.request_neptune,
+            _ => {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "body index {index} out of range 0..{}",
+                    SELECTABLE_BODIES.len()
+                )));
+            }
+        };
+        *flag = true;
+        Ok(())
     }
 }
 

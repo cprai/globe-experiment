@@ -1,5 +1,6 @@
 use egui::{CornerRadius, Margin, Stroke};
 use egui_taffy::{Tui, taffy};
+use pyo3::prelude::*;
 
 use super::{Instrument, leaf};
 use crate::engine::ui::theme::{
@@ -15,14 +16,29 @@ use crate::engine::ui::theme::{
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
 /// `unit` defaults empty, so pre-unit JSON still parses); `Clone` so
 /// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables`.
+/// `get_drawables` (and the Python bridge out of its pyclass cell); `pyclass`
+/// for the dual Rust/Python UI API - the Python constructor's `unit` defaults
+/// empty to mirror the serde default.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Readout {
+    #[pyo3(get, set)]
     pub label: String,
+    #[pyo3(get, set)]
     pub value: String,
     #[serde(default)]
+    #[pyo3(get, set)]
     pub unit: String,
+}
+
+#[pymethods]
+impl Readout {
+    #[new]
+    #[pyo3(signature = (label, value, unit = String::new()))]
+    fn py_new(label: String, value: String, unit: String) -> Self {
+        Self { label, value, unit }
+    }
 }
 
 impl Instrument for Readout {

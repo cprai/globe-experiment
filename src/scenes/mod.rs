@@ -15,5 +15,11 @@ pub mod iss;
 pub mod iss_and_hubble;
 pub mod lunar_eclipse;
 pub mod manual_control;
+// The `*_py` scenes are clones of their Rust siblings whose UI panels are
+// produced by a Python script under the repo-root `scenes/` directory (via
+// the embedded interpreter, `engine::py`) - kept side by side so the Rust
+// and Python panel APIs can be compared.
+pub mod manual_control_py;
 pub mod solar_eclipse;
 pub mod solar_system;
+pub mod solar_system_py;

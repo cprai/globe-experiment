@@ -22,6 +22,13 @@
 //! separate from the `Scene` trait.
 
 mod instruments;
+// The Python face of this API (the `Panel` pyclass, the `Interactive*`
+// script twins, and the Python->Rust panel conversion). Public: the `*_py`
+// scenes convert their script's return through it, and `engine::py` registers
+// its classes into the embedded `globe` module. Only the main binary's tree
+// constructs it (the headless bin runs no Python; its crate-level
+// `allow(dead_code)` covers the module there).
+pub mod py;
 // The spec types are constructed only by the headless binary's tree (its
 // `--scene` `ui` overlay deserializes into them); in the main binary's tree
 // they are intentionally unconstructed.
@@ -50,9 +57,12 @@ use theme::{paint_bevel, paint_rivets, panel_frame};
 ///
 /// `Copy` so a [`PanelSet`] can hand it out of a borrowing `get_drawables` by
 /// value; `Deserialize` so the headless `--scene` `ui` JSON can name an anchor
-/// (`"top_left"` / `"top_right"` / `"bottom_center"`).
-#[derive(Clone, Copy, serde::Deserialize)]
+/// (`"top_left"` / `"top_right"` / `"bottom_center"`); `pyclass` so a scene
+/// script can name one (`PanelAnchor.TopLeft`, with `eq` for comparisons) -
+/// the dual Rust/Python UI API (see `engine::py`).
+#[derive(Clone, Copy, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[pyo3::pyclass(module = "globe", eq, from_py_object)]
 pub enum PanelAnchor {
     TopLeft,
     TopRight,

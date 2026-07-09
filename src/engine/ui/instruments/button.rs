@@ -1,4 +1,5 @@
 use egui_taffy::{Tui, TuiBuilderLogic};
+use pyo3::prelude::*;
 
 use super::Instrument;
 use super::toggle::key_style;
@@ -9,11 +10,22 @@ use super::toggle::key_style;
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
-/// borrowing `get_drawables`.
+/// borrowing `get_drawables` (and the Python bridge out of its pyclass cell);
+/// `pyclass` for the dual Rust/Python UI API.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Button {
+    #[pyo3(get, set)]
     pub label: String,
+}
+
+#[pymethods]
+impl Button {
+    #[new]
+    fn py_new(label: String) -> Self {
+        Self { label }
+    }
 }
 
 impl Button {

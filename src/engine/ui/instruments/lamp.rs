@@ -1,5 +1,6 @@
 use egui::Stroke;
 use egui_taffy::{Tui, taffy};
+use pyo3::prelude::*;
 
 use super::{Instrument, leaf};
 use crate::engine::ui::theme::{
@@ -12,12 +13,14 @@ use crate::engine::ui::theme::{
 /// snake_case so the mock JSON can say `"status": "ok"`.
 ///
 /// No live panel constructs a lamp today - it is part of the reusable
-/// instrument library, constructed only via the headless binary's `ui` spec -
-/// so `dead_code` is allowed in the main binary's tree until a producer
-/// uses one.
+/// instrument library, constructed only via the headless binary's `ui` spec
+/// or a scene script (`pyclass`: the variants surface in Python as
+/// `LampStatus.Ok` etc., `eq` so scripts can compare them) - so `dead_code`
+/// is allowed in the main binary's tree until a producer uses one.
 #[allow(dead_code)]
-#[derive(Clone, Copy, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[pyclass(module = "globe", eq, from_py_object)]
 pub enum LampStatus {
     /// Nominal - green.
     Ok,
@@ -34,14 +37,26 @@ pub enum LampStatus {
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
-/// borrowing `get_drawables`. `dead_code` allowed like [`LampStatus`] (no live
-/// producer).
+/// borrowing `get_drawables` (and the Python bridge out of its pyclass cell);
+/// `pyclass` for the dual Rust/Python UI API. `dead_code` allowed like
+/// [`LampStatus`] (no live producer).
 #[allow(dead_code)]
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Lamp {
+    #[pyo3(get, set)]
     pub label: String,
+    #[pyo3(get, set)]
     pub status: LampStatus,
+}
+
+#[pymethods]
+impl Lamp {
+    #[new]
+    fn py_new(label: String, status: LampStatus) -> Self {
+        Self { label, status }
+    }
 }
 
 impl Instrument for Lamp {

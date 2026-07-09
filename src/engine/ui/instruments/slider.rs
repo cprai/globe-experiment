@@ -1,6 +1,7 @@
 use std::ops::RangeInclusive;
 
 use egui_taffy::{Tui, taffy};
+use pyo3::prelude::*;
 use serde::Deserialize;
 
 use super::{Instrument, leaf};
@@ -11,14 +12,40 @@ use super::{Instrument, leaf};
 ///
 /// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
 /// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
-/// borrowing `get_drawables`. `range` deserializes from a `[min, max]` JSON
-/// array (see [`deserialize_range`]).
+/// borrowing `get_drawables` (and the Python bridge out of its pyclass cell);
+/// `pyclass` for the dual Rust/Python UI API. `range` deserializes from a
+/// `[min, max]` JSON array (see [`deserialize_range`]); `RangeInclusive` has
+/// no pyo3 conversion, so the Python face of `range` is a `(min, max)` tuple
+/// (explicit getter/setter below, no `pyo3(get, set)` on the field).
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[pyclass(module = "globe", from_py_object)]
 pub struct Slider {
+    #[pyo3(get, set)]
     pub value: f32,
     #[serde(deserialize_with = "deserialize_range")]
     pub range: RangeInclusive<f32>,
+}
+
+#[pymethods]
+impl Slider {
+    #[new]
+    fn py_new(value: f32, range: (f32, f32)) -> Self {
+        Self {
+            value,
+            range: range.0..=range.1,
+        }
+    }
+
+    #[getter(range)]
+    fn py_range(&self) -> (f32, f32) {
+        (*self.range.start(), *self.range.end())
+    }
+
+    #[setter(range)]
+    fn py_set_range(&mut self, range: (f32, f32)) {
+        self.range = range.0..=range.1;
+    }
 }
 
 impl Slider {
