@@ -9,14 +9,13 @@ use crate::engine::camera::{
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::satellite::{Propagation, Satellite};
 use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene,
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene, SceneClock,
     marker_occluded,
 };
 use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
-use crate::scenes::SceneClock;
 
 // This scene's tracked-object TLE, inlined as a source literal. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked

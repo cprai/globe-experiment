@@ -71,14 +71,9 @@ scenes/*.py              the repo-root scene-script directory (NOT src/scenes):
                          relaunch, no rebuild (the one deliberate exception to
                          everything-embedded). Contract: module-level
                          get_drawables(scene) -> list[Panel]
-src/scenes/mod.rs     scene registry + the SceneClock trait (required
-                         clock_mut() -> &mut Clock per scene; default methods
-                         are the whole clock API - tick_clock/clock_now/
-                         clock_datetime_label/clock_paused/set_clock_paused/
-                         clock_multiplier/set_clock_multiplier/
-                         apply_clock_requests. Scene code never touches Clock
-                         internals - its fields are private, so the compiler
-                         enforces it)
+src/scenes/mod.rs     scene registry (module decls + the shared scene
+                         conventions doc; the SceneClock trait lives with
+                         Clock in src/engine/scene/clock.rs)
 src/scenes/iss_and_hubble.rs  IssAndHubbleScene (Scene impl); ISS_TLE/HST_TLE consts
 src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on purpose)
 src/scenes/solar_eclipse.rs  SolarEclipseScene: empty (NO satellites);
@@ -350,12 +345,19 @@ src/engine/scene/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversi
                          (osculating apo/peri/speed, None for e >= 1;
                          OrbitShape is a #[pyclass(get_all)] readout); plus a
                          render-free circular-LEO unit test of that pipeline
-src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause.
-                         ALL fields private - consumers go through the
-                         accessors (paused/set_paused/multiplier/
-                         set_multiplier/now/tick/datetime_label), which the
-                         scenes' SceneClock trait wraps. Still a #[pyclass],
-                         but registered only for the MIN/MAX_MULTIPLIER
+src/engine/scene/clock.rs  simulation Clock (wall-dt x speed, play/pause) +
+                         the SceneClock trait every scene implements. Clock
+                         is plain data (new() + ALL-private fields); the
+                         whole clock API AND its logic are SceneClock's
+                         default methods (required clock_mut() -> &mut Clock
+                         per scene; tick_clock/clock_now/
+                         clock_datetime_label/clock_paused/set_clock_paused/
+                         clock_multiplier/set_clock_multiplier/
+                         apply_clock_requests), which as same-module code are
+                         the only thing that can reach the fields - scene
+                         code never touches Clock internals, compiler-
+                         enforced. Clock is still a #[pyclass], but
+                         registered only for the MIN/MAX_MULTIPLIER
                          classattrs (a script's slider bounds): no Clock
                          instance crosses into Python - the *_py scenes
                          re-expose the clock as scene-pyclass properties

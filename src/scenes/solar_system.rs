@@ -19,12 +19,13 @@ use crate::engine::camera::{
     CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
 };
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::{self, BodySelector, CameraTarget, Clock, RenderState, Scene};
+use crate::engine::scene::{
+    self, BodySelector, CameraTarget, Clock, RenderState, Scene, SceneClock,
+};
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };
-use crate::scenes::SceneClock;
 
 /// Empty solar-system simulation: the clock held directly, plus the body
 /// selector. No satellites, and no celestial sphere stored -

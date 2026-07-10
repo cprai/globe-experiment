@@ -28,9 +28,10 @@ use crate::engine::camera::{
 };
 use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::{self, BodySelector, CameraTarget, Clock, RenderState, Scene};
+use crate::engine::scene::{
+    self, BodySelector, CameraTarget, Clock, RenderState, Scene, SceneClock,
+};
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
-use crate::scenes::SceneClock;
 
 /// The live scene state, as a pyclass: the script reads/drives the clock
 /// properties (the `SceneClock` API's pymethod face below) and the shared

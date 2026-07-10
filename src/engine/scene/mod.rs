@@ -22,11 +22,11 @@ use pyo3::prelude::*;
 use satkit::Instant;
 
 pub use body::CelestialBody;
-// Only the main binary's scenes name this re-export; the headless bin tree
-// compiles this module with no `Clock` consumer, so the import would warn
+// Only the main binary's scenes name these re-exports; the headless bin tree
+// compiles this module with no clock consumer, so the import would warn
 // there (its crate-level allow covers `dead_code`, not `unused_imports`).
 #[allow(unused_imports)]
-pub use clock::Clock;
+pub use clock::{Clock, SceneClock};
 
 use crate::engine::planet;
 use crate::engine::ui::{

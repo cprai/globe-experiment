@@ -22,10 +22,11 @@ time window) and wires it into the clap CLI.
      bool, request_multiplier: Option<f32>, satellites: Vec<Satellite>,
      camera: PtzCamera, camera_target: CameraTarget }` (direct fields; there
      is no shared core struct, and no stored `CelestialSphere`).
-   - implements `crate::scenes::SceneClock` for it: just `clock_mut() ->
-     &mut Clock`. **All clock access goes through the trait's default API**
-     (`tick_clock`/`clock_now`/`clock_datetime_label`/...) - `Clock`'s
-     fields are private, so the compiler enforces it.
+   - implements `crate::engine::scene::SceneClock` for it: just
+     `clock_mut() -> &mut Clock`. **All clock access goes through the
+     trait's default API** (`tick_clock`/`clock_now`/
+     `clock_datetime_label`/...) - the logic lives in those defaults beside
+     `Clock` (plain data, private fields), so the compiler enforces it.
    - implements `Scene` (`advance`: fold the Time panel's requests -
      `std::mem::take` the two `request_*` fields into
      `apply_clock_requests` - then `self.tick_clock()`), `CameraControl`

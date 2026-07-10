@@ -17,13 +17,12 @@ use crate::engine::camera::{
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::satellite::{self, OrbitState, Propagation, Satellite};
 use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, Scene, marker_occluded,
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, Scene, SceneClock, marker_occluded,
 };
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
-use crate::scenes::SceneClock;
 
 // This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
 // format notes. (Deliberately duplicated per scene.) Unlike the tracking

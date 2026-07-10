@@ -13,13 +13,12 @@ use crate::engine::camera::{
 };
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{
-    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, TargetSelector,
+    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock, TargetSelector,
 };
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };
-use crate::scenes::SceneClock;
 
 /// Eye distance for the Luna framing (km): ~2 lunar radii above the surface, so
 /// the eclipsed disc fills the frame with a little margin (the camera orbits
@@ -60,9 +59,8 @@ impl LunarEclipseScene {
         let epoch =
             Instant::from_datetime(2025, 3, 14, 6, 28, 0.0).expect("valid lunar-eclipse datetime");
         // `scene::init` must already have run (the celestial sphere reads
-        // satkit globals).
-        let clock = Clock::new(epoch);
-        let celestial_sphere = CelestialSphere::at(&clock.now());
+        // satkit globals). Framed at the epoch - the clock has not ticked yet.
+        let celestial_sphere = CelestialSphere::at(&epoch);
 
         // Orbit Luna, looking at its Terra-facing near side (which is the side
         // in Terra's shadow - the blood-red Luna). Looking *toward* Luna
@@ -83,7 +81,7 @@ impl LunarEclipseScene {
         );
 
         Self {
-            clock,
+            clock: Clock::new(epoch),
             request_toggle_run: false,
             request_multiplier: None,
             // Default to orbiting Luna - the whole point is the blood-red Luna.

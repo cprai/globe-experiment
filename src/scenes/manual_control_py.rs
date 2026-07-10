@@ -38,11 +38,10 @@ use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::satellite::{self, OrbitShape, OrbitState, Propagation, Satellite};
 use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene,
+    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene, SceneClock,
     marker_occluded,
 };
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
-use crate::scenes::SceneClock;
 
 // This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
 // format notes. (Deliberately duplicated per scene.) Used ONCE, to bootstrap

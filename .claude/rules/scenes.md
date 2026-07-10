@@ -32,11 +32,14 @@ paths:
   `apply_clock_requests`) then ticks the clock (and nothing else, unless the
   scene has extra per-frame state like `manual_control`'s orbit re-anchor).
   **All clock access goes through the `SceneClock` trait** in
-  `src/scenes/mod.rs`: the scene implements only `clock_mut()` and calls the
-  trait's default API (`tick_clock`/`clock_now`/`clock_datetime_label`/
-  `clock_paused`/`clock_multiplier`/...) - `Clock`'s fields are private, so
-  the compiler enforces it (the only direct `Clock` uses are `Clock::new` and
-  a framing `now()` on the local in `new()`, before `self` exists).
+  `src/engine/scene/clock.rs` (beside `Clock` itself): the scene implements
+  only `clock_mut()` and calls the trait's default API (`tick_clock`/
+  `clock_now`/`clock_datetime_label`/`clock_paused`/`clock_multiplier`/...) -
+  all the clock logic lives in those defaults, `Clock` is plain data with
+  private fields only same-module code (= the trait defaults) can reach, so
+  the compiler enforces it (the only direct `Clock` use in a scene is
+  `Clock::new`; a framing sphere in `new()` evaluates at the epoch
+  `Instant` directly, before `self` exists).
   `get_drawables` builds the top-left Time panel itself (UTC readout, speed
   readout, Run toggle, speed slider - the toggle/slider callbacks set the
   scene's disjoint `request_toggle_run` / `request_multiplier` fields by
@@ -75,9 +78,9 @@ no TLE there is no epoch to borrow, so `new()` sets the clock start
 ### Initial camera framing (optional)
 
 A scene's `new()` can frame its event on launch instead of the default
-whole-Terra view: after building the clock, evaluate a throwaway local
-sphere (`CelestialSphere::at(&clock.now())` - used for the framing only,
-never stored) and seed the
+whole-Terra view: evaluate a throwaway local sphere at the clock's start
+instant (`CelestialSphere::at(&epoch)` - used for the framing only,
+never stored; the clock has not ticked yet) and seed the
 `camera` field with `PtzCamera::looking_toward(&target, star_rot_inv,
 world_look, distance)` (orbits `target` with the look axis along a world-frame
 direction — e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna
@@ -212,7 +215,7 @@ The pattern:
 
 - The `CameraView` impl's `frame_state` resolves the rig first (its eye feeds the
   occlusion test), then propagates `self.satellites` using
-  `self.clock.now()`, calls `marker_occluded` from
+  `self.clock_now()`, calls `marker_occluded` from
   `crate::scene` for visibility, fills each `SatelliteMarker`'s
   `propagation` (the renderer propagates it ahead for the predicted orbit
   path) — `Propagation::Sgp4` with a cloned TLE, or `Propagation::Numerical`
