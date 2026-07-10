@@ -54,12 +54,6 @@ pub struct ManualControlScene {
     /// Simulation clock (datetime + play/paused + speed), reached only via
     /// the `SceneClock` API.
     clock: Clock,
-    /// Time-panel clock requests (the same request-flag idiom as the burn
-    /// flags below): the Run-toggle/speed-slider callbacks set these two
-    /// disjoint fields, and `advance()` folds them into the clock through
-    /// the `SceneClock` API.
-    request_toggle_run: bool,
-    request_multiplier: Option<f32>,
     /// Object name from the seed TLE, for the panel header.
     name: String,
     /// The satellite's GCRF state vector, valid at `orbit_epoch`. THE orbit -
@@ -68,10 +62,11 @@ pub struct ManualControlScene {
     orbit: OrbitState,
     /// The instant `orbit` is valid at; advanced to the clock each frame.
     orbit_epoch: Instant,
-    /// Burn request flags, one per key. A held key sets its flag during the
-    /// egui pass; `advance` folds them into a velocity change next frame,
-    /// then clears them (the selector request-flag pattern). Disjoint fields
-    /// (not an array) so the six key callbacks can each capture one `&mut`.
+    /// Burn request flags, one per key. A held key's callback receives the
+    /// scene and sets its flag during the egui pass; `advance` folds them
+    /// into a velocity change next frame, then clears them. The flags stay
+    /// (unlike the old clock/selector request flags) because the burn is
+    /// dt-scaled: only `advance` knows the frame's simulation dt.
     burn_prograde: bool,
     burn_retrograde: bool,
     burn_normal: bool,
@@ -97,8 +92,6 @@ impl ManualControlScene {
         let orbit = seed.state_at(&epoch).orbit;
         Self {
             clock: Clock::new(epoch),
-            request_toggle_run: false,
-            request_multiplier: None,
             name: seed.name,
             orbit,
             orbit_epoch: epoch,
@@ -157,13 +150,11 @@ impl SceneClock for ManualControlScene {
 
 impl Scene for ManualControlScene {
     fn advance(&mut self) -> bool {
-        // Fold the Time panel's clock requests (fired during the previous
-        // egui pass), then advance the clock (paused = nothing advances and
-        // the app can go idle). The celestial sphere is not stashed here:
-        // `frame_state` re-derives it at the frame's clock instant.
-        let toggle_run = std::mem::take(&mut self.request_toggle_run);
-        let multiplier = self.request_multiplier.take();
-        self.apply_clock_requests(toggle_run, multiplier);
+        // Advance the clock (any Time-panel pause/speed edit already landed
+        // via the SceneClock setters during the previous egui pass; paused =
+        // nothing advances and the app can go idle). The celestial sphere is
+        // not stashed here: `frame_state` re-derives it at the frame's clock
+        // instant.
         let running = self.tick_clock();
         let now = self.clock_now();
 
@@ -268,20 +259,18 @@ impl CameraView for ManualControlScene {
 }
 
 impl UIDrawable for ManualControlScene {
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The Time panel first (its callbacks capture the disjoint clock
-        // request fields), then the telemetry panel, then the Burns panel
-        // whose key callbacks each capture one disjoint `burn_*` flag - all
-        // coexisting borrows of separate fields. The panel builder is
-        // deliberately kept per-scene (like the propagation loop) - scenes
-        // may diverge in what they expose.
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
+        // The Time panel first, then the telemetry panel, then the Burns
+        // panel. The panel builder is deliberately kept per-scene (like the
+        // propagation loop) - scenes may diverge in what they expose.
         //
-        // Snapshot the displayed values up front (owned values only), so no
-        // shared borrow of the clock or the orbit outlives into the mutable
-        // callback captures below. The two control callbacks set the disjoint
-        // `request_*` fields by direct assignment (a `SceneClock` method call
-        // would borrow the whole scene and collide); `advance()` folds them
-        // into the clock next frame.
+        // Snapshot the displayed values up front (owned values only) - the
+        // panels are owned and never borrow the scene. Every callback
+        // receives the scene as `&mut Self` at fire time: the Time-panel
+        // pair calls the SceneClock setters directly (idempotent under
+        // egui's discard-pass double fire via build-time snapshots - the Run
+        // toggle sets the pre-click `running`, never a re-read flip), and a
+        // burn key sets its `burn_*` flag on the scene.
         //
         // The readout re-derives from the live state at the same instant
         // `frame_state` used (`Clock::now()` is pure, `advance` anchored
@@ -309,7 +298,7 @@ impl UIDrawable for ManualControlScene {
         // The producer groups instruments into rows + picks content only; all
         // styling and every metric live in the instrument modules / theme
         // (taffy bottom-aligns the Run key with the speed window beside it).
-        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Time".to_string(),
             })],
@@ -329,7 +318,8 @@ impl UIDrawable for ManualControlScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.request_toggle_run = true),
+                    // Pausing = setting the snapshotted pre-click `running`.
+                    on_toggle: Box::new(move |scene: &mut Self| scene.set_clock_paused(running)),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -337,7 +327,7 @@ impl UIDrawable for ManualControlScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
+                on_change: Box::new(|scene: &mut Self, exp| scene.set_clock_multiplier(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {
@@ -359,7 +349,7 @@ impl UIDrawable for ManualControlScene {
             Some(shape) => format!("{:>7.1}", shape.speed_m_s),
             None => format!("{:>7.1}", self.orbit.vel_gcrf_m_s.length()),
         };
-        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: self.name.clone(),
             })],
@@ -400,7 +390,7 @@ impl UIDrawable for ManualControlScene {
         // The Burns panel: six hold-to-fire keys in opposing pairs (paired
         // keys split each row). A held key sets its request flag every frame;
         // `advance` turns the flags into thrust.
-        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Burns".to_string(),
             })],
@@ -409,13 +399,13 @@ impl UIDrawable for ManualControlScene {
                     button: Button {
                         label: "Prograde".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_prograde = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_prograde = true),
                 }),
                 Box::new(InteractiveHoldButton {
                     button: Button {
                         label: "Retrograde".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_retrograde = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_retrograde = true),
                 }),
             ],
             vec![
@@ -423,13 +413,13 @@ impl UIDrawable for ManualControlScene {
                     button: Button {
                         label: "Normal".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_normal = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_normal = true),
                 }),
                 Box::new(InteractiveHoldButton {
                     button: Button {
                         label: "Anti-Normal".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_anti_normal = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_anti_normal = true),
                 }),
             ],
             vec![
@@ -437,13 +427,13 @@ impl UIDrawable for ManualControlScene {
                     button: Button {
                         label: "Radial Out".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_radial_out = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_radial_out = true),
                 }),
                 Box::new(InteractiveHoldButton {
                     button: Button {
                         label: "Radial In".to_string(),
                     },
-                    on_hold: Box::new(|| self.burn_radial_in = true),
+                    on_hold: Box::new(|scene: &mut Self| scene.burn_radial_in = true),
                 }),
             ],
         ];

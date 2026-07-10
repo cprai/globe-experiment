@@ -280,47 +280,21 @@ pub fn init() {
 /// the Terra / Luna selector panel. Shared by the scenes that offer a Luna
 /// target (the eclipses); Terra-only scenes never hold one.
 ///
-/// Two radio toggles can't both `&mut` one selection field - a panel's element
-/// callbacks all coexist, so each must capture a *disjoint* mutable field (the
-/// same rule that makes the Run toggle and speed slider capture a scene's
-/// `request_toggle_run` vs `request_multiplier` fields separately). So a key
-/// press only sets a disjoint `request_*`
-/// flag; [`apply_requests`](Self::apply_requests) reconciles it into
-/// `luna_selected` once per frame. That is a one-frame latency, imperceptible
-/// and identical to the clock-request delay.
+/// A key callback receives the live scene at fire time (see
+/// `ui::UIDrawablePanel`) and writes `luna_selected` directly through the
+/// `access` closure its scene passed to [`panel`](Self::panel). The write
+/// lands during the egui pass; the scene's `CameraView::frame_state` resolves
+/// it the next frame - the same one-frame latency the old request-flag fold
+/// had. Writing a fixed value per key is idempotent under egui's
+/// discard-pass double fire.
 pub struct TargetSelector {
     luna_selected: bool,
-    /// Set by the Terra key; cleared in `apply_requests`.
-    request_terra: bool,
-    /// Set by the Luna key; a field disjoint from `request_terra` so the two
-    /// key callbacks can coexist.
-    request_luna: bool,
 }
 
 impl TargetSelector {
     /// Builds a selector with the initial choice (`true` = Luna).
     pub fn new(luna_selected: bool) -> Self {
-        Self {
-            luna_selected,
-            request_terra: false,
-            request_luna: false,
-        }
-    }
-
-    /// Applies any pending key press into the live selection, then clears the
-    /// flags. Call once per frame *before* the frame's camera target is
-    /// resolved (i.e. at the top of the scene's `advance` - the scene's
-    /// `CameraView::frame_state` resolves the selection later the same frame).
-    /// A simultaneous press of both keys in one frame is impossible from a
-    /// mouse, but resolve it to Luna for determinism.
-    pub fn apply_requests(&mut self) {
-        if self.request_luna {
-            self.luna_selected = true;
-        } else if self.request_terra {
-            self.luna_selected = false;
-        }
-        self.request_terra = false;
-        self.request_luna = false;
+        Self { luna_selected }
     }
 
     /// Resolves the current choice into a [`CameraTarget`] identity (the
@@ -335,12 +309,16 @@ impl TargetSelector {
 
     /// The top-right Terra / Luna selector panel: a header row plus one row of
     /// two latching keys (side by side, splitting the row), the chosen body
-    /// lit. The keys' callbacks set disjoint request flags (see the type
-    /// docs); `luna_selected` is snapshotted up front so no shared borrow
-    /// outlives into the callbacks.
-    pub fn panel(&mut self) -> UIDrawablePanel<'_> {
+    /// lit. `access` re-finds this selector inside the scene when a key fires
+    /// (the panel is owned/`'static`, so the callbacks cannot borrow `self`);
+    /// each key writes the selection directly.
+    pub fn panel<S: 'static>(
+        &self,
+        access: impl Fn(&mut S) -> &mut TargetSelector + Clone + 'static,
+    ) -> UIDrawablePanel<S> {
         let luna_active = self.luna_selected;
-        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let terra_access = access.clone();
+        let rows: Vec<Vec<Box<dyn Instrument<S>>>> = vec![
             vec![Box::new(Header {
                 title: "Camera Target".to_string(),
             })],
@@ -350,14 +328,14 @@ impl TargetSelector {
                         label: "Terra".to_string(),
                         active: !luna_active,
                     },
-                    on_toggle: Box::new(|| self.request_terra = true),
+                    on_toggle: Box::new(move |scene| terra_access(scene).luna_selected = false),
                 }),
                 Box::new(InteractiveToggle {
                     toggle: Toggle {
                         label: "Luna".to_string(),
                         active: luna_active,
                     },
-                    on_toggle: Box::new(|| self.request_luna = true),
+                    on_toggle: Box::new(move |scene| access(scene).luna_selected = true),
                 }),
             ],
         ];
@@ -370,10 +348,9 @@ impl TargetSelector {
 }
 
 /// Every selectable body, ordered by distance from Sol, with Luna
-/// placed right after its parent Terra. This is also the top-to-bottom order of
-/// the selector panel's keys. The `request_*` fields of [`BodySelector`] and
-/// the `apply_requests` branches mirror this order index-for-index; keep all
-/// three in sync if the list changes.
+/// placed right after its parent Terra. This is also the top-to-bottom order
+/// of the selector panel's keys ([`BodySelector::panel`] loops over it) and
+/// the index space of `selected` / the Python `request(index)`.
 const SELECTABLE_BODIES: [CelestialBody; 9] = [
     CelestialBody::Mercury,
     CelestialBody::Venus,
@@ -393,36 +370,22 @@ const TERRA_INDEX: usize = 2;
 /// panel: one always-visible latching key per body (the chosen one lit), so the
 /// whole solar system is selectable at a glance.
 ///
-/// The panel's element callbacks all coexist, so each must capture a *disjoint*
-/// mutable field (the same rule the Time panel's Run toggle and speed slider
-/// follow with their `request_*` clock fields); hence one `request_*` flag
-/// per body rather than a single shared
-/// selection a key could write. A click sets that body's flag;
-/// [`apply_requests`] folds it into `selected` once per frame, before the
-/// scene's `CameraView::frame_state` resolves it
-/// - the same one-frame latency as [`TargetSelector`].
+/// A key callback receives the live scene at fire time (see
+/// `ui::UIDrawablePanel`) and writes `selected` directly through the `access`
+/// closure its scene passed to [`panel`](Self::panel); the scene's
+/// `CameraView::frame_state` resolves it the next frame - the same one-frame
+/// latency as [`TargetSelector`]. Writing a fixed index per key is idempotent
+/// under egui's discard-pass double fire.
 ///
 /// `pyclass`: a `*_py` scene holds `Py<BodySelector>` and hands the live
 /// handle to its script, which rebuilds this panel in Python - reading
-/// `selected`, listing [`body_names`](Self::body_names), and requesting a
-/// switch through [`request`](Self::request) (the index twin of the per-body
-/// flags, so the Python callbacks keep the same disjoint-request semantics).
+/// `selected`, listing [`body_names`](Self::body_names), and switching
+/// through [`request`](Self::request) (the pymethod twin of a Rust key's
+/// direct write).
 #[pyclass(module = "globe")]
 pub struct BodySelector {
     /// Index into [`SELECTABLE_BODIES`].
     selected: usize,
-    /// One per body, set by that body's key and cleared in `apply_requests`.
-    /// Disjoint fields (not an array) so the key callbacks can each capture one
-    /// without borrowing a shared place. In [`SELECTABLE_BODIES`] order.
-    request_mercury: bool,
-    request_venus: bool,
-    request_terra: bool,
-    request_luna: bool,
-    request_mars: bool,
-    request_jupiter: bool,
-    request_saturn: bool,
-    request_uranus: bool,
-    request_neptune: bool,
 }
 
 impl Default for BodySelector {
@@ -430,15 +393,6 @@ impl Default for BodySelector {
         // Start on Terra (the familiar default view).
         Self {
             selected: TERRA_INDEX,
-            request_mercury: false,
-            request_venus: false,
-            request_terra: false,
-            request_luna: false,
-            request_mars: false,
-            request_jupiter: false,
-            request_saturn: false,
-            request_uranus: false,
-            request_neptune: false,
         }
     }
 }
@@ -462,71 +416,23 @@ impl BodySelector {
             .collect()
     }
 
-    /// Requests a switch to `SELECTABLE_BODIES[index]` - sets the same
-    /// disjoint per-body flag the Rust panel's key callbacks set, folded into
-    /// `selected` by the next `apply_requests`.
+    /// Requests a switch to `SELECTABLE_BODIES[index]` - the same direct
+    /// `selected` write a Rust panel key makes (a script callback fires
+    /// during the egui pass; the scene's `frame_state` resolves the new
+    /// selection next frame).
     fn request(&mut self, index: usize) -> PyResult<()> {
-        let flag = match index {
-            0 => &mut self.request_mercury,
-            1 => &mut self.request_venus,
-            2 => &mut self.request_terra,
-            3 => &mut self.request_luna,
-            4 => &mut self.request_mars,
-            5 => &mut self.request_jupiter,
-            6 => &mut self.request_saturn,
-            7 => &mut self.request_uranus,
-            8 => &mut self.request_neptune,
-            _ => {
-                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                    "body index {index} out of range 0..{}",
-                    SELECTABLE_BODIES.len()
-                )));
-            }
-        };
-        *flag = true;
+        if index >= SELECTABLE_BODIES.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "body index {index} out of range 0..{}",
+                SELECTABLE_BODIES.len()
+            )));
+        }
+        self.selected = index;
         Ok(())
     }
 }
 
 impl BodySelector {
-    /// Applies any pending key press into the live selection, then clears every
-    /// flag. Call once per frame *before* the frame's camera target is resolved
-    /// (at the top of the scene's `advance`; the scene's
-    /// `CameraView::frame_state` resolves the selection later the same frame).
-    /// At most one key can be pressed per frame from a mouse; the branch
-    /// order only breaks an impossible tie. The indices match
-    /// [`SELECTABLE_BODIES`].
-    pub fn apply_requests(&mut self) {
-        if self.request_mercury {
-            self.selected = 0;
-        } else if self.request_venus {
-            self.selected = 1;
-        } else if self.request_terra {
-            self.selected = 2;
-        } else if self.request_luna {
-            self.selected = 3;
-        } else if self.request_mars {
-            self.selected = 4;
-        } else if self.request_jupiter {
-            self.selected = 5;
-        } else if self.request_saturn {
-            self.selected = 6;
-        } else if self.request_uranus {
-            self.selected = 7;
-        } else if self.request_neptune {
-            self.selected = 8;
-        }
-        self.request_mercury = false;
-        self.request_venus = false;
-        self.request_terra = false;
-        self.request_luna = false;
-        self.request_mars = false;
-        self.request_jupiter = false;
-        self.request_saturn = false;
-        self.request_uranus = false;
-        self.request_neptune = false;
-    }
-
     /// Resolves the current choice into a [`CameraTarget`] identity (the
     /// center is looked up from the ephemeris where it is needed).
     pub fn resolve(&self) -> CameraTarget {
@@ -535,58 +441,29 @@ impl BodySelector {
 
     /// The top-right selector panel: a header row plus one latching key per
     /// row, a single column ordered by distance from Sol (the chosen body
-    /// lit; each lone key fills its row). `selected` is snapshotted up front
-    /// so no shared borrow outlives into the per-key callbacks, which each set
-    /// a disjoint `request_*` flag.
-    pub fn panel(&mut self) -> UIDrawablePanel<'_> {
-        let selected = self.selected;
+    /// lit; each lone key fills its row). `access` re-finds this selector
+    /// inside the scene when a key fires (the panel is owned/`'static`, so
+    /// the callbacks cannot borrow `self`); each key writes its own fixed
+    /// index into `selected`, which is what lets one loop mint all nine keys.
+    pub fn panel<S: 'static>(
+        &self,
+        access: impl Fn(&mut S) -> &mut BodySelector + Clone + 'static,
+    ) -> UIDrawablePanel<S> {
+        let mut rows: Vec<Vec<Box<dyn Instrument<S>>>> = vec![vec![Box::new(Header {
+            title: "Camera Target".to_string(),
+        })]];
         // One key per body, in its own row; index i lines up with
         // SELECTABLE_BODIES so the label + `active` reflect the live selection.
-        let key = |i: usize| Toggle {
-            label: SELECTABLE_BODIES[i].name().to_string(),
-            active: selected == i,
-        };
-        let rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
-            vec![Box::new(Header {
-                title: "Camera Target".to_string(),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(0),
-                on_toggle: Box::new(|| self.request_mercury = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(1),
-                on_toggle: Box::new(|| self.request_venus = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(2),
-                on_toggle: Box::new(|| self.request_terra = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(3),
-                on_toggle: Box::new(|| self.request_luna = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(4),
-                on_toggle: Box::new(|| self.request_mars = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(5),
-                on_toggle: Box::new(|| self.request_jupiter = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(6),
-                on_toggle: Box::new(|| self.request_saturn = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(7),
-                on_toggle: Box::new(|| self.request_uranus = true),
-            })],
-            vec![Box::new(InteractiveToggle {
-                toggle: key(8),
-                on_toggle: Box::new(|| self.request_neptune = true),
-            })],
-        ];
+        for (i, body) in SELECTABLE_BODIES.iter().enumerate() {
+            let access = access.clone();
+            rows.push(vec![Box::new(InteractiveToggle {
+                toggle: Toggle {
+                    label: body.name().to_string(),
+                    active: self.selected == i,
+                },
+                on_toggle: Box::new(move |scene| access(scene).selected = i),
+            })]);
+        }
 
         UIDrawablePanel {
             anchor: PanelAnchor::TopRight,

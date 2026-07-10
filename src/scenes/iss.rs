@@ -41,13 +41,10 @@ const ISS_TLE: &str = concat!(
 /// frame's clock instant (the same pattern as the renderer).
 pub struct IssScene {
     /// Simulation clock (datetime + play/paused + speed), reached only via
-    /// the `SceneClock` API.
+    /// the `SceneClock` API - the Time panel's Run-toggle/speed-slider
+    /// callbacks included, which receive the scene at fire time and call the
+    /// setters directly.
     clock: Clock,
-    /// Time-panel clock requests (the selector-key request-flag idiom): the
-    /// Run-toggle/speed-slider callbacks set these two disjoint fields, and
-    /// `advance()` folds them into the clock through the `SceneClock` API.
-    request_toggle_run: bool,
-    request_multiplier: Option<f32>,
     satellites: Vec<Satellite>,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
@@ -64,8 +61,6 @@ impl IssScene {
         let epoch = satellites.first().expect("TLE present").epoch();
         Self {
             clock: Clock::new(epoch),
-            request_toggle_run: false,
-            request_multiplier: None,
             satellites,
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
@@ -81,15 +76,12 @@ impl SceneClock for IssScene {
 
 impl Scene for IssScene {
     fn advance(&mut self) -> bool {
-        // Fold the Time panel's requests into the clock first (the callbacks
-        // fired during the previous egui pass), then advance it. Returns
+        // Advance the clock (any Time-panel pause/speed edit already landed
+        // via the SceneClock setters during the previous egui pass). Returns
         // whether it is running - an "animating" source that keeps frames
         // coming; when paused nothing advances and the app can go idle.
         // Nothing else to update: `frame_state` re-derives the celestial
         // sphere at the frame's clock instant.
-        let toggle_run = std::mem::take(&mut self.request_toggle_run);
-        let multiplier = self.request_multiplier.take();
-        self.apply_clock_requests(toggle_run, multiplier);
         self.tick_clock()
     }
 }
@@ -166,18 +158,19 @@ impl CameraView for IssScene {
 }
 
 impl UIDrawable for IssScene {
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // The Time panel first, then this scene's own telemetry panel. Both
         // the panel builder and the readout loop are deliberately kept
         // per-scene (like the propagation loop) - scenes may diverge in what
         // they expose and how.
         //
-        // Snapshot the displayed values up front (owned values only), so no
-        // borrow of the clock or the satellites outlives into the mutable
-        // callback captures below. The two control callbacks set the disjoint
-        // `request_*` fields by direct assignment (a `SceneClock` method call
-        // would borrow the whole scene and collide); `advance()` folds them
-        // into the clock next frame.
+        // Snapshot the displayed values up front (owned values only) - the
+        // panels are owned and never borrow the scene. The two control
+        // callbacks receive the scene as `&mut Self` at fire time and call
+        // the SceneClock setters directly; each stays idempotent under
+        // egui's discard-pass double fire by writing snapshot-derived values
+        // (the Run toggle sets the pre-click `running`, never a re-read
+        // flip).
         //
         // The readout re-propagates each satellite at the same instant
         // `frame_state` used (`Clock::now()` is pure and nothing ticks the
@@ -214,7 +207,7 @@ impl UIDrawable for IssScene {
         // The producer groups instruments into rows + picks content only; all
         // styling and every metric live in the instrument modules / theme
         // (taffy bottom-aligns the Run key with the speed window beside it).
-        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Time".to_string(),
             })],
@@ -234,7 +227,8 @@ impl UIDrawable for IssScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.request_toggle_run = true),
+                    // Pausing = setting the snapshotted pre-click `running`.
+                    on_toggle: Box::new(move |scene: &mut Self| scene.set_clock_paused(running)),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -242,14 +236,14 @@ impl UIDrawable for IssScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
+                on_change: Box::new(|scene: &mut Self, exp| scene.set_clock_multiplier(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {
             anchor: PanelAnchor::TopLeft,
             rows: time_rows,
         }];
-        let mut rows: Vec<Vec<Box<dyn Instrument>>> = Vec::with_capacity(telemetry.len() * 3);
+        let mut rows: Vec<Vec<Box<dyn Instrument<Self>>>> = Vec::with_capacity(telemetry.len() * 3);
         for sat in &telemetry {
             // One header + two readout rows per satellite; taffy stacks the
             // groups (the repeated header rules the panel into sections).

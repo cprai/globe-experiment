@@ -73,12 +73,14 @@ impl Clock {
 /// its logic live in one place). The `*_py` scenes re-expose these to their
 /// scripts as scene-pyclass properties.
 ///
-/// The Time panel's Run-toggle/speed-slider callbacks cannot call the
-/// `&mut self` API themselves - a method call would borrow the whole scene
-/// and collide with the other panel closures' disjoint field captures - so
-/// they set the scene's `request_toggle_run`/`request_multiplier` fields
-/// (the selector/burn request-flag idiom) and `advance()` folds them into
-/// the clock via [`SceneClock::apply_clock_requests`].
+/// The Time panel's Run-toggle/speed-slider callbacks call the setters
+/// directly: a panel callback receives the live scene as its `&mut S`
+/// argument at fire time (see `ui::UIDrawablePanel` - it captures nothing,
+/// so every panel callback coexists). The one rule: a callback must stay
+/// idempotent under egui's discard-pass double fire, so the Run toggle
+/// writes a paused value snapshotted at panel-build time
+/// (`move |scene| scene.set_clock_paused(running)`) rather than flipping
+/// live state it re-reads.
 pub trait SceneClock {
     /// The one per-scene hook: where the clock lives in the struct.
     fn clock_mut(&mut self) -> &mut Clock;
@@ -132,18 +134,5 @@ pub trait SceneClock {
 
     fn set_clock_multiplier(&mut self, multiplier: f32) {
         self.clock_mut().multiplier = multiplier;
-    }
-
-    /// Fold the Time panel's clock requests (the request-flag pattern; see
-    /// the trait doc): toggle Run, then apply a requested speed. Called at
-    /// the top of each scene's `advance()`, before the tick.
-    fn apply_clock_requests(&mut self, toggle_run: bool, multiplier: Option<f32>) {
-        let clock = self.clock_mut();
-        if toggle_run {
-            clock.paused = !clock.paused;
-        }
-        if let Some(multiplier) = multiplier {
-            clock.multiplier = multiplier;
-        }
     }
 }

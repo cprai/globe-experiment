@@ -223,19 +223,25 @@ impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
         // projection from the rig in the returned state.
         let render_state = self.simulation.frame_state();
 
-        // Run the egui UI: the panel pulls the scene's drawable elements
+        // Run the egui UI: pull the scene's drawable panels ONCE per frame
         // (readouts re-derived at the same clock instant as the frame_state
-        // above, so they match the rendered markers) and renders them, firing
-        // the elements' callbacks for any interaction. The logic and
-        // tessellation live here (the renderer
-        // only draws the primitives). `self.simulation` and `self.egui_ctx` are
-        // disjoint fields, so the panel's `&mut self.simulation` borrow coexists
-        // with the `run_ui` receiver borrow.
+        // above, so they match the rendered markers), then render them inside
+        // run_ui, firing the elements' callbacks - each receives
+        // `&mut simulation` at fire time - for any interaction. Building the
+        // panels outside run_ui is load-bearing: egui's discard pass
+        // (max_passes = 2) re-runs the closure, and only fixed build-time
+        // callback snapshots keep a twice-fired callback idempotent (see
+        // ui::control_panel). The logic and tessellation live here (the
+        // renderer only draws the primitives). The panels are owned (they
+        // never borrow the scene), so `&mut panels` and `&mut simulation`
+        // coexist in the closure, and both are disjoint from the `run_ui`
+        // receiver borrow of `self.egui_ctx`.
         let raw_input = egui_state.take_egui_input(&window);
+        let mut panels = self.simulation.get_drawables();
         let simulation = &mut self.simulation;
-        let full_output = self
-            .egui_ctx
-            .run_ui(raw_input, |ui| ui::control_panel(ui.ctx(), simulation));
+        let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+            ui::control_panel(ui.ctx(), &mut panels, simulation)
+        });
         egui_state.handle_platform_output(&window, full_output.platform_output);
 
         // egui resets the cursor icon every frame; restore the scene's

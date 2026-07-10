@@ -33,13 +33,10 @@ const VIEW_DISTANCE_KM: f64 = 3500.0;
 /// builds a throwaway one for the initial framing).
 pub struct LunarEclipseScene {
     /// Simulation clock (datetime + play/paused + speed), reached only via
-    /// the `SceneClock` API.
+    /// the `SceneClock` API - the Time panel's Run-toggle/speed-slider
+    /// callbacks included, which receive the scene at fire time and call the
+    /// setters directly.
     clock: Clock,
-    /// Time-panel clock requests (the selector-key request-flag idiom): the
-    /// Run-toggle/speed-slider callbacks set these two disjoint fields, and
-    /// `advance()` folds them into the clock through the `SceneClock` API.
-    request_toggle_run: bool,
-    request_multiplier: Option<f32>,
     selector: TargetSelector,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations), seeded orbiting Luna with the eclipsed near side framed.
@@ -82,8 +79,6 @@ impl LunarEclipseScene {
 
         Self {
             clock: Clock::new(epoch),
-            request_toggle_run: false,
-            request_multiplier: None,
             // Default to orbiting Luna - the whole point is the blood-red Luna.
             selector: TargetSelector::new(true),
             camera,
@@ -100,17 +95,13 @@ impl SceneClock for LunarEclipseScene {
 
 impl Scene for LunarEclipseScene {
     fn advance(&mut self) -> bool {
-        // Fold in any pending target-selector key press before the camera target
-        // is read this frame, and the Time panel's clock requests before the
-        // tick (both fired during the previous egui pass).
-        self.selector.apply_requests();
-        let toggle_run = std::mem::take(&mut self.request_toggle_run);
-        let multiplier = self.request_multiplier.take();
-        self.apply_clock_requests(toggle_run, multiplier);
-        // Advance the clock. Returns whether it is running - an "animating"
-        // source that keeps frames coming; when paused nothing advances and
-        // the app can go idle. Nothing else to update: `frame_state`
-        // re-derives the celestial sphere at the frame's clock instant.
+        // Advance the clock (any selector key press or Time-panel edit
+        // already landed directly during the previous egui pass; this
+        // frame's `frame_state` resolves the selection). Returns whether it
+        // is running - an "animating" source that keeps frames coming; when
+        // paused nothing advances and the app can go idle. Nothing else to
+        // update: `frame_state` re-derives the celestial sphere at the
+        // frame's clock instant.
         self.tick_clock()
     }
 }
@@ -182,19 +173,18 @@ impl CameraView for LunarEclipseScene {
 }
 
 impl UIDrawable for LunarEclipseScene {
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // The Time panel (datetime + run/speed) plus the Terra / Luna
-        // camera-target selector. The panels borrow disjoint fields (the
-        // clock request flags vs `selector`). The panel builder is
-        // deliberately kept per-scene - scenes may diverge in what they
-        // expose.
+        // camera-target selector. The panel builder is deliberately kept
+        // per-scene - scenes may diverge in what they expose.
         //
-        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
-        // so no shared borrow of the clock outlives into the mutable callback
-        // captures below. The two control callbacks set the disjoint
-        // `request_*` fields by direct assignment (a `SceneClock` method call
-        // would borrow the whole scene and collide); `advance()` folds them
-        // into the clock next frame.
+        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`)
+        // - the panels are owned and never borrow the scene. The control
+        // callbacks receive the scene as `&mut Self` at fire time and call
+        // the SceneClock setters directly; each stays idempotent under
+        // egui's discard-pass double fire by writing snapshot-derived values
+        // (the Run toggle sets the pre-click `running`, never a re-read
+        // flip).
         let datetime = self.clock_datetime_label();
         // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
         // font is monospace, so a fixed-width value keeps the digit window
@@ -211,7 +201,7 @@ impl UIDrawable for LunarEclipseScene {
         // The producer groups instruments into rows + picks content only; all
         // styling and every metric live in the instrument modules / theme
         // (taffy bottom-aligns the Run key with the speed window beside it).
-        let time_rows: Vec<Vec<Box<dyn Instrument + '_>>> = vec![
+        let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Time".to_string(),
             })],
@@ -231,7 +221,8 @@ impl UIDrawable for LunarEclipseScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.request_toggle_run = true),
+                    // Pausing = setting the snapshotted pre-click `running`.
+                    on_toggle: Box::new(move |scene: &mut Self| scene.set_clock_paused(running)),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -239,14 +230,16 @@ impl UIDrawable for LunarEclipseScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
+                on_change: Box::new(|scene: &mut Self, exp| scene.set_clock_multiplier(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {
             anchor: PanelAnchor::TopLeft,
             rows: time_rows,
         }];
-        panels.push(self.selector.panel());
+        // The accessor re-finds the selector inside the scene when a key
+        // fires (the owned panel cannot borrow it).
+        panels.push(self.selector.panel(|scene: &mut Self| &mut scene.selector));
         panels
     }
 }

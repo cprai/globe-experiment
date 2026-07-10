@@ -2,7 +2,7 @@ use egui::Stroke;
 use egui_taffy::{Tui, TuiBuilderLogic, taffy};
 use pyo3::prelude::*;
 
-use super::Instrument;
+use super::{Callback, Instrument};
 use crate::engine::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 
 /// A latching key that lights green while `active` - the inert render data
@@ -75,27 +75,29 @@ pub(super) fn key_style() -> taffy::Style {
     }
 }
 
-impl Instrument for Toggle {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Toggle {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // Inert: still clickable, but the click does nothing (e.g. a mock panel).
         let _ = self.draw(tui);
     }
 }
 
-/// A [`Toggle`] wired to a toggle callback. `on_toggle` fires on click; the
-/// producer owns flipping the `active` state it reflects. The borrow `'a` is
-/// the `&mut self` of the producing
-/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
-/// a disjoint mutable field of live state.
-pub struct InteractiveToggle<'a> {
+/// A [`Toggle`] wired to a toggle callback. `on_toggle` fires on click,
+/// receiving the live scene (the producer's `&mut self`, threaded in by
+/// `control_panel` at fire time - no capture, so every panel callback
+/// coexists); the producer owns flipping the `active` state it reflects.
+/// The callback must be idempotent (set a value snapshotted at panel-build
+/// time, e.g. `move |scene| scene.set_clock_paused(running)` - never flip
+/// live state it re-reads): egui's discard pass can fire it twice per frame.
+pub struct InteractiveToggle<S> {
     pub toggle: Toggle,
-    pub on_toggle: Box<dyn FnMut() + 'a>,
+    pub on_toggle: Callback<S>,
 }
 
-impl Instrument for InteractiveToggle<'_> {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for InteractiveToggle<S> {
+    fn render(&mut self, tui: &mut Tui, scene: &mut S) {
         if self.toggle.draw(tui) {
-            (self.on_toggle)();
+            (self.on_toggle)(scene);
         }
     }
 }

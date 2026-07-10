@@ -59,8 +59,8 @@ impl DualReadout {
     }
 }
 
-impl Instrument for DualReadout {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for DualReadout {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         leaf(tui, taffy::Style::default(), |ui| {
             ui.horizontal_top(|ui| {
                 readout_block(ui, &self.left_label, &self.left_value, &self.left_unit);

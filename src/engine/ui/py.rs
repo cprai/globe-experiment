@@ -127,14 +127,16 @@ fn call1_print_err(callback: &Py<PyAny>, value: f32) {
 }
 
 /// Converts a script's `get_drawables` return - any iterable of [`Panel`]s -
-/// into the owned panels `control_panel` renders. `'static`: nothing borrows
-/// the scene; interactive callbacks own `Py` handles into the interpreter
-/// (dropping them without the GIL is safe - pyo3 defers the refcount
-/// decrement to the next attach).
-pub fn panels_from_python(
+/// into the owned panels `control_panel` renders. Generic over the scene
+/// type `S` only to satisfy the panel type: the converted callbacks ignore
+/// the `&mut S` argument (the script drives the scene through its own bound
+/// pymethods instead) and own `Py` handles into the interpreter (dropping
+/// them without the GIL is safe - pyo3 defers the refcount decrement to the
+/// next attach).
+pub fn panels_from_python<S: 'static>(
     py: Python<'_>,
     panels: &Bound<'_, PyAny>,
-) -> PyResult<Vec<UIDrawablePanel<'static>>> {
+) -> PyResult<Vec<UIDrawablePanel<S>>> {
     let mut out = Vec::new();
     for panel in panels.try_iter()? {
         let panel = panel?;
@@ -147,7 +149,7 @@ pub fn panels_from_python(
         let panel = panel.borrow();
         let mut rows = Vec::with_capacity(panel.rows.len());
         for row in &panel.rows {
-            let mut instruments: Vec<Box<dyn Instrument + 'static>> = Vec::with_capacity(row.len());
+            let mut instruments: Vec<Box<dyn Instrument<S>>> = Vec::with_capacity(row.len());
             for element in row {
                 instruments.push(instrument_from_python(element.bind(py))?);
             }
@@ -163,11 +165,13 @@ pub fn panels_from_python(
 
 /// One panel element: a cast chain over every concrete instrument
 /// pyclass. A bare instrument clones out as its inert self (it impls
-/// [`Instrument`] directly); an `Interactive*` twin becomes the Rust wrapper
-/// with a GIL-acquiring closure around its Python callable. Anything else is
+/// [`Instrument`] for every `S`); an `Interactive*` twin becomes the Rust
+/// wrapper with a GIL-acquiring closure around its Python callable (the
+/// closure ignores the `&mut S` fire-time argument - the script's callback
+/// reaches the scene through its own bound pymethods). Anything else is
 /// a `TypeError` (propagated - a wrong element type is a script bug, handled
 /// by the scene's fail-fast).
-fn instrument_from_python(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument + 'static>> {
+fn instrument_from_python<S: 'static>(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument<S>>> {
     let py = obj.py();
     if let Ok(cell) = obj.cast::<Header>() {
         return Ok(Box::new(cell.borrow().clone()));
@@ -195,7 +199,7 @@ fn instrument_from_python(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument
         let callback = twin.on_press.clone_ref(py);
         return Ok(Box::new(super::InteractiveButton {
             button: twin.button.clone(),
-            on_press: Box::new(move || call0_print_err(&callback)),
+            on_press: Box::new(move |_scene: &mut S| call0_print_err(&callback)),
         }));
     }
     if let Ok(cell) = obj.cast::<InteractiveHoldButton>() {
@@ -203,7 +207,7 @@ fn instrument_from_python(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument
         let callback = twin.on_hold.clone_ref(py);
         return Ok(Box::new(super::InteractiveHoldButton {
             button: twin.button.clone(),
-            on_hold: Box::new(move || call0_print_err(&callback)),
+            on_hold: Box::new(move |_scene: &mut S| call0_print_err(&callback)),
         }));
     }
     if let Ok(cell) = obj.cast::<InteractiveToggle>() {
@@ -211,7 +215,7 @@ fn instrument_from_python(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument
         let callback = twin.on_toggle.clone_ref(py);
         return Ok(Box::new(super::InteractiveToggle {
             toggle: twin.toggle.clone(),
-            on_toggle: Box::new(move || call0_print_err(&callback)),
+            on_toggle: Box::new(move |_scene: &mut S| call0_print_err(&callback)),
         }));
     }
     if let Ok(cell) = obj.cast::<InteractiveSlider>() {
@@ -219,7 +223,7 @@ fn instrument_from_python(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument
         let callback = twin.on_change.clone_ref(py);
         return Ok(Box::new(super::InteractiveSlider {
             slider: twin.slider.clone(),
-            on_change: Box::new(move |value| call1_print_err(&callback, value)),
+            on_change: Box::new(move |_scene: &mut S, value| call1_print_err(&callback, value)),
         }));
     }
     Err(PyTypeError::new_err(format!(
@@ -284,7 +288,9 @@ def bad():
         Python::attach(|py| {
             let module = load_script(py);
             let panels = module.getattr("build").unwrap().call0().unwrap();
-            let panels = panels_from_python(py, &panels).expect("conversion succeeds");
+            // Any scene type satisfies the conversion (the callbacks ignore
+            // it); unit keeps the test scene-free.
+            let panels = panels_from_python::<()>(py, &panels).expect("conversion succeeds");
 
             assert_eq!(panels.len(), 2);
             assert!(matches!(panels[0].anchor, PanelAnchor::TopLeft));
@@ -304,7 +310,7 @@ def bad():
         Python::attach(|py| {
             let module = load_script(py);
             let panels = module.getattr("bad").unwrap().call0().unwrap();
-            let Err(err) = panels_from_python(py, &panels) else {
+            let Err(err) = panels_from_python::<()>(py, &panels) else {
                 panic!("conversion of a non-instrument element must fail");
             };
             assert!(err.is_instance_of::<PyTypeError>(py));

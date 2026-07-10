@@ -27,10 +27,9 @@ paths:
   case where `new()` evaluates a throwaway local sphere) +
   `CameraTarget::terra()` (or the body matching the seeded framing/selector
   default, so the first frame does not reframe); `advance()`
-  folds the Time panel's clock requests (`std::mem::take` the
-  `request_toggle_run` / `request_multiplier` fields into
-  `apply_clock_requests`) then ticks the clock (and nothing else, unless the
-  scene has extra per-frame state like `manual_control`'s orbit re-anchor).
+  just ticks the clock (and nothing else, unless the scene has extra
+  per-frame state like `manual_control`'s orbit re-anchor) - any Time-panel
+  pause/speed edit already landed directly during the previous egui pass.
   **All clock access goes through the `SceneClock` trait** in
   `src/engine/scene/clock.rs` (beside `Clock` itself): the scene implements
   only `clock_mut()` and calls the trait's default API (`tick_clock`/
@@ -41,10 +40,14 @@ paths:
   `Clock::new`; a framing sphere in `new()` evaluates at the epoch
   `Instant` directly, before `self` exists).
   `get_drawables` builds the top-left Time panel itself (UTC readout, speed
-  readout, Run toggle, speed slider - the toggle/slider callbacks set the
-  scene's disjoint `request_toggle_run` / `request_multiplier` fields by
-  direct assignment, the selector request-flag idiom; a `SceneClock` call in
-  a closure would borrow the whole scene and collide).
+  readout, Run toggle, speed slider - the toggle/slider callbacks receive
+  the scene as `&mut Self` at fire time and call the `SceneClock` setters
+  directly: `move |scene| scene.set_clock_paused(running)` /
+  `|scene, exp| scene.set_clock_multiplier(exp.exp())`. Keep callbacks
+  idempotent - write build-time snapshots like the pre-click `running`,
+  never flip live state they re-read - because egui's discard pass can fire
+  one twice per frame; the panels are owned/`'static` and built once per
+  frame, before `run_ui`).
   The Time-panel code is **deliberately duplicated across scenes** (like
   the propagation loop) so each can diverge in what it exposes. Name the
   struct `<Name>Scene` (e.g. `IssScene`, `IssAndHubbleScene`).
@@ -101,13 +104,13 @@ its `CameraView::frame_state` resolves it (`self.selector.resolve()`, a
 `CameraTarget` identity - the center is resolved from the sphere downstream)
 into `self.camera_target` each frame, calling `self.camera.reframe(..)`
 first when the resolved target is a genuine switch (`same_kind`).
-The selector's Terra / Luna radio panel is appended in `get_drawables` (after the
-shared-core panel; the two panels borrow disjoint fields). A key press only sets
-a disjoint `request_*` flag; the scene's `advance()` calls
-`self.selector.apply_requests()` *before* the frame's target is resolved
-(`frame_state` runs after `advance`), so
-the two radio callbacks never need a shared `&mut` (same disjoint-field rule as
-the clock's Run toggle vs speed slider). Satellite scenes skip all this and
+The selector's Terra / Luna radio panel is appended in `get_drawables` via
+`self.selector.panel(|scene: &mut Self| &mut scene.selector)` - the accessor
+re-finds the selector in the scene when a key fires, since the owned panel
+cannot borrow it. A key callback writes `luna_selected` directly (a fixed
+value per key, idempotent); the press lands during the egui pass and the
+*next* frame's `frame_state` resolves it - the same one-frame latency the old
+request-flag fold had. Satellite scenes skip all this and
 keep their `camera_target` fixed at `CameraTarget::terra()` (never reframed).
 
 ### Multi-body selection (solar_system)
@@ -119,10 +122,10 @@ Sol with Luna right after Terra (Mercury, Venus, Terra, Luna, Mars, Jupiter,
 Saturn, Uranus, Neptune); `selected` defaults to `TERRA_INDEX` so the scene
 starts on Terra (matching the default whole-Terra camera). The panel shows
 **one always-visible latching key per body** (a single column, the chosen one
-lit), so each key callback needs a **disjoint** `request_*` field — hence nine
-named flags (not an array, whose elements can't be captured disjointly), in
-`SELECTABLE_BODIES` order (now a `[CelestialBody; 9]`), that `apply_requests`
-folds into `selected`. Its `resolve()` returns the chosen body's `CameraTarget`
+lit), built by one loop over `SELECTABLE_BODIES` in `panel<S>(access)`: each
+key's callback writes its own fixed index into `selected` through the
+accessor (idempotent; resolved by the next frame's `frame_state`, like the
+eclipse selector). Its `resolve()` returns the chosen body's `CameraTarget`
 identity (the center is resolved from the sphere downstream).
 `CameraView::frame_state` refreshes `self.camera_target` from it (reframing
 the camera on a genuine switch), rigs on it, and fills the reduced
@@ -143,8 +146,10 @@ the frame's simulation dt), so a burn's velocity change compounds forward.
 Burns: six **hold-to-fire** keys in a **bottom-center** "Burns" panel
 (`PanelAnchor::BottomCenter`), one `ui::InteractiveHoldButton` per orbital-
 frame direction (prograde/retrograde, normal/anti-normal, radial out/in).
-A held key sets a disjoint `burn_*` request flag every egui pass (the selector
-request-flag pattern, six named bools); `advance()` folds the flags into a
+A held key's callback (`|scene: &mut Self| scene.burn_* = true`) sets its
+`burn_*` request flag every egui pass - the flags stay (unlike the removed
+clock/selector request flags) because the burn is dt-scaled and only
+`advance()` knows the frame's simulation dt; `advance()` folds the flags into a
 unit GCRF direction (prograde = v-hat, radial = r-hat, normal = (r x v)-hat,
 opposing keys cancel) and applies `dv = BURN_ACCEL_M_S2 * dt * dir`
 (10 m/s^2, deliberately game-like ~1 g; dt-scaled so a paused clock burns
@@ -175,9 +180,10 @@ The pattern:
   (solar_system_py's `selector: Py<BodySelector>`). Rust-private state
   (orbit, camera, camera_target) stays in plain fields. The Rust side of the
   Inner mirrors the sibling's `new`/`advance`/`frame_state` body for body
-  (`py: Python` only where a shared cell is borrowed, e.g.
-  `self.selector.borrow_mut(py)`; the clock ticks via `self.tick_clock()` —
-  no `request_*` clock fields here, the script's setters apply directly).
+  (`py: Python` only where a shared cell is borrowed, e.g. solar_system_py's
+  `self.selector.borrow(py)` in `frame_state`; the clock ticks via
+  `self.tick_clock()` — the script's setters apply directly, exactly like
+  the Rust siblings' scene-receiving callbacks).
 - **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
   Py<PyAny> }` implements the four engine traits; every method is
   `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
@@ -188,9 +194,11 @@ The pattern:
   during `control_panel`'s render, when no borrow is live.
 - **Burn keys / selector keys**: the script passes the Inner's bound `&mut
   self` methods (`scene.request_prograde`, `selector.request(i)`) as
-  callbacks; pyclass method calls can't overlap by construction, so the
-  disjoint-field capture gymnastics of the Rust panels aren't needed on the
-  Python side (the per-key flags are kept anyway for identical semantics).
+  callbacks - the converted `Interactive*<S>` twins ignore their `&mut S`
+  fire-time argument and call the Python callable, which reaches the scene
+  through its own transient pyclass borrow. `request(i)` writes `selected`
+  directly (the pymethod twin of a Rust key's write); the burn `request_*`
+  methods set the per-key flags both siblings keep (dt-scaled in `advance`).
 - **run() order**: `run(args: Args)` carries the script path (the `*_py`
   scenes' required `--script` flag, declared on their own `Args` struct so
   clap rejects it on every other scene; the repo ships the reference

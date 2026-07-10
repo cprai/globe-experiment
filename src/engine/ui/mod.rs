@@ -70,27 +70,36 @@ pub enum PanelAnchor {
     BottomCenter,
 }
 
-/// One anchored group of UI instruments for a frame. The panel owns only its
-/// corner `anchor` (inset by the shared `theme::PANEL_INSET`); everything else
+/// One anchored group of UI instruments for a frame, generic over the scene
+/// type `S` its interactive callbacks drive. The panel owns only its corner
+/// `anchor` (inset by the shared `theme::PANEL_INSET`); everything else
 /// (its size and every instrument's place) is computed by taffy from `rows`:
 /// a flex column of flex rows, sized to content with the shared minimum width.
 ///
-/// The boxed [`Instrument`] trait objects' borrow `'a` is the `&mut self` of
-/// the producing [`UIDrawable::get_drawables`], so a control's callback can
-/// capture a disjoint mutable field of live state.
-pub struct UIDrawablePanel<'a> {
+/// The panel is fully owned (`'static` - it never borrows the scene): a
+/// control's callback receives the scene as its `&mut S` argument when it
+/// fires (threaded in by [`control_panel`]) instead of capturing it, which is
+/// what lets every callback coexist AND call `&mut self` scene APIs (e.g.
+/// the `SceneClock` setters) directly. Captured state is limited to owned
+/// build-time snapshots.
+pub struct UIDrawablePanel<S> {
     pub anchor: PanelAnchor,
     /// Top-to-bottom rows, each left-to-right instruments.
-    pub rows: Vec<Vec<Box<dyn Instrument + 'a>>>,
+    pub rows: Vec<Vec<Box<dyn Instrument<S>>>>,
 }
 
 /// Anything the control panel can render: it yields a list of anchored
 /// [`UIDrawablePanel`]s, each owning rows of [`Instrument`]s. Implemented by
 /// each scene (which returns its Time panel plus its own scene panels).
-/// `&mut self` so a control's callback can capture a disjoint mutable field
-/// of live state.
-pub trait UIDrawable {
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>;
+/// `&mut self` so readout snapshots can re-propagate scene state on the spot.
+///
+/// **Call once per frame, before the egui `run_ui`** (then render the result
+/// with [`control_panel`] inside it). egui's discard pass re-runs the
+/// `run_ui` closure; rebuilding the panels there would refresh the callback
+/// snapshots mid-frame and break their idempotency (a re-fired Run toggle
+/// would flip the clock twice, losing the click).
+pub trait UIDrawable: Sized {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>>;
 }
 
 /// Maps a [`PanelAnchor`] to egui's `Area::anchor` arguments, inset by the
@@ -111,17 +120,26 @@ fn anchor_to_egui(anchor: &PanelAnchor) -> (egui::Align2, egui::Vec2) {
 /// per-satellite position readouts, or a camera-target selector).
 ///
 /// This function is deliberately *decoupled from interactivity*: it knows
-/// nothing about the `Clock` or any scene. It asks the `drawable` for a list
-/// of [`UIDrawablePanel`]s, frames each at its anchored corner, and lays out
-/// each panel's rows with taffy (`theme::panel_layout` / `theme::row_layout`);
-/// each instrument adds its own flex node. Interactivity rides along inside
-/// each instrument: an interactive control wraps its bare struct with a
-/// callback, while a bare (e.g. deserialized) control renders but does nothing
-/// - which is what lets the same code render a mock panel.
-pub fn control_panel(ctx: &egui::Context, drawable: &mut impl UIDrawable) {
+/// nothing about the `Clock` or any scene type. It frames each pre-built
+/// panel at its anchored corner and lays out its rows with taffy
+/// (`theme::panel_layout` / `theme::row_layout`); each instrument adds its
+/// own flex node. Interactivity rides along inside each instrument: an
+/// interactive control wraps its bare struct with a callback that receives
+/// `scene` when it fires, while a bare (e.g. deserialized) control renders
+/// but does nothing - which is what lets the same code render a mock panel.
+///
+/// `panels` must be built by [`UIDrawable::get_drawables`] ONCE per frame,
+/// *outside* the egui `run_ui` closure this runs in: egui's discard pass
+/// (`install_theme` sets `max_passes = 2`, which egui_taffy needs to settle
+/// its layout same-frame) re-runs the closure with the same input, so a
+/// click can fire its callback twice in one frame. Rendering the same panel
+/// objects both passes keeps the callbacks' build-time snapshots fixed, so
+/// the double fire is idempotent; panels are therefore iterated by `&mut`,
+/// not consumed.
+pub fn control_panel<S>(ctx: &egui::Context, panels: &mut [UIDrawablePanel<S>], scene: &mut S) {
     use egui_taffy::TuiBuilderLogic;
 
-    for (panel_index, panel) in drawable.get_drawables().into_iter().enumerate() {
+    for (panel_index, panel) in panels.iter_mut().enumerate() {
         let (align, offset) = anchor_to_egui(&panel.anchor);
         egui::Area::new(egui::Id::new(("ui_panel", panel_index)))
             .anchor(align, offset)
@@ -130,10 +148,10 @@ pub fn control_panel(ctx: &egui::Context, drawable: &mut impl UIDrawable) {
                     egui_taffy::tui(ui, ui.id().with("layout"))
                         .style(theme::panel_layout())
                         .show(|tui| {
-                            for row in panel.rows {
+                            for row in &mut panel.rows {
                                 tui.style(theme::row_layout()).add(|tui| {
-                                    for mut element in row {
-                                        element.render(tui);
+                                    for element in row.iter_mut() {
+                                        element.render(tui, &mut *scene);
                                     }
                                 });
                             }

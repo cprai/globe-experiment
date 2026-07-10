@@ -32,10 +32,11 @@ pub enum UiElement {
 }
 
 impl UiElement {
-    /// Boxes a clone of the wrapped instrument as a trait object. Cloned (not
-    /// moved) because [`PanelSet::get_drawables`] runs every frame off a shared
-    /// borrow of the owned spec.
-    fn to_instrument(&self) -> Box<dyn Instrument> {
+    /// Boxes a clone of the wrapped instrument as a trait object (bare
+    /// instruments impl `Instrument<S>` for every scene type, so any `S`
+    /// works). Cloned (not moved) because [`PanelSet::get_drawables`] runs
+    /// every frame off a shared borrow of the owned spec.
+    fn to_instrument<S>(&self) -> Box<dyn Instrument<S>> {
         match self {
             UiElement::Header(header) => Box::new(header.clone()),
             UiElement::Readout(readout) => Box::new(readout.clone()),
@@ -68,10 +69,10 @@ pub struct PanelSet {
 }
 
 impl UIDrawable for PanelSet {
-    /// Maps each owned [`UiPanel`] to a borrowed [`UIDrawablePanel`] of inert
+    /// Maps each owned [`UiPanel`] to an owned [`UIDrawablePanel`] of inert
     /// instruments - the same shape a live `get_drawables` returns, minus
     /// interactivity.
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         self.panels
             .iter()
             .map(|panel| UIDrawablePanel {

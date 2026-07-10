@@ -89,10 +89,12 @@ src/scenes/manual_control.rs  ManualControlScene: ONE user-thrustable
                          satellite; own ISS_TLE const (duplicated on purpose),
                          used once to seed a GCRF OrbitState (no TLE after) that
                          advance() re-anchors to the clock each frame via
-                         satellite::propagate_numerical; six disjoint burn_*
-                         request flags fed by the bottom-center Burns panel's
+                         satellite::propagate_numerical; six burn_* request
+                         flags (kept - the burn is dt-scaled, only advance()
+                         knows dt) set by the bottom-center Burns panel's
                          hold-to-fire keys (prograde/retrograde, normal/
-                         anti-normal, radial out/in), folded into dv = 10 m/s^2
+                         anti-normal, radial out/in) via their `&mut Self`
+                         callbacks, folded into dv = 10 m/s^2
                          * dt; marker via satellite::resolve_orbit +
                          Propagation::Numerical; apo/peri/speed readouts from
                          satellite::orbit_shape (dashes on escape)
@@ -158,38 +160,49 @@ src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
                          top). Scenes embed one and forward both camera
                          traits to it; headless.rs constructs one from the
                          --scene JSON (PtzCamera::new)
-src/engine/ui/mod.rs            UI module root: owns UIDrawable trait + UIDrawablePanel
-                         + PanelAnchor (egui-free data), and the egui
-                         control_panel that frames each panel at its anchored
-                         corner (theme::PANEL_INSET) and lays out its rows with
-                         taffy (egui_taffy): panel = flex column of rows, row =
-                         flex row of instrument nodes, all content-sized (+ the
-                         shared min width) - no pixel positions or fixed panel
-                         boxes (interactivity via callbacks). Each scene
-                         implements UIDrawable itself (its own Time panel +
-                         scene panels). Re-exports the instrument structs
-                         (bare + Interactive*) + theme install_theme + the spec
-                         types (PanelSet/UiPanel). PanelAnchor is also a
+src/engine/ui/mod.rs            UI module root: owns UIDrawable trait +
+                         UIDrawablePanel<S> (owned/'static - never borrows the
+                         scene) + PanelAnchor (egui-free data), and the egui
+                         control_panel(ctx, &mut panels, &mut scene) that
+                         renders panels PRE-BUILT once per frame outside
+                         run_ui (discard-pass idempotency), frames each at its
+                         anchored corner (theme::PANEL_INSET), lays out its
+                         rows with taffy (egui_taffy): panel = flex column of
+                         rows, row = flex row of instrument nodes, all
+                         content-sized (+ the shared min width) - no pixel
+                         positions or fixed panel boxes - and threads the
+                         `&mut S` scene into whichever callback fires. Each
+                         scene implements UIDrawable itself (its own Time
+                         panel + scene panels). Re-exports the instrument
+                         structs (bare + Interactive*<S> + the Callback<S>/
+                         ValueCallback<S> aliases) + theme install_theme + the
+                         spec types (PanelSet/UiPanel). PanelAnchor is also a
                          pyclass (eq) - part of the dual Rust/Python UI API.
 src/engine/ui/py.rs             the Python face of the panel API: the Panel pyclass
                          (anchor + rows of instrument objects - the
                          UIDrawablePanel twin a script returns), the four
                          Interactive* script twins (same names as the Rust
                          wrappers, deliberately; each = bare instrument +
-                         Py<PyAny> callable instead of a Box<dyn FnMut>), and
-                         panels_from_python - the per-frame conversion: cast
-                         chain over the 11 instrument pyclasses, bare
+                         Py<PyAny> callable instead of a boxed closure), and
+                         panels_from_python::<S> - the per-frame conversion:
+                         cast chain over the 11 instrument pyclasses, bare
                          instruments clone out inert (the spec.rs path), twins
-                         become the Rust Interactive* with a GIL-attaching
-                         'static closure. Callback exceptions print + continue;
+                         become the Rust Interactive*<S> with a GIL-attaching
+                         closure that ignores its `&mut S` argument (the
+                         script drives the scene through its own bound
+                         pymethods). Callback exceptions print + continue;
                          a bad element type is a TypeError the scene fail-fasts
                          on. Holds the render-free conversion round-trip tests
-src/engine/ui/instruments/mod.rs  the Instrument trait (render(&mut Tui): each
-                         instrument adds its own flex node into its row, owning
-                         its node style - e.g. keys grow to share the row) + the
+src/engine/ui/instruments/mod.rs  the Instrument<S> trait (render(&mut Tui,
+                         &mut S): each instrument adds its own flex node into
+                         its row, owning its node style - e.g. keys grow to
+                         share the row - and an interactive one hands the
+                         scene to its callback) + the Callback<S>/
+                         ValueCallback<S> aliases + the
                          shared `leaf` helper (top-down layout, wrap disabled);
                          one self-contained instrument STRUCT per sibling file,
-                         each impl Instrument with its own baked-in look (a
+                         each impl Instrument<S> for every S with its own
+                         baked-in look (a
                          producer picks which instrument + content, never style)
 src/engine/ui/instruments/{header,readout,dual_readout,button,toggle,lamp,slider}.rs
                          one instrument each (header.rs amber title + rule spanning
@@ -316,10 +329,15 @@ src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
                          moving center from the CelestialSphere on demand),
                          TargetSelector (Terra/Luna, eclipses), BodySelector (one
                          latching key per body, 9 bodies ordered by distance from
-                         Sol, solar_system; also a #[pyclass] - selected getter +
-                         body_names() staticmethod + request(index), the index
-                         twin of the disjoint request flags, so a *_py scene's
-                         script can rebuild the panel). SatelliteTelemetry is a
+                         Sol, solar_system; both selectors' panel<S>(access)
+                         builders take an accessor closure re-finding the
+                         selector in the scene, and each key callback writes
+                         the selection directly - frame_state resolves it next
+                         frame; BodySelector is also a #[pyclass] - selected
+                         getter + body_names() staticmethod + request(index),
+                         the pymethod twin of a key's direct write, so a *_py
+                         scene's script can rebuild the panel).
+                         SatelliteTelemetry is a
                          #[pyclass(get_all)] readout
 src/engine/scene/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
                          + Luna position (DE440) and IAU lunar rotation;
@@ -352,11 +370,14 @@ src/engine/scene/clock.rs  simulation Clock (wall-dt x speed, play/pause) +
                          default methods (required clock_mut() -> &mut Clock
                          per scene; tick_clock/clock_now/
                          clock_datetime_label/clock_paused/set_clock_paused/
-                         clock_multiplier/set_clock_multiplier/
-                         apply_clock_requests), which as same-module code are
+                         clock_multiplier/set_clock_multiplier), which as
+                         same-module code are
                          the only thing that can reach the fields - scene
                          code never touches Clock internals, compiler-
-                         enforced. Clock is still a #[pyclass], but
+                         enforced. The Time panel's callbacks call the
+                         setters directly (they receive the scene as `&mut
+                         Self` at fire time; keep them snapshot-idempotent -
+                         see the trait doc). Clock is still a #[pyclass], but
                          registered only for the MIN/MAX_MULTIPLIER
                          classattrs (a script's slider bounds): no Clock
                          instance crosses into Python - the *_py scenes
@@ -531,20 +552,30 @@ each scene implements it itself, building its own Time panel from its
 directly-held clock plus its scene panels.
 
 ```
-UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>>
-    The anchored panels for one frame.
+UIDrawable::get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>>
+    The anchored panels for one frame. Called ONCE per frame, BEFORE the
+    egui run_ui (application::redraw / the headless build_ui_frame / the
+    test harnesses all do this) - rebuilding inside run_ui would refresh
+    the callbacks' build-time snapshots on egui's discard pass and break
+    their idempotency.
 
-UIDrawablePanel { anchor: PanelAnchor,
-                  rows: Vec<Vec<Box<dyn Instrument + 'a>>> }
-    A panel owns only its corner anchor (inset by theme::PANEL_INSET). Its
+UIDrawablePanel<S> { anchor: PanelAnchor,
+                     rows: Vec<Vec<Box<dyn Instrument<S>>>> }
+    A panel owns only its corner anchor (inset by theme::PANEL_INSET). It is
+    fully OWNED ('static - it never borrows the producing scene): an
+    interactive callback receives the scene as its `&mut S` argument at fire
+    time instead of capturing it, so every callback coexists AND can call
+    `&mut self` scene APIs (the SceneClock setters) directly; captures are
+    limited to owned build-time snapshots. Its
     size and every instrument's place are computed by taffy from `rows`
     (outer = top-to-bottom rows, inner = left-to-right instruments): a flex
     column (theme::panel_layout - stretch, MD row gap, PANEL_MIN_WIDTH) of
     flex rows (theme::row_layout - bottom-aligned, LG gap). Content-driven
     sizing; there are NO pixel positions or fixed panel boxes.
 
-trait Instrument { render(&mut self, tui: &mut Tui) }
-    One struct per file impls it: Header, Readout, DualReadout, Button, Toggle,
+trait Instrument<S> { render(&mut self, tui: &mut Tui, scene: &mut S) }
+    One struct per file impls it for every S (bare instruments ignore the
+    scene): Header, Readout, DualReadout, Button, Toggle,
     Lamp, Slider. Pre-styled INSTRUMENTS, not logical primitives: a producer
     picks which instrument + its content, never its color/font/emphasis/metrics
     (style lives in each `render`, pulling the palette + SPACE_*/FONT_*/RADIUS_*
@@ -565,11 +596,16 @@ trait Instrument { render(&mut self, tui: &mut Tui) }
     while `active`),
     Lamp=status dot keyed to LampStatus{Ok/Caution/Fault/Off}, Slider=value
     track. Each control is two types: a bare struct (inert; derives Deserialize)
-    and an Interactive* wrapper that owns the bare struct + a moved
-    Box<dyn FnMut(..)> callback (InteractiveButton/InteractiveHoldButton/
+    and an Interactive*<S> wrapper that owns the bare struct + a moved
+    callback receiving the live scene (Callback<S> = Box<dyn FnMut(&mut S)>;
+    the slider's ValueCallback<S> adds the new f32)
+    (InteractiveButton/InteractiveHoldButton/
     InteractiveToggle/InteractiveSlider; the Hold variant fires its callback
     every frame the key is held down - the burn keys). A bare control renders
-    inert (e.g. a deserialized mock); the wrapper fires its callback. Shared
+    inert (e.g. a deserialized mock); the wrapper fires its callback with the
+    `&mut S` control_panel threads through render. Callbacks MUST be
+    idempotent (write-only or snapshot-based, never read-modify-write): the
+    discard pass can fire one twice in a frame. Shared
     draw lives on the bare struct.
 
 PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
@@ -577,22 +613,25 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
 
 - Each scene's `impl UIDrawable` emits the **Time panel** (top-left) first,
   built from live state read through the `SceneClock` API: the UTC datetime +
-  speed readouts, and the Run toggle + speed slider whose callbacks set the
-  scene's *disjoint* `request_toggle_run` / `request_multiplier` fields by
-  direct assignment (the selector-key request-flag idiom; `advance()` folds
-  them into the clock via `SceneClock::apply_clock_requests`). Do not call a
-  `SceneClock` method in those closures - it would borrow the whole scene and
-  collide with the other panel closures' field captures. The
+  speed readouts, and the Run toggle + speed slider whose callbacks receive
+  the scene as `&mut Self` at fire time and call the `SceneClock` setters
+  directly (`move |scene| scene.set_clock_paused(running)` /
+  `|scene, exp| scene.set_clock_multiplier(exp.exp())`). Keep those closures
+  idempotent - write the build-time snapshot (the pre-click `running`),
+  never flip live state they re-read: the discard pass can fire them twice
+  per frame. The
   panel-building code is **deliberately duplicated per scene** (like the
   propagation loop) so each scene can diverge in what it exposes.
 - After the Time panel, each scene pushes its own panel(s): top-right
   telemetry (re-propagated on the spot at the frame's clock instant, into
-  owned values before the callback captures - deterministic, so it matches
+  owned values - deterministic, so it matches
   the rendered markers) or the
   selector panel, plus manual_control's bottom-center Burns panel. All panels
   are independently anchored - no stacking constant.
-  `ui::control_panel(&mut impl UIDrawable)` frames each panel and lays out its
-  rows with taffy, firing callbacks on interaction.
+  `ui::control_panel(ctx, &mut panels, &mut scene)` renders the pre-built
+  panels (framing each at its anchor, taffy rows), threading the scene into
+  whichever callback fires; the caller built `panels` once per frame via
+  `get_drawables` before entering run_ui.
 - **Theme**: `ui::install_theme(ctx)` stamps the Apollo-panel look onto an egui
   `Context` and must be called once per context (both `ApplicationState::new`
   and the headless bin's `build_ui_frame` do). It also sets egui `max_passes = 2`:

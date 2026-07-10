@@ -32,8 +32,8 @@ impl Header {
     }
 }
 
-impl Instrument for Header {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Header {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // Grow across the row so the rule spans the full panel width.
         let style = taffy::Style {
             flex_grow: 1.0,

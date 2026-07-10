@@ -4,7 +4,7 @@ use egui_taffy::{Tui, taffy};
 use pyo3::prelude::*;
 use serde::Deserialize;
 
-use super::{Instrument, leaf};
+use super::{Instrument, ValueCallback, leaf};
 
 /// A value slider over `range` - the inert render data only. Drawing lives in
 /// [`Slider::draw`], shared by this struct's read-only [`Instrument`] impl and
@@ -75,28 +75,28 @@ impl Slider {
     }
 }
 
-impl Instrument for Slider {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Slider {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // Inert: still draggable, but the edit is discarded (e.g. a mock panel).
         let _ = self.draw(tui);
     }
 }
 
-/// A [`Slider`] wired to an edit callback. `on_change` receives the new value
-/// on each edit; the producer owns any value mapping (e.g. the speed slider
-/// edits an exponent and its callback exponentiates). The borrow `'a` is the
-/// `&mut self` of the producing
-/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
-/// a disjoint mutable field of live state.
-pub struct InteractiveSlider<'a> {
+/// A [`Slider`] wired to an edit callback. `on_change` receives the live
+/// scene (threaded in by `control_panel` at fire time - no capture, so every
+/// panel callback coexists) plus the new value on each edit; the producer
+/// owns any value mapping (e.g. the speed slider edits an exponent and its
+/// callback exponentiates). Writing the received value into the scene is
+/// naturally idempotent under egui's discard-pass double fire.
+pub struct InteractiveSlider<S> {
     pub slider: Slider,
-    pub on_change: Box<dyn FnMut(f32) + 'a>,
+    pub on_change: ValueCallback<S>,
 }
 
-impl Instrument for InteractiveSlider<'_> {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for InteractiveSlider<S> {
+    fn render(&mut self, tui: &mut Tui, scene: &mut S) {
         if let Some(value) = self.slider.draw(tui) {
-            (self.on_change)(value);
+            (self.on_change)(scene, value);
         }
     }
 }

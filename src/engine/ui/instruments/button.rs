@@ -1,8 +1,8 @@
 use egui_taffy::{Tui, TuiBuilderLogic};
 use pyo3::prelude::*;
 
-use super::Instrument;
 use super::toggle::key_style;
+use super::{Callback, Instrument};
 
 /// A momentary key - the inert render data only. Drawing lives in
 /// [`Button::draw`], shared by this struct's read-only [`Instrument`] impl and
@@ -44,48 +44,51 @@ impl Button {
     }
 }
 
-impl Instrument for Button {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Button {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // Inert: still clickable, but the click does nothing (e.g. a mock panel).
         let _ = self.draw(tui, egui::Sense::click());
     }
 }
 
-/// A [`Button`] wired to a press callback. `on_press` fires on click. The
-/// borrow `'a` is the `&mut self` of the producing
-/// [`crate::engine::ui::UIDrawable::get_drawables`], so the closure can capture
-/// a disjoint mutable field of live state.
+/// A [`Button`] wired to a press callback. `on_press` fires on click,
+/// receiving the live scene (threaded in by `control_panel` at fire time -
+/// no capture, so every panel callback coexists). Like every interactive
+/// callback it must be idempotent (write-only / snapshot-based): egui's
+/// discard pass can fire it twice per frame.
 ///
 /// No live panel drives a click-fired button today (the burn keys hold-fire
 /// via [`InteractiveHoldButton`]); this completes the control set as part of
 /// the reusable instrument library, so `dead_code` is allowed until a
 /// producer constructs one.
 #[allow(dead_code)]
-pub struct InteractiveButton<'a> {
+pub struct InteractiveButton<S> {
     pub button: Button,
-    pub on_press: Box<dyn FnMut() + 'a>,
+    pub on_press: Callback<S>,
 }
 
-impl Instrument for InteractiveButton<'_> {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for InteractiveButton<S> {
+    fn render(&mut self, tui: &mut Tui, scene: &mut S) {
         if self.button.draw(tui, egui::Sense::click()).clicked() {
-            (self.on_press)();
+            (self.on_press)(scene);
         }
     }
 }
 
 /// A [`Button`] wired to a hold callback: `on_hold` fires **every frame** the
-/// key is held down (e.g. a thruster burn that lasts as long as the press).
-/// Frames keep coming while held because the burn only matters with the
-/// simulation clock running, and a running clock already requests every
-/// frame. Same borrow rules as [`InteractiveButton`].
-pub struct InteractiveHoldButton<'a> {
+/// key is held down (e.g. a thruster burn that lasts as long as the press),
+/// receiving the live scene like [`InteractiveButton`]. Frames keep coming
+/// while held because the burn only matters with the simulation clock
+/// running, and a running clock already requests every frame. Same
+/// idempotency rule as [`InteractiveButton`] (a per-frame flag set is
+/// naturally idempotent).
+pub struct InteractiveHoldButton<S> {
     pub button: Button,
-    pub on_hold: Box<dyn FnMut() + 'a>,
+    pub on_hold: Callback<S>,
 }
 
-impl Instrument for InteractiveHoldButton<'_> {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for InteractiveHoldButton<S> {
+    fn render(&mut self, tui: &mut Tui, scene: &mut S) {
         // Drag sense is load-bearing: egui tracks a held press on a click-only
         // widget as a "potential click" and abandons it after
         // `max_click_duration` (0.8 s) or ~6 px of pointer travel, flipping
@@ -97,7 +100,7 @@ impl Instrument for InteractiveHoldButton<'_> {
             .draw(tui, egui::Sense::click_and_drag())
             .is_pointer_button_down_on()
         {
-            (self.on_hold)();
+            (self.on_hold)(scene);
         }
     }
 }
@@ -114,15 +117,14 @@ mod tests {
     }
 
     impl UIDrawable for HoldProbe {
-        fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-            let fired = &mut self.fired;
+        fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
             vec![UIDrawablePanel {
                 anchor: PanelAnchor::BottomCenter,
                 rows: vec![vec![Box::new(InteractiveHoldButton {
                     button: Button {
                         label: "Hold".to_string(),
                     },
-                    on_hold: Box::new(|| *fired = true),
+                    on_hold: Box::new(|probe: &mut HoldProbe| probe.fired = true),
                 })]],
             }]
         }
@@ -145,7 +147,9 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| ui::control_panel(ui.ctx(), probe));
+        // Panels built once before run_ui, like the live redraw path.
+        let mut panels = probe.get_drawables();
+        let _ = ctx.run_ui(input, |ui| ui::control_panel(ui.ctx(), &mut panels, probe));
         probe.fired
     }
 

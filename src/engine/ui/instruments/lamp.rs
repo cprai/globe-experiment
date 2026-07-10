@@ -59,8 +59,8 @@ impl Lamp {
     }
 }
 
-impl Instrument for Lamp {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Lamp {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // The `status` picks the lamp color here - the producer only names the
         // condition.
         let color = match self.status {

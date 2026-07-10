@@ -81,11 +81,9 @@ pub struct ManualControlSceneInner {
     orbit_epoch: Instant,
     /// Burn request flags, one per key. The script's held keys call the
     /// `request_*` methods during the egui pass; `advance` folds the flags
-    /// into a velocity change next frame, then clears them. (The Rust sibling
-    /// needs six disjoint fields for its closure captures; the Python
-    /// callbacks all go through `&mut self` method calls on the pyclass cell,
-    /// which cannot overlap by construction, but the fields are kept
-    /// one-per-key for the same panel semantics.)
+    /// into a velocity change next frame, then clears them. The flags stay
+    /// (in both siblings) because the burn is dt-scaled: only `advance`
+    /// knows the frame's simulation dt.
     burn_prograde: bool,
     burn_retrograde: bool,
     burn_normal: bool,
@@ -392,7 +390,7 @@ impl UIDrawable for ManualControlPyScene {
     /// panels. No Rust borrow of the inner cell is held while the script
     /// runs - its property/method accesses each take their own transient
     /// borrow.
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         Python::attach(|py| {
             self.get_drawables_fn
                 .bind(py)
@@ -444,7 +442,8 @@ mod tests {
 
     /// One CPU-only egui pass over the scene's panels (the real Python
     /// round trip: script -> Panel pyclasses -> converted instruments ->
-    /// egui render, callbacks fired by egui's hit test).
+    /// egui render, callbacks fired by egui's hit test). Panels are built
+    /// once, before `run_ui`, like the live `redraw` path.
     fn run_frame(
         ctx: &egui::Context,
         scene: &mut ManualControlPyScene,
@@ -457,7 +456,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| ui::control_panel(ui.ctx(), scene));
+        let mut panels = scene.get_drawables();
+        let _ = ctx.run_ui(input, |ui| ui::control_panel(ui.ctx(), &mut panels, scene));
     }
 
     fn click_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {

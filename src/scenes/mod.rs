@@ -16,10 +16,10 @@
 //! Every scene talks to its clock through the `SceneClock` trait
 //! (`engine::scene::clock`, next to `Clock` itself - whose fields are
 //! private, so the compiler enforces this): implement `clock_mut` and the
-//! trait's default methods are the whole clock API. See the trait doc for
-//! the Time panel's request-flag idiom
-//! (`request_toggle_run`/`request_multiplier` folded in `advance()` via
-//! `SceneClock::apply_clock_requests`).
+//! trait's default methods are the whole clock API - the Time panel's
+//! callbacks included, which receive the scene as `&mut Self` at fire time
+//! and call the setters directly (see the trait doc for the
+//! snapshot/idempotency rule).
 
 pub mod iss;
 pub mod iss_and_hubble;

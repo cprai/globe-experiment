@@ -13,8 +13,8 @@
 //! (`paused`/`multiplier`/`datetime_label()` - the `SceneClock` trait API's
 //! Python face) and the shared `selector` handle - its selector panel reads
 //! `selector.selected` / `BodySelector.body_names()` and its key callbacks
-//! call `selector.request(i)`, the index twin of the Rust panel's disjoint
-//! request flags. Script errors fail fast (traceback + panic); callback
+//! call `selector.request(i)`, the pymethod twin of a Rust key's direct
+//! `selected` write. Script errors fail fast (traceback + panic); callback
 //! errors only print (see `ui::py`).
 
 use std::path::PathBuf;
@@ -112,13 +112,12 @@ impl SolarSystemSceneInner {
         }
     }
 
-    fn advance(&mut self, py: Python<'_>) -> bool {
-        // Fold in any pending body-key request before the camera target is
-        // read (the script's key callbacks called `selector.request(i)`
-        // during the previous egui pass; any pause/speed change already
-        // landed via the pymethod setters), then tick through the SceneClock
-        // API.
-        self.selector.borrow_mut(py).apply_requests();
+    fn advance(&mut self) -> bool {
+        // Tick through the SceneClock API. Any body-key press already landed
+        // directly (the script's key callbacks called `selector.request(i)`
+        // during the previous egui pass, a direct `selected` write), as did
+        // any pause/speed change via the pymethod setters; this frame's
+        // `frame_state` resolves the selection.
         self.tick_clock()
     }
 
@@ -172,7 +171,7 @@ impl SolarSystemPyScene {
 
 impl Scene for SolarSystemPyScene {
     fn advance(&mut self) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).advance(py))
+        Python::attach(|py| self.inner.borrow_mut(py).advance())
     }
 }
 
@@ -228,7 +227,7 @@ impl UIDrawable for SolarSystemPyScene {
     /// Call the script's `get_drawables(scene)` with the live pyclass handle
     /// and convert its panels; no Rust borrow of the inner cell is held while
     /// the script runs.
-    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
+    fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         Python::attach(|py| {
             self.get_drawables_fn
                 .bind(py)

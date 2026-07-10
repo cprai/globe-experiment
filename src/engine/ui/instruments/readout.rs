@@ -41,8 +41,8 @@ impl Readout {
     }
 }
 
-impl Instrument for Readout {
-    fn render(&mut self, tui: &mut Tui) {
+impl<S> Instrument<S> for Readout {
+    fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
         // Content-sized: the digit window hugs its (fixed-width, monospace)
         // value, so the panel width comes from the widest readout row.
         leaf(tui, taffy::Style::default(), |ui| {

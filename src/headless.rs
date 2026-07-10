@@ -49,7 +49,7 @@ use crate::engine::camera::PtzCamera;
 use crate::engine::renderer::UiFrame;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{self, CameraTarget, CelestialBody, RenderState};
-use crate::engine::ui::{self, PanelSet, UiPanel};
+use crate::engine::ui::{self, PanelSet, UIDrawable, UiPanel};
 use crate::offscreen::{MAX_FRAME_DIMENSION, OffscreenRenderer};
 
 /// Renders a single frame of the astronomically-accurate solar system to a PNG
@@ -295,6 +295,9 @@ fn parse_rfc3339(text: &str) -> Result<Instant, String> {
 /// parse in [`run`].
 fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     let mut mock = PanelSet { panels };
+    // Built once, like the windowed path's per-frame build (the mock is
+    // inert, so the panels are identical every pass anyway).
+    let mut drawables = mock.get_drawables();
 
     let ctx = egui::Context::default();
     // Same theme the windowed app installs, so a mock overlay is faithful.
@@ -318,9 +321,11 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     // output; merge its texture deltas into the second pass's so the renderer
     // actually gets the atlas the glyph primitives reference.
     let warmup = ctx.run_ui(raw_input.clone(), |ui| {
-        ui::control_panel(ui.ctx(), &mut mock)
+        ui::control_panel(ui.ctx(), &mut drawables, &mut mock)
     });
-    let full_output = ctx.run_ui(raw_input, |ui| ui::control_panel(ui.ctx(), &mut mock));
+    let full_output = ctx.run_ui(raw_input, |ui| {
+        ui::control_panel(ui.ctx(), &mut drawables, &mut mock)
+    });
 
     let mut textures_delta = warmup.textures_delta;
     textures_delta.set.extend(full_output.textures_delta.set);
