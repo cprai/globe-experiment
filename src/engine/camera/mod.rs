@@ -1,10 +1,12 @@
 //! The camera layer: the [`CameraControl`] + [`CameraView`] trait pair every
 //! scene implements (alongside `Scene` + `UIDrawable`), the winit-free
 //! input vocabulary they speak, and the reusable [`PtzCamera`] pan/tilt/zoom
-//! implementation a scene can embed - or not: a future scene may fly a
-//! scripted, fixed, or chase camera by implementing the traits differently
-//! (a non-interactive camera implements only `CameraView` and leaves every
-//! `CameraControl` method at its no-op default).
+//! implementation a scene embeds via [`ScenePtzCamera`] (three accessors;
+//! a blanket impl supplies the whole `CameraControl` surface) - or not: a
+//! future scene may fly a scripted, fixed, or chase camera by implementing
+//! the traits differently (a non-interactive camera implements only
+//! `CameraView` and leaves every `CameraControl` method at its no-op
+//! default).
 //!
 //! Winit-free on purpose: both bin trees build this module (the headless
 //! binary constructs a `PtzCamera` straight from its `--scene` JSON), and the
@@ -17,6 +19,12 @@
 mod ptz;
 
 pub use ptz::PtzCamera;
+// Named only by the main tree's scenes (the headless tree builds its
+// PtzCamera directly, with no input surface), so the headless build sees
+// this re-export unused; its crate-level allow covers dead code, not
+// imports.
+#[allow(unused_imports)]
+pub use ptz::ScenePtzCamera;
 
 use crate::engine::scene::RenderState;
 

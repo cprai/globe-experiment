@@ -157,9 +157,12 @@ src/engine/camera/ptz.rs        PtzCamera: the interactive pan/tilt/zoom orbital
                          in-flight animation) AND
                          all input/animation state (drag pan/tilt, flick
                          inertia, smoothed zoom glide; feel constants at file
-                         top). Scenes embed one and forward both camera
-                         traits to it; headless.rs constructs one from the
-                         --scene JSON (PtzCamera::new)
+                         top). Also ScenePtzCamera: the three-accessor hookup
+                         trait (camera/camera_mut/camera_target - the
+                         SceneClock pattern) whose blanket impl supplies the
+                         whole CameraControl surface, so scenes write no
+                         forwarding block; headless.rs constructs a PtzCamera
+                         from the --scene JSON (PtzCamera::new)
 src/engine/ui/mod.rs            UI module root: owns UIDrawable trait +
                          UIDrawablePanel<S> (owned/'static - never borrows the
                          scene) + PanelAnchor (egui-free data), and the egui
@@ -448,8 +451,9 @@ planet      -> scene::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with scene::body)
-scenes      -> scene, ui, application, camera (CameraControl/CameraView
-                                       # traits + PtzCamera), (clap - each
+scenes      -> scene, ui, application, camera (CameraView trait + PtzCamera +
+                                       # ScenePtzCamera, whose blanket impl
+                                       # supplies CameraControl), (clap - each
                                        # scene module owns its CLI Args
                                        # struct); the *_py scenes
                                        # also -> py (init + script loader) and
@@ -486,14 +490,19 @@ default) and **`CameraView`** (`frame_state`, the frame production). Both +
 the winit-free input vocabulary (`PointerButton`,
 `ScrollDelta::{Lines,Pixels}`, `CursorHint::{Default,Grab,Grabbing}`) live in
 `src/engine/camera/mod.rs`; the reusable interactive implementation
-`PtzCamera` lives in `src/engine/camera/ptz.rs`. Each scene implements both
-traits itself, usually by embedding a `camera: PtzCamera` field (plus the
-scene-owned `camera_target: CameraTarget` the forwarders pass by ref into
-the camera calls that depend on the orbited body) and forwarding
-(the forwarding block is deliberately duplicated per scene, like the Time
-panel, so a scene can diverge - gate input, or fly a future scripted/fixed
-camera type by implementing only `CameraView` and leaving `CameraControl`'s
-defaults).
+`PtzCamera` lives in `src/engine/camera/ptz.rs`. A scene usually embeds a
+`camera: PtzCamera` field (plus the scene-owned `camera_target:
+CameraTarget`) and implements **`ScenePtzCamera`** (also in `ptz.rs`) - three
+accessors, `camera()`/`camera_mut()`/`camera_target()`, the `SceneClock`
+pattern - and the blanket `impl<S: ScenePtzCamera> CameraControl for S`
+forwards every input event into the embedded camera, passing the
+scene-owned target into the calls that depend on the orbited body. A scene
+that must diverge implements `CameraControl` directly instead of
+`ScenePtzCamera` (the `*_py` wrappers do: no `&mut PtzCamera` escapes their
+pyclass cell's borrow guard, so `ScenePtzCamera` sits on their Inner and
+each wrapper method attach+borrows and delegates to the Inner's blanket
+impl) - or flies a future scripted/fixed camera type by implementing only
+`CameraView` and leaving `CameraControl`'s defaults.
 
 ```
 CameraControl:

@@ -11,9 +11,7 @@ use glam::DVec3;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{
-    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
-};
+use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::satellite::{self, OrbitState, Propagation, Satellite};
 use crate::engine::scene::{
@@ -189,33 +187,22 @@ impl Scene for ManualControlScene {
     }
 }
 
-impl CameraControl for ManualControlScene {
-    // The input methods forward to the embedded PtzCamera; the forwarding
-    // block is deliberately duplicated per scene (like the Time panel) so
-    // a scene can diverge - e.g. gate input or swap the camera kind.
-    fn pointer_press(&mut self, button: PointerButton) -> bool {
-        self.camera.pointer_press(button)
+impl ScenePtzCamera for ManualControlScene {
+    // The accessors behind the blanket `CameraControl` impl, which forwards
+    // every input event into the embedded camera: where the camera and the
+    // scene-owned orbit target live in this struct. A scene that needs to
+    // diverge (gate input, swap the camera kind) implements `CameraControl`
+    // directly instead.
+    fn camera(&self) -> &PtzCamera {
+        &self.camera
     }
 
-    fn pointer_release(&mut self, button: PointerButton) -> bool {
-        self.camera.pointer_release(button)
+    fn camera_mut(&mut self) -> &mut PtzCamera {
+        &mut self.camera
     }
 
-    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
-        self.camera
-            .pointer_move(&self.camera_target, position, viewport_height)
-    }
-
-    fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        self.camera.scroll(&self.camera_target, delta)
-    }
-
-    fn tick(&mut self, viewport_height: f64) -> bool {
-        self.camera.tick(&self.camera_target, viewport_height)
-    }
-
-    fn cursor_hint(&self) -> CursorHint {
-        self.camera.cursor_hint()
+    fn camera_target(&self) -> &CameraTarget {
+        &self.camera_target
     }
 }
 

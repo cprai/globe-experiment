@@ -32,7 +32,7 @@ use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{
-    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScrollDelta,
+    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScenePtzCamera, ScrollDelta,
 };
 use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
@@ -190,6 +190,24 @@ impl SceneClock for ManualControlSceneInner {
     }
 }
 
+impl ScenePtzCamera for ManualControlSceneInner {
+    // On the Inner, not the wrapper (the same split as `SceneClock`): the
+    // wrapper cannot hand out a `&mut PtzCamera` past the pyclass cell's
+    // borrow guard, so it delegates each `CameraControl` call to the blanket
+    // impl these accessors unlock.
+    fn camera(&self) -> &PtzCamera {
+        &self.camera
+    }
+
+    fn camera_mut(&mut self) -> &mut PtzCamera {
+        &mut self.camera
+    }
+
+    fn camera_target(&self) -> &CameraTarget {
+        &self.camera_target
+    }
+}
+
 /// The Rust-only half: construction and the per-frame work, mirroring the
 /// Rust sibling body for body (only the Time-panel plumbing differs - the
 /// script's callbacks apply through the pymethod face above, so no
@@ -337,44 +355,35 @@ impl Scene for ManualControlPyScene {
 }
 
 impl CameraControl for ManualControlPyScene {
-    // The forwarding block every scene duplicates, with one extra hop: attach
-    // + borrow the pyclass cell, then forward to the embedded PtzCamera.
+    // Hand-written (the wrapper cannot implement `ScenePtzCamera` - see the
+    // Inner's impl): each method attaches + borrows the pyclass cell for its
+    // own duration and delegates to the Inner's blanket `CameraControl`.
     fn pointer_press(&mut self, button: PointerButton) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).camera.pointer_press(button))
+        Python::attach(|py| self.inner.borrow_mut(py).pointer_press(button))
     }
 
     fn pointer_release(&mut self, button: PointerButton) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).camera.pointer_release(button))
+        Python::attach(|py| self.inner.borrow_mut(py).pointer_release(button))
     }
 
     fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
         Python::attach(|py| {
-            let mut inner = self.inner.borrow_mut(py);
-            let inner = &mut *inner;
-            inner
-                .camera
-                .pointer_move(&inner.camera_target, position, viewport_height)
+            self.inner
+                .borrow_mut(py)
+                .pointer_move(position, viewport_height)
         })
     }
 
     fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        Python::attach(|py| {
-            let mut inner = self.inner.borrow_mut(py);
-            let inner = &mut *inner;
-            inner.camera.scroll(&inner.camera_target, delta)
-        })
+        Python::attach(|py| self.inner.borrow_mut(py).scroll(delta))
     }
 
     fn tick(&mut self, viewport_height: f64) -> bool {
-        Python::attach(|py| {
-            let mut inner = self.inner.borrow_mut(py);
-            let inner = &mut *inner;
-            inner.camera.tick(&inner.camera_target, viewport_height)
-        })
+        Python::attach(|py| self.inner.borrow_mut(py).tick(viewport_height))
     }
 
     fn cursor_hint(&self) -> CursorHint {
-        Python::attach(|py| self.inner.borrow(py).camera.cursor_hint())
+        Python::attach(|py| self.inner.borrow(py).cursor_hint())
     }
 }
 

@@ -10,7 +10,13 @@ The `engine::camera` module is a directory: `mod.rs` holds the
 `CameraControl` = the no-op-defaulted input methods + `tick` + `cursor_hint`,
 `CameraView` = `frame_state`) + the winit-free input vocabulary
 (`PointerButton`/`ScrollDelta`/`CursorHint`); `ptz.rs` holds **`PtzCamera`**,
-the interactive pan/tilt/zoom implementation scenes embed and forward to.
+the interactive pan/tilt/zoom implementation scenes embed, plus
+**`ScenePtzCamera`** — the three-accessor hookup trait (`camera()`/
+`camera_mut()`/`camera_target()`, the `SceneClock` pattern) whose blanket
+`impl<S: ScenePtzCamera> CameraControl for S` forwards every input event
+into the embedded camera, so a scene writes no forwarding block (a scene
+that must diverge — or the `*_py` wrappers, whose camera sits behind a
+pyclass cell — implements `CameraControl` directly instead).
 The rig rules below are about `PtzCamera`; input rules live in `input.md`.
 
 ## Inertial (star-fixed) frame

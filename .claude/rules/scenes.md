@@ -10,7 +10,9 @@ paths:
 
 - One module per past scene under `src/scenes/`, each defining a
   `<Name>Scene` struct that implements the **four traits** `Scene`
-  + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`, plus a
+  + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`
+  (`CameraControl` normally arrives via the `camera::ScenePtzCamera`
+  blanket impl - see below), plus a
   `run(args)`. Add a module (with its own `#[derive(clap::Args)] Args`
   struct - empty until the scene needs flags) and a `SceneCommand` variant
   wrapping it in `src/main.rs`.
@@ -51,10 +53,17 @@ paths:
   The Time-panel code is **deliberately duplicated across scenes** (like
   the propagation loop) so each can diverge in what it exposes. Name the
   struct `<Name>Scene` (e.g. `IssScene`, `IssAndHubbleScene`).
-- The `impl CameraControl` block is six one-line forwarders to `self.camera`
-  (`pointer_press`/`pointer_release`/`pointer_move`/`scroll`/`tick`/
-  `cursor_hint`; `pointer_move`/`scroll`/`tick` pass `&self.camera_target`
-  along); the `impl CameraView` block is `frame_state`, the frame
+- `CameraControl` comes for free: the scene implements
+  `camera::ScenePtzCamera` (three accessors - `camera()`/`camera_mut()`/
+  `camera_target()` - saying where the embedded camera and the scene-owned
+  target live; the `SceneClock` pattern) and the blanket
+  `impl<S: ScenePtzCamera> CameraControl for S` in `camera/ptz.rs` forwards
+  every input event into the `PtzCamera`, passing `camera_target()` into the
+  calls that scale by the orbited body. A scene that must diverge (gate
+  input, fly a different camera type) skips `ScenePtzCamera` and implements
+  `CameraControl` directly - the `*_py` wrappers do (below), because no
+  `&mut PtzCamera` can escape their pyclass cell's borrow guard.
+  The `impl CameraView` block is `frame_state`, the frame
   recipe: evaluate this frame's sphere
   (`let sphere = CelestialSphere::at(&now)`), derive
   `celestial_to_world = sphere.star_rot_inv.transpose()`,
@@ -63,9 +72,7 @@ paths:
   `self.camera.reframe(&target, &sphere, c2w)` when
   `!self.camera_target.same_kind(&target)`, and store the result in
   `self.camera_target`), `world_rig(&target, &sphere, c2w)` -> (eye, look_at,
-  up), then pack `RenderState` (packing the SAME resolved `target`). The
-  forwarding block is **deliberately duplicated per scene** (like the Time
-  panel) - a scene may gate input or fly a different camera type.
+  up), then pack `RenderState` (packing the SAME resolved `target`).
 
 ### Empty (no-satellite) scenes
 
@@ -186,7 +193,11 @@ The pattern:
   the Rust siblings' scene-receiving callbacks).
 - **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
   Py<PyAny> }` implements the four engine traits; every method is
-  `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
+  `Python::attach` + `inner.borrow_mut(py)` + delegate. `ScenePtzCamera`
+  (like `SceneClock`) is implemented on the **Inner** - the wrapper cannot
+  hand out a `&mut PtzCamera` past the pyclass cell's borrow guard, so its
+  hand-written `CameraControl` delegates each call to the Inner's blanket
+  impl. **The one borrow
   rule: never hold a pyclass borrow across a call into Python.** The trait
   bodies call no Python; `get_drawables` holds NO Rust borrow at all — it
   passes `self.inner.bind(py)` into the script, whose property/method

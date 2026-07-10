@@ -37,7 +37,7 @@ use std::time::Instant;
 
 use glam::{DMat3, DQuat, DVec3};
 
-use super::{CursorHint, PointerButton, ScrollDelta};
+use super::{CameraControl, CursorHint, PointerButton, ScrollDelta};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{CameraTarget, CelestialBody};
 
@@ -655,5 +655,70 @@ impl PtzCamera {
         } else {
             CursorHint::Grab
         }
+    }
+}
+
+/// The camera hookup for every scene that flies a [`PtzCamera`]: implement
+/// the three accessors saying where the camera and its scene-owned orbit
+/// target live in the struct, and the blanket [`CameraControl`] impl below
+/// supplies the whole input surface, forwarding each event into the embedded
+/// camera - the `SceneClock` pattern (one required hook, shared logic lives
+/// with the type it drives), replacing the forwarding block every scene used
+/// to duplicate.
+///
+/// Three accessors, not one, because the forwarding needs three shapes:
+/// `camera_mut` for the mutating input calls, `camera` for
+/// [`CameraControl::cursor_hint`]'s `&self`, and `camera_target` because
+/// `pointer_move`/`scroll`/`tick` scale by the orbited body - the target
+/// stays scene-owned (see the module doc), so the blanket impl fetches it
+/// per call and the rig can never drift from the orbit subject.
+///
+/// A scene that cannot hand out these borrows implements [`CameraControl`]
+/// directly instead - the `*_py` wrappers do: their camera lives behind a
+/// pyclass cell whose borrow guard no `&mut PtzCamera` can escape, so each
+/// of their methods attaches + borrows the inner scene (which implements
+/// this trait) and delegates to its blanket impl. Likewise a future
+/// non-interactive scene simply implements neither and keeps
+/// `CameraControl`'s no-op defaults.
+pub trait ScenePtzCamera {
+    /// Where the camera lives in the scene struct (shared view).
+    fn camera(&self) -> &PtzCamera;
+
+    /// Where the camera lives in the scene struct (mutating view).
+    fn camera_mut(&mut self) -> &mut PtzCamera;
+
+    /// The scene-owned body the camera orbits this frame.
+    fn camera_target(&self) -> &CameraTarget;
+}
+
+impl<S: ScenePtzCamera> CameraControl for S {
+    fn pointer_press(&mut self, button: PointerButton) -> bool {
+        self.camera_mut().pointer_press(button)
+    }
+
+    fn pointer_release(&mut self, button: PointerButton) -> bool {
+        self.camera_mut().pointer_release(button)
+    }
+
+    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
+        // Copied out (`CameraTarget` is a small Copy identity) so the target
+        // read does not hold `self` borrowed against `camera_mut`.
+        let target = *self.camera_target();
+        self.camera_mut()
+            .pointer_move(&target, position, viewport_height)
+    }
+
+    fn scroll(&mut self, delta: ScrollDelta) -> bool {
+        let target = *self.camera_target();
+        self.camera_mut().scroll(&target, delta)
+    }
+
+    fn tick(&mut self, viewport_height: f64) -> bool {
+        let target = *self.camera_target();
+        self.camera_mut().tick(&target, viewport_height)
+    }
+
+    fn cursor_hint(&self) -> CursorHint {
+        self.camera().cursor_hint()
     }
 }

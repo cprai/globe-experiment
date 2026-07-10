@@ -30,8 +30,10 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   device-neutral input types (`PointerButton`/`ScrollDelta`/`CursorHint`).
   `camera/ptz.rs`: `PtzCamera`, the interactive pan/tilt/zoom rig + ALL its
   input/animation state (but NO orbit target - the scene owns the
-  `CameraTarget` and passes it by ref into each call that depends on it);
-  scenes embed one and forward both traits to it, the
+  `CameraTarget` and passes it by ref into each call that depends on it),
+  plus `ScenePtzCamera` (three accessors a scene implements; a blanket impl
+  supplies the whole `CameraControl` surface - no per-scene forwarding
+  block); scenes embed one, the
   headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
 - **`scene`** — the `Scene` trait (UI-agnostic), `RenderState`,
   `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
@@ -80,10 +82,11 @@ The top-level (non-engine) modules:
   panels from it — see the "Python-paneled scenes" section in `scenes.md`.)
   Each struct holds its `Clock` + `camera: PtzCamera` +
   `camera_target: CameraTarget` directly (no stored `CelestialSphere`;
-  `frame_state` evaluates one at the frame's clock instant) and builds its
+  `frame_state` evaluates one at the frame's clock instant), implements
+  `ScenePtzCamera` (three accessors; the blanket impl supplies
+  `CameraControl`), and builds its
   own Time panel (the
-  panel code and the
-  camera-trait forwarding block are deliberately duplicated per scene so
+  panel code is deliberately duplicated per scene so
   scenes can diverge). Satellites live here, not in `scene`.
 - **`headless` bin root** (`src/headless.rs`) — the single-frame render
   binary: flat `--scene`/`--output` CLI, scene-spec parsing, mock-UI

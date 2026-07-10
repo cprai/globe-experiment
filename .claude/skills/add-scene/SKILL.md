@@ -29,8 +29,9 @@ time window) and wires it into the clap CLI.
      `Clock` (plain data, private fields), so the compiler enforces it.
    - implements `Scene` (`advance`: just `self.tick_clock()` - any
      Time-panel edit already landed directly during the previous egui
-     pass), `CameraControl`
-     (forward to the embedded `PtzCamera`), and `CameraView`
+     pass), `crate::engine::camera::ScenePtzCamera` (three accessors -
+     `camera()`/`camera_mut()`/`camera_target()` - whose blanket impl
+     supplies the whole `CameraControl` surface), and `CameraView`
      (`frame_state`: propagate `self.satellites` at `self.clock_now()` and
      fill `RenderState`; use `marker_occluded` from `crate::scene` for
      visibility testing).
