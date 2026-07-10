@@ -36,15 +36,17 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   block); scenes embed one, the
   headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
 - **`scene`** — the `Scene` trait (UI-agnostic), `RenderState`,
-  `SatelliteTelemetry`, `Clock`, the celestial sphere, the selectors, and
+  `SatelliteTelemetry`, `Clock`, the celestial sphere, and
   helpers. The clock is held **directly by each scene struct** (there is no
   shared core struct); the celestial sphere is **not stored anywhere** —
   `CelestialSphere::at` is a pure function of time, evaluated on the spot
   where needed. **No winit/wgpu dependency. No
   camera type** (the trait shrank to `advance()`; the frame's `RenderState` -
   plain data defined here - is produced by the scene's `camera::CameraView`
-  impl, the UI readout pulled separately via `ui::UIDrawable`). Depends on
-  `ui` (hence egui) only for the selector panel builders.
+  impl, the UI readout pulled separately via `ui::UIDrawable`). No `ui`
+  (hence no egui) dependency: the camera-target panels are built inline by
+  each scene, whose key callbacks write the scene's `camera_target`
+  directly.
 - **`py`** — embedded Python (`src/engine/py.rs`): the Once-guarded
   interpreter `init()` (`append_to_inittab!` of the `globe` pymodule strictly
   before `Python::initialize()`), the `globe` module registration, and the

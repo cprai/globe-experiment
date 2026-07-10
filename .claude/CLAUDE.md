@@ -43,9 +43,10 @@ does), rendering the star-fixed
 inertial ellipse as a thick depth-tested line whose tail fades out sharply
 near one full orbit), inertial
 (star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
-any of the **seven planets** in the `solar_system` scene via a body-selector
+any of the **seven planets** in the `solar_system` scene via a Camera Target
 panel (one key per body); Luna in the eclipse scenes via a Terra/Luna
-panel; the `headless`
+panel; every such panel key writes the scene's `camera_target` directly
+(reframing the camera on a genuine switch) - there are no selector types; the `headless`
 binary picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
 simulation clock (1x-100x, plays from launch). Luna is
 a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
@@ -110,9 +111,11 @@ repo ships the reference scripts in the repo-root `scenes/` directory),
 exception to "everything embedded"). The script imports the embedded `globe` module
 (instruments, `Panel`/`PanelAnchor`, `Interactive*` twins holding Python
 callables, `Clock` (registered only for its `MIN`/`MAX_MULTIPLIER`
-classattrs), `BodySelector`, readout types — the dual Rust/Python UI
+classattrs), readout types — the dual Rust/Python UI
 API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`)
-whose `paused`/`multiplier`/`datetime_label()` properties — the Python face
+whose `paused`/`multiplier`/`datetime_label()` properties (and, in
+`solar_system_py`, `selected_body`/`body_names()`/`request_body(i)` — the
+camera-target twin of the clock properties) — the Python face
 of the `SceneClock` trait API (`engine::scene::clock`, which holds all the
 clock logic as trait default methods; `Clock` itself is plain data) — are
 how a script reads and drives the clock (no `Clock` instance crosses into

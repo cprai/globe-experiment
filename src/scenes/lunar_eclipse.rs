@@ -11,7 +11,7 @@ use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{
-    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock, TargetSelector,
+    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock,
 };
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
@@ -23,27 +23,27 @@ use crate::engine::ui::{
 /// Luna, so the distance is relative to its surface, not Terra's).
 const VIEW_DISTANCE_KM: f64 = 3500.0;
 
-/// Empty lunar-eclipse simulation: just the clock; no satellites. Carries a
-/// [`TargetSelector`] so the view can be switched between orbiting Luna (the
-/// default blood-red-Luna framing) and orbiting Terra. No celestial sphere is
-/// stored - `CelestialSphere::at` is a pure function of time, so
-/// `frame_state` evaluates it fresh at each frame's clock instant (`new`
-/// builds a throwaway one for the initial framing).
+/// Empty lunar-eclipse simulation: just the clock; no satellites. Its Camera
+/// Target panel switches the view between orbiting Luna (the default
+/// blood-red-Luna framing) and orbiting Terra by writing `camera_target`
+/// directly. No celestial sphere is stored - `CelestialSphere::at` is a pure
+/// function of time, so `frame_state` evaluates it fresh at each frame's
+/// clock instant (`new` builds a throwaway one for the initial framing).
 pub struct LunarEclipseScene {
     /// Simulation clock (datetime + play/paused + speed), reached only via
     /// the `SceneClock` API - the Time panel's Run-toggle/speed-slider
     /// callbacks included, which receive the scene at fire time and call the
     /// setters directly.
     clock: Clock,
-    selector: TargetSelector,
+    /// The body the camera orbits - owned by the scene, not the camera, and
+    /// passed into every camera call that scales by or centers on it.
+    /// Written directly by the Camera Target panel's key callbacks (via
+    /// [`Self::set_camera_target`], which reframes the camera on a genuine
+    /// Luna<->Terra switch).
+    camera_target: CameraTarget,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations), seeded orbiting Luna with the eclipsed near side framed.
     camera: PtzCamera,
-    /// The body the camera orbits this frame - owned by the scene, not the
-    /// camera, and passed into every camera call that scales by or centers
-    /// on it. Refreshed from the selector each frame; a genuine switch
-    /// reframes the camera (`frame_state` compares via `same_kind`).
-    camera_target: CameraTarget,
 }
 
 impl LunarEclipseScene {
@@ -65,8 +65,9 @@ impl LunarEclipseScene {
         // is Luna's center minus Terra's center, not Luna's raw position.
         let center = celestial_sphere.luna().placement.pos_world
             - celestial_sphere.center_world(CelestialBody::TERRA);
-        // Matches the selector default below - the camera_target must start on
-        // the body the framing above orbits, or the first frame would reframe.
+        // Default to orbiting Luna - the whole point is the blood-red Luna;
+        // the camera_target starts on the body the framing below orbits
+        // (the Camera Target panel's Luna key).
         let camera_target = CameraTarget::Body(CelestialBody::LUNA);
         let camera = PtzCamera::looking_toward(
             &camera_target,
@@ -77,11 +78,25 @@ impl LunarEclipseScene {
 
         Self {
             clock: Clock::new(epoch),
-            // Default to orbiting Luna - the whole point is the blood-red Luna.
-            selector: TargetSelector::new(true),
-            camera,
             camera_target,
+            camera,
         }
+    }
+
+    /// Switches the orbited body - the Camera Target panel keys' fire-time
+    /// callback. A genuine switch reframes the camera on the spot
+    /// (full-frame distance, re-aim, in-flight animations dropped) against
+    /// the sphere at the current clock instant; re-selecting the already
+    /// orbited body is a no-op, which also keeps the callback idempotent
+    /// under egui's discard-pass double fire.
+    fn set_camera_target(&mut self, target: CameraTarget) {
+        if self.camera_target.same_kind(&target) {
+            return;
+        }
+        let sphere = CelestialSphere::at(&self.clock_now());
+        self.camera
+            .reframe(&target, &sphere, sphere.star_rot_inv.transpose());
+        self.camera_target = target;
     }
 }
 
@@ -93,10 +108,10 @@ impl SceneClock for LunarEclipseScene {
 
 impl Scene for LunarEclipseScene {
     fn advance(&mut self) -> bool {
-        // Advance the clock (any selector key press or Time-panel edit
-        // already landed directly during the previous egui pass; this
-        // frame's `frame_state` resolves the selection). Returns whether it
-        // is running - an "animating" source that keeps frames coming; when
+        // Advance the clock (any Camera Target key press or Time-panel edit
+        // already landed directly during the previous egui pass). Returns
+        // whether it is running - an "animating" source that keeps frames
+        // coming; when
         // paused nothing advances and the app can go idle. Nothing else to
         // update: `frame_state` re-derives the celestial sphere at the
         // frame's clock instant.
@@ -131,22 +146,19 @@ impl CameraView for LunarEclipseScene {
         // renderer re-derives the same sphere from `RenderState.time`).
         let sphere = CelestialSphere::at(&now);
 
-        // Refresh the scene-owned camera target from the selector; a genuine
-        // Luna<->Terra switch reframes the camera (full-frame distance,
-        // re-aim, in-flight animations dropped). Then resolve the inertial
-        // rig into the render frame (the moving Luna center is re-resolved
-        // from the ephemeris inside `world_rig`). The target packed below is
-        // the same one the rig was built for.
+        // Resolve the inertial rig into the render frame (the moving Luna
+        // center is re-resolved from the ephemeris inside `world_rig`). Any
+        // Luna<->Terra switch already landed - and reframed the camera -
+        // directly in the Camera Target key's callback (`set_camera_target`)
+        // during the previous egui pass, so the target here is simply the
+        // scene-owned one. The target packed below is the same one the rig
+        // was built for.
         let celestial_to_world = sphere.star_rot_inv.transpose();
-        let target = self.selector.resolve();
-        if !self.camera_target.same_kind(&target) {
-            self.camera.reframe(&target, &sphere, celestial_to_world);
-        }
-        self.camera_target = target;
+        let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
         // No satellites: an empty marker list. The renderer derives the Terra
-        // system from the frame's time; the selector's target (Luna or Terra)
+        // system from the frame's time; the target (Luna or Terra)
         // keeps the origin at Terra either way.
         RenderState {
             time: now,
@@ -162,7 +174,7 @@ impl CameraView for LunarEclipseScene {
 impl UIDrawable for LunarEclipseScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // The Time panel (datetime + run/speed) plus the Terra / Luna
-        // camera-target selector. The panel builder is deliberately kept
+        // Camera Target panel. The panel builders are deliberately kept
         // per-scene - scenes may diverge in what they expose.
         //
         // Snapshot the displayed values up front (owned `String`/`f32`/`bool`)
@@ -224,9 +236,45 @@ impl UIDrawable for LunarEclipseScene {
             anchor: PanelAnchor::TopLeft,
             rows: time_rows,
         }];
-        // The accessor re-finds the selector inside the scene when a key
-        // fires (the owned panel cannot borrow it).
-        panels.push(self.selector.panel(|scene: &mut Self| &mut scene.selector));
+
+        // The Terra / Luna Camera Target panel: two latching keys splitting
+        // one row, the orbited body lit. Each key's callback receives the
+        // scene at fire time and writes the camera target directly through
+        // `set_camera_target` (which reframes on a genuine switch and
+        // no-ops on the already-orbited body - idempotent) - the scene holds
+        // no selection state beyond `camera_target` itself.
+        let luna_active = self
+            .camera_target
+            .same_kind(&CameraTarget::Body(CelestialBody::LUNA));
+        let target_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
+            vec![Box::new(Header {
+                title: "Camera Target".to_string(),
+            })],
+            vec![
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Terra".to_string(),
+                        active: !luna_active,
+                    },
+                    on_toggle: Box::new(|scene: &mut Self| {
+                        scene.set_camera_target(CameraTarget::terra())
+                    }),
+                }),
+                Box::new(InteractiveToggle {
+                    toggle: Toggle {
+                        label: "Luna".to_string(),
+                        active: luna_active,
+                    },
+                    on_toggle: Box::new(|scene: &mut Self| {
+                        scene.set_camera_target(CameraTarget::Body(CelestialBody::LUNA))
+                    }),
+                }),
+            ],
+        ];
+        panels.push(UIDrawablePanel {
+            anchor: PanelAnchor::TopRight,
+            rows: target_rows,
+        });
         panels
     }
 }

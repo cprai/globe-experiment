@@ -11,8 +11,9 @@
 //! enum) without touching the renderer's contract.
 //!
 //! Identity is kept **separate from placement**: [`CelestialBody`] names a body
-//! (and carries no position), so the camera target and the body selectors can
-//! speak it directly; [`BodyState`] pairs that identity with a per-frame
+//! (and carries no position), so the camera target and the scenes'
+//! camera-target panels can speak it directly; [`BodyState`] pairs that
+//! identity with a per-frame
 //! [`Placement`] for the render list. Body radii are NOT stored - they come
 //! from the identity via the single-source-of-truth geometry module (the
 //! shared triaxial table in `planet`, which covers every body - Terra's row
@@ -33,8 +34,8 @@ pub enum TerraSystemEntity {
 }
 
 /// Identity of a renderable body, with no placement. This is the vocabulary the
-/// [`crate::engine::scene::CameraTarget`] and the body selectors speak;
-/// per-frame position/orientation lives in [`BodyState`].
+/// [`crate::engine::scene::CameraTarget`] and the scenes' camera-target
+/// panels speak; per-frame position/orientation lives in [`BodyState`].
 ///
 /// Hierarchical: Terra and Luna are reached through [`TerraSystemEntity`];
 /// the seven planets are listed individually. The variants are ordered by
@@ -61,8 +62,24 @@ impl CelestialBody {
     /// Luna.
     pub const LUNA: CelestialBody = CelestialBody::TerraSystem(TerraSystemEntity::Luna);
 
-    /// Display name (e.g. "Terra", "Luna", "Jupiter"), for the body-selector
-    /// keys.
+    /// Every body, ordered by distance from Sol with Luna placed right after
+    /// its parent Terra. This is the top-to-bottom key order of the
+    /// solar-system scenes' camera-target panels, and the index space a
+    /// `*_py` scene's script requests target switches in (`request_body`).
+    pub const ALL: [CelestialBody; 9] = [
+        CelestialBody::Mercury,
+        CelestialBody::Venus,
+        CelestialBody::TERRA,
+        CelestialBody::LUNA,
+        CelestialBody::Mars,
+        CelestialBody::Jupiter,
+        CelestialBody::Saturn,
+        CelestialBody::Uranus,
+        CelestialBody::Neptune,
+    ];
+
+    /// Display name (e.g. "Terra", "Luna", "Jupiter"), for the camera-target
+    /// panel keys.
     pub fn name(self) -> &'static str {
         match self {
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => "Terra",

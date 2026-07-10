@@ -50,9 +50,10 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // only for its MIN/MAX_MULTIPLIER classattrs (the speed-slider bounds):
     // no Clock instance crosses into Python - a script drives the clock
     // through its scene pyclass's paused/multiplier/datetime_label()
-    // properties, the Python face of the scenes' SceneClock trait API.
+    // properties, the Python face of the scenes' SceneClock trait API. The
+    // camera target is likewise scene-pyclass properties (selected_body/
+    // body_names()/request_body()), so no target type is registered either.
     m.add_class::<scene::Clock>()?;
-    m.add_class::<scene::BodySelector>()?;
     m.add_class::<scene::SatelliteTelemetry>()?;
     m.add_class::<scene::satellite::OrbitShape>()?;
     Ok(())

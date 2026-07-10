@@ -135,17 +135,20 @@ The surface anchor and the distance/near/pan limits scale by
 `target.mean_radius_km()`, so pan/tilt/zoom feel is the same fraction of
 whichever body is orbited.
 
-Each frame the scene's `CameraView::frame_state` resolves its target — the
-fixed Terra `camera_target` for the satellite scenes; the eclipse /
-solar-system scenes refresh `camera_target` from their
-`TargetSelector`/`BodySelector`, driven by the panel keys. On a genuine
-**body switch** (detected scene-side via
-`!self.camera_target.same_kind(&target)`) the scene calls
+Each frame the scene's `CameraView::frame_state` rigs on the scene-owned
+`camera_target` — fixed at Terra for the satellite scenes; in the eclipse /
+solar-system scenes the Camera Target panel keys write it directly at fire
+time (each scene's private `set_camera_target`). On a genuine **body
+switch** (detected via `!self.camera_target.same_kind(&target)`; a re-press
+of the lit key is a no-op) that helper calls
 `PtzCamera::reframe(&target, &celestial, c2w)` — distance = body default,
-tilt 0, re-aimed at the target's center resolved from the sphere, and any
-in-flight zoom/flick dropped (it targets the old body's scale) — before
-storing the new target in `camera_target`. A same-body frame needs no camera
-call at all (the moving center is resolved inside `world_rig`). The
+tilt 0, re-aimed at the target's center resolved from the sphere at the
+current clock instant, and any in-flight zoom/flick dropped (it targets the
+old body's scale) — before storing the new target in `camera_target`.
+(`solar_system_py` is the exception: its script can only reach the scene
+pyclass, so the wrapper's `frame_state` folds the script-requested body into
+`camera_target`, reframing there, one frame later.) A same-body frame needs
+no camera call at all (the moving center is resolved inside `world_rig`). The
 `headless` binary picks
 the body directly: the `--scene` `camera.target` field is `"terra"` (default),
 `"luna"`, or a planet (a center-free `CameraTargetSpec` in `src/headless.rs`;

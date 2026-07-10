@@ -92,7 +92,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   (Mercury through Neptune) at their true DE440 positions and scale, shaped as
   triaxial ellipsoids with equal equatorial axes - their familiar oblate forms,
   Saturn and Jupiter visibly flattened - oriented by the IAU
-  planet rotation and lit by Sol with the correct phase. A body-selector
+  planet rotation and lit by Sol with the correct phase. A Camera Target
   panel (one key per body, ordered by distance from Sol) flies the camera to
   and orbits any of Terra, Luna, or a planet. Every body - Terra, the seven
   planets, and Luna alike - is drawn as a shader
@@ -113,7 +113,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 - Smooth map-style navigation: panning follows the cursor at
   any zoom level, from whole-Terra spins down to country level. The camera orbits
   a chosen body - always Terra for satellite scenes, either Terra
-  or Luna in the eclipse scenes (a Terra / Luna selector in the panel),
+  or Luna in the eclipse scenes (a Terra / Luna panel key each),
   and any of nine bodies in the solar-system scene (a key per body in the
   panel), with pan/tilt/zoom scaled to whichever body is targeted.
 - Real-world geometry: Terra is the WGS84 reference ellipsoid and the
@@ -146,7 +146,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   the reference scripts `scenes/manual_control_py.py` /
   `scenes/solar_system_py.py`). The script is read at launch - edit it and
   relaunch, no rebuild. The scripts drive the live scene through an embedded
-  `globe` module exposing the same instrument/panel/selector API as Rust
-  (the clock is driven through the scene object's own paused/multiplier/
-  datetime properties); the two scene pairs live side by side so the APIs
-  can be compared.
+  `globe` module exposing the same instrument/panel API as Rust
+  (the clock and the camera target are driven through the scene object's own
+  paused/multiplier/datetime and selected_body/request_body properties); the
+  two scene pairs live side by side so the APIs can be compared.

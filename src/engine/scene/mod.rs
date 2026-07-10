@@ -3,14 +3,13 @@
 //! trait that every scene implements; the clock lives directly in each
 //! scene struct (the celestial sphere is not stored anywhere -
 //! `CelestialSphere::at` is a pure function of time, evaluated on demand),
-//! and each scene also builds its own Time panel
+//! and each scene also builds its own panels - the Time panel and any
+//! camera-target panel included -
 //! (deliberately per-scene, so scenes can diverge). It stays free of
-//! any windowing (winit) or GPU (wgpu) dependency and never references any
-//! camera type (the `CameraControl`/`CameraView` traits + `PtzCamera` live in
-//! the shared `engine::camera` module, implemented/held by each scene); it
-//! does
-//! depend on `ui` for the `UIDrawablePanel`/`Instrument` types the selector
-//! panels are built from.
+//! any windowing (winit), GPU (wgpu), or UI (`ui`/egui) dependency and never
+//! references any camera type (the `CameraControl`/`CameraView` traits +
+//! `PtzCamera` live in the shared `engine::camera` module, implemented/held
+//! by each scene).
 
 pub mod body;
 pub mod celestial_sphere;
@@ -29,9 +28,6 @@ pub use body::CelestialBody;
 pub use clock::{Clock, SceneClock};
 
 use crate::engine::planet;
-use crate::engine::ui::{
-    Header, Instrument, InteractiveToggle, PanelAnchor, Toggle, UIDrawablePanel,
-};
 use celestial_sphere::CelestialSphere;
 
 /// Synthetic characteristic radius (km) for a free [`CameraTarget::Coordinate`]
@@ -274,202 +270,6 @@ pub struct SatelliteTelemetry {
 /// about the `celestial_sphere` submodule.
 pub fn init() {
     celestial_sphere::init_satkit();
-}
-
-/// Tracks which body the user has chosen to orbit (Terra or Luna) and builds
-/// the Terra / Luna selector panel. Shared by the scenes that offer a Luna
-/// target (the eclipses); Terra-only scenes never hold one.
-///
-/// A key callback receives the live scene at fire time (see
-/// `ui::UIDrawablePanel`) and writes `luna_selected` directly through the
-/// `access` closure its scene passed to [`panel`](Self::panel). The write
-/// lands during the egui pass; the scene's `CameraView::frame_state` resolves
-/// it the next frame - the same one-frame latency the old request-flag fold
-/// had. Writing a fixed value per key is idempotent under egui's
-/// discard-pass double fire.
-pub struct TargetSelector {
-    luna_selected: bool,
-}
-
-impl TargetSelector {
-    /// Builds a selector with the initial choice (`true` = Luna).
-    pub fn new(luna_selected: bool) -> Self {
-        Self { luna_selected }
-    }
-
-    /// Resolves the current choice into a [`CameraTarget`] identity (the
-    /// center is looked up from the ephemeris where it is needed).
-    pub fn resolve(&self) -> CameraTarget {
-        if self.luna_selected {
-            CameraTarget::Body(CelestialBody::LUNA)
-        } else {
-            CameraTarget::terra()
-        }
-    }
-
-    /// The top-right Terra / Luna selector panel: a header row plus one row of
-    /// two latching keys (side by side, splitting the row), the chosen body
-    /// lit. `access` re-finds this selector inside the scene when a key fires
-    /// (the panel is owned/`'static`, so the callbacks cannot borrow `self`);
-    /// each key writes the selection directly.
-    pub fn panel<S: 'static>(
-        &self,
-        access: impl Fn(&mut S) -> &mut TargetSelector + Clone + 'static,
-    ) -> UIDrawablePanel<S> {
-        let luna_active = self.luna_selected;
-        let terra_access = access.clone();
-        let rows: Vec<Vec<Box<dyn Instrument<S>>>> = vec![
-            vec![Box::new(Header {
-                title: "Camera Target".to_string(),
-            })],
-            vec![
-                Box::new(InteractiveToggle {
-                    toggle: Toggle {
-                        label: "Terra".to_string(),
-                        active: !luna_active,
-                    },
-                    on_toggle: Box::new(move |scene| terra_access(scene).luna_selected = false),
-                }),
-                Box::new(InteractiveToggle {
-                    toggle: Toggle {
-                        label: "Luna".to_string(),
-                        active: luna_active,
-                    },
-                    on_toggle: Box::new(move |scene| access(scene).luna_selected = true),
-                }),
-            ],
-        ];
-
-        UIDrawablePanel {
-            anchor: PanelAnchor::TopRight,
-            rows,
-        }
-    }
-}
-
-/// Every selectable body, ordered by distance from Sol, with Luna
-/// placed right after its parent Terra. This is also the top-to-bottom order
-/// of the selector panel's keys ([`BodySelector::panel`] loops over it) and
-/// the index space of `selected` / the Python `request(index)`.
-const SELECTABLE_BODIES: [CelestialBody; 9] = [
-    CelestialBody::Mercury,
-    CelestialBody::Venus,
-    CelestialBody::TERRA,
-    CelestialBody::LUNA,
-    CelestialBody::Mars,
-    CelestialBody::Jupiter,
-    CelestialBody::Saturn,
-    CelestialBody::Uranus,
-    CelestialBody::Neptune,
-];
-
-/// Index of Terra in [`SELECTABLE_BODIES`] - the scene's start target.
-const TERRA_INDEX: usize = 2;
-
-/// Tracks which solar-system body the camera orbits and builds the selector
-/// panel: one always-visible latching key per body (the chosen one lit), so the
-/// whole solar system is selectable at a glance.
-///
-/// A key callback receives the live scene at fire time (see
-/// `ui::UIDrawablePanel`) and writes `selected` directly through the `access`
-/// closure its scene passed to [`panel`](Self::panel); the scene's
-/// `CameraView::frame_state` resolves it the next frame - the same one-frame
-/// latency as [`TargetSelector`]. Writing a fixed index per key is idempotent
-/// under egui's discard-pass double fire.
-///
-/// `pyclass`: a `*_py` scene holds `Py<BodySelector>` and hands the live
-/// handle to its script, which rebuilds this panel in Python - reading
-/// `selected`, listing [`body_names`](Self::body_names), and switching
-/// through [`request`](Self::request) (the pymethod twin of a Rust key's
-/// direct write).
-#[pyclass(module = "globe")]
-pub struct BodySelector {
-    /// Index into [`SELECTABLE_BODIES`].
-    selected: usize,
-}
-
-impl Default for BodySelector {
-    fn default() -> Self {
-        // Start on Terra (the familiar default view).
-        Self {
-            selected: TERRA_INDEX,
-        }
-    }
-}
-
-#[pymethods]
-impl BodySelector {
-    /// The selected body's index into [`SELECTABLE_BODIES`] (= the panel's
-    /// key order).
-    #[getter]
-    fn selected(&self) -> usize {
-        self.selected
-    }
-
-    /// Every selectable body's display name, in [`SELECTABLE_BODIES`] (panel)
-    /// order - what a script labels its keys with.
-    #[staticmethod]
-    fn body_names() -> Vec<String> {
-        SELECTABLE_BODIES
-            .iter()
-            .map(|body| body.name().to_string())
-            .collect()
-    }
-
-    /// Requests a switch to `SELECTABLE_BODIES[index]` - the same direct
-    /// `selected` write a Rust panel key makes (a script callback fires
-    /// during the egui pass; the scene's `frame_state` resolves the new
-    /// selection next frame).
-    fn request(&mut self, index: usize) -> PyResult<()> {
-        if index >= SELECTABLE_BODIES.len() {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "body index {index} out of range 0..{}",
-                SELECTABLE_BODIES.len()
-            )));
-        }
-        self.selected = index;
-        Ok(())
-    }
-}
-
-impl BodySelector {
-    /// Resolves the current choice into a [`CameraTarget`] identity (the
-    /// center is looked up from the ephemeris where it is needed).
-    pub fn resolve(&self) -> CameraTarget {
-        CameraTarget::Body(SELECTABLE_BODIES[self.selected])
-    }
-
-    /// The top-right selector panel: a header row plus one latching key per
-    /// row, a single column ordered by distance from Sol (the chosen body
-    /// lit; each lone key fills its row). `access` re-finds this selector
-    /// inside the scene when a key fires (the panel is owned/`'static`, so
-    /// the callbacks cannot borrow `self`); each key writes its own fixed
-    /// index into `selected`, which is what lets one loop mint all nine keys.
-    pub fn panel<S: 'static>(
-        &self,
-        access: impl Fn(&mut S) -> &mut BodySelector + Clone + 'static,
-    ) -> UIDrawablePanel<S> {
-        let mut rows: Vec<Vec<Box<dyn Instrument<S>>>> = vec![vec![Box::new(Header {
-            title: "Camera Target".to_string(),
-        })]];
-        // One key per body, in its own row; index i lines up with
-        // SELECTABLE_BODIES so the label + `active` reflect the live selection.
-        for (i, body) in SELECTABLE_BODIES.iter().enumerate() {
-            let access = access.clone();
-            rows.push(vec![Box::new(InteractiveToggle {
-                toggle: Toggle {
-                    label: body.name().to_string(),
-                    active: self.selected == i,
-                },
-                on_toggle: Box::new(move |scene| access(scene).selected = i),
-            })]);
-        }
-
-        UIDrawablePanel {
-            anchor: PanelAnchor::TopRight,
-            rows,
-        }
-    }
 }
 
 /// Whether the solid Terra blocks the line of sight from `eye` to `target`

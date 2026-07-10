@@ -17,8 +17,10 @@
   until the script's Run-toggle callback flips the scene's clock through its
   `paused` property setter (the `SceneClock` API's Python face) —
   main-bin harness only), and in `scenes/solar_system_py.rs` the second
-  script's load + selector shape (`solar_system_script_builds_selector`,
-  no satkit — the panel path only reads the clock and selector) — run
+  script's load + Camera Target panel shape
+  (`solar_system_script_builds_selector`,
+  no satkit — the panel path only reads the clock and the requested body
+  index) — run
   them after touching those modules. The two scene tests read the real
   `scenes/*.py` at runtime, so they also stand in for the edit-without-
   rebuild check. Tests touching Python must call

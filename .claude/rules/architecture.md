@@ -53,7 +53,7 @@ src/engine/py.rs         embedded Python: Once-guarded init() (append_to_inittab
                          of the `globe` pymodule STRICTLY before
                          Python::initialize), the `globe` module registration
                          (instruments + PanelAnchor/LampStatus + ui::py types +
-                         Clock/BodySelector/SatelliteTelemetry/OrbitShape; the
+                         Clock/SatelliteTelemetry/OrbitShape; the
                          *_py scene pyclasses are NOT registered - they live in
                          src/scenes, which engine must not reference, and reach
                          Python as instances), and load_get_drawables (reads
@@ -79,12 +79,14 @@ src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on pu
 src/scenes/solar_eclipse.rs  SolarEclipseScene: empty (NO satellites);
                          clock starts from the 2024-04-08 eclipse datetime;
                          new() seeds its PtzCamera framing the Terra day side
-                         (PtzCamera::looking_toward);
-                         TargetSelector (default Terra) for the Terra/Luna panel
+                         (PtzCamera::looking_toward); inline Terra/Luna Camera
+                         Target panel whose keys write camera_target directly
+                         via set_camera_target (default Terra)
 src/scenes/lunar_eclipse.rs  LunarEclipseScene: empty (NO satellites);
                          clock starts from the 2025-03-14 eclipse datetime;
                          new() seeds its PtzCamera orbiting Luna (Luna-target
-                         looking_toward); TargetSelector (default Luna)
+                         looking_toward); inline Terra/Luna Camera Target panel
+                         (set_camera_target; default Luna)
 src/scenes/manual_control.rs  ManualControlScene: ONE user-thrustable
                          satellite; own ISS_TLE const (duplicated on purpose),
                          used once to seed a GCRF OrbitState (no TLE after) that
@@ -121,19 +123,22 @@ src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
                          duplicated ISS_TLE. Holds the round-trip unit test
 src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
                          clock starts 2025-06-01; draws all 7 planets at true
-                         pos/scale; BodySelector (one key per body: Terra, Luna,
-                         the 7 planets) drives camera_target; default Terra view
+                         pos/scale; inline Camera Target panel (one key per body
+                         in CelestialBody::ALL order) whose keys write
+                         camera_target directly via set_camera_target (reframing
+                         on a genuine switch); default Terra view
 src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
                          delegates to the CLI-given script (the repo ships
                          scenes/solar_system_py.py); same
                          Inner-pyclass + wrapper pattern as manual_control_py
                          (plain clock behind SceneClock + the same clock
                          properties; camera/camera_target on the wrapper,
-                         whose frame_state resolves the selector cell), with
-                         selector: Py<BodySelector> shared
-                         live with the script (the script rebuilds the
-                         9-key selector panel via selector.selected /
-                         BodySelector.body_names() / selector.request(i))
+                         whose frame_state folds the Inner's script-requested
+                         body into camera_target), with selected_body: usize
+                         (index into CelestialBody::ALL) re-exposed as scene
+                         properties (the script rebuilds the 9-key Camera
+                         Target panel via scene.selected_body /
+                         scene.body_names() / scene.request_body(i))
 src/engine/application/mod.rs   ApplicationState<S: Scene + CameraControl +
                          CameraView + UIDrawable>
                          + winit ApplicationHandler + run(). Keeps NO camera or
@@ -321,8 +326,11 @@ src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
                          mutual-eclipse rule: same-system bodies shadow each
                          other - the renderer builds impostor occluder lists
                          from it), Placement (pos+rot), BodyState (identity
-                         + placement). The shared vocabulary for the celestial
-                         sphere, CameraTarget, and the selectors
+                         + placement), CelestialBody::ALL (all 9 bodies ordered
+                         by distance from Sol - the camera-target panels' key
+                         order and index space). The shared vocabulary for the
+                         celestial sphere, CameraTarget, and the scenes'
+                         camera-target panels
 src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
                          advance(); the clock lives directly in each scene
                          struct - the celestial sphere is NOT stored anywhere:
@@ -338,16 +346,11 @@ src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
                          Body(CelestialBody) | Coordinate(DVec3) - a pure
                          identity; center_world()/render_origin() resolve the
                          moving center from the CelestialSphere on demand),
-                         TargetSelector (Terra/Luna, eclipses), BodySelector (one
-                         latching key per body, 9 bodies ordered by distance from
-                         Sol, solar_system; both selectors' panel<S>(access)
-                         builders take an accessor closure re-finding the
-                         selector in the scene, and each key callback writes
-                         the selection directly - frame_state resolves it next
-                         frame; BodySelector is also a #[pyclass] - selected
-                         getter + body_names() staticmethod + request(index),
-                         the pymethod twin of a key's direct write, so a *_py
-                         scene's script can rebuild the panel).
+                         There are NO selector types: each multi-target scene
+                         builds its Camera Target panel inline in get_drawables
+                         and its key callbacks write camera_target directly
+                         (solar_system_py re-exposes the choice as
+                         scene-pyclass properties instead).
                          SatelliteTelemetry is a
                          #[pyclass(get_all)] readout
 src/engine/scene/celestial_sphere.rs  ephemeris-driven Sol + star-map orientation
@@ -438,7 +441,7 @@ ui          -> (egui, egui_taffy, pyo3)   # defines UIDrawable trait +
                                        # pyclasses and ui::py holds the Panel/
                                        # Interactive* twins + panel conversion
 py          -> ui (class registration + ui::py types), scene (Clock,
-                                       # BodySelector, SatelliteTelemetry,
+                                       # SatelliteTelemetry,
                                        # satellite::OrbitShape), (pyo3)
                                        # interpreter init + the `globe` module +
                                        # the runtime script loader; never
@@ -451,10 +454,10 @@ renderer    -> scene (RenderState + CelestialSphere::at),
                                        # derives all body geometry from
                                        # RenderState.time itself (so it pulls in
                                        # satkit transitively at runtime).
-scene       -> planet, ui, (satkit, egui via ui, glam, pyo3)  # selector
-                                       # panel builders use ui; NO winit/wgpu/
-                                       # camera types; pyo3 only for the
-                                       # Clock/BodySelector/readout pyclasses
+scene       -> planet, (satkit, glam, pyo3)   # NO winit/wgpu/ui/egui/
+                                       # camera types (the ui edge died with
+                                       # the selector panel builders); pyo3
+                                       # only for the Clock/readout pyclasses
 planet      -> scene::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # EVERY body's data (Terra + 7 planets
                                        # + Luna) off the CelestialBody variants
@@ -477,9 +480,9 @@ requires no changes
 to the application layer. It is **UI- and camera-agnostic** - the panel
 reads/drives a scene through a *separate* `ui::UIDrawable` impl, and the
 frame's `RenderState` comes from the scene's *separate* `camera::CameraView`
-impl. (The `Scene` trait itself takes no UI or camera types; the
-`scene` module does depend on `ui` for the selector panel builders,
-`TargetSelector::panel` / `BodySelector::panel`.)
+impl. (The `Scene` trait itself takes no UI or camera types, and the
+`scene` module no longer references `ui` at all - the selector panel
+builders that needed it are gone.)
 
 ```
 advance(&mut self) -> bool
@@ -542,10 +545,12 @@ cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
 CameraView:
 
 frame_state(&mut self) -> RenderState
-    Produce the frame: resolve the scene-owned camera_target (selector
-    scenes refresh it from their selector, calling PtzCamera::reframe on a
-    genuine body switch - which resets framing and cancels in-flight
-    animation; satellite scenes keep it fixed at Terra), resolve the rig
+    Produce the frame: read the scene-owned camera_target (already current
+    - a multi-target scene's Camera Target key callbacks write it directly
+    at fire time, calling PtzCamera::reframe on a genuine body switch, which
+    resets framing and cancels in-flight animation; satellite scenes keep it
+    fixed at Terra; solar_system_py folds its script-requested body in
+    here), resolve the rig
     against the celestial sphere evaluated on the spot at the frame's clock
     instant (let sphere = CelestialSphere::at(&now) - `at` is a pure
     function of time, so no sphere is stored; world_rig(&target, &sphere,
@@ -645,7 +650,9 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   telemetry (re-propagated on the spot at the frame's clock instant, into
   owned values - deterministic, so it matches
   the rendered markers) or the
-  selector panel, plus manual_control's bottom-center Burns panel. All panels
+  inline Camera Target panel (whose key callbacks write the scene's
+  camera_target directly, reframing on a genuine switch), plus
+  manual_control's bottom-center Burns panel. All panels
   are independently anchored - no stacking constant.
   `ui::control_panel(ctx, &mut panels, &mut scene)` renders the pre-built
   panels (framing each at its anchor, taffy rows), threading the scene into
@@ -665,7 +672,7 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
   rivets per panel.
 
 Every scene struct holds the clock as a direct field (there is no shared
-core struct), alongside its own satellites/selector. No scene stores a
+core struct), alongside its own satellites/camera_target. No scene stores a
 `CelestialSphere`: `CelestialSphere::at` is a pure function of time, so
 `frame_state` (and, where framing needs it, `new()`) evaluates it on the
 spot - the same pattern as the renderer's per-frame `at`.
@@ -679,10 +686,10 @@ submodule path.
   markers), produced by the scene's `camera::CameraView` impl and consumed
   by the renderer. This keeps input scheme changes local to `camera` (+ one
   translation arm in `application`) and each scene independently testable.
-  `scene` *does* depend on `ui` (hence egui, transitively) for the
-  selector panel builders (`TargetSelector::panel` / `BodySelector::panel`).
-  The `UIDrawable`/`UIDrawablePanel`/`Instrument`
-  types are still defined in `ui`, and interactivity is carried by the
+  `scene` no longer depends on `ui` at all (the selector panel builders
+  that needed it are gone; each scene builds its camera-target panel
+  inline). The `UIDrawable`/`UIDrawablePanel`/`Instrument`
+  types are defined in `ui`, and interactivity is carried by the
   `Interactive*` wrappers (the bare instrument structs are inert), so the same
   code can drive a mock UI (bare deserialized instruments, no callbacks) with
   no live `Clock`.

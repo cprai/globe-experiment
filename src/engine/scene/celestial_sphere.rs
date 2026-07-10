@@ -232,7 +232,8 @@ impl CelestialSphere {
 
     /// The world-frame center (km) of one body this frame. Heliocentric, so
     /// Terra sits at `-sol_geo` (not the origin). f64, like the underlying
-    /// placement. Used by the body selectors and by `render_origin`.
+    /// placement. Used by the scenes' camera retargeting and by
+    /// `render_origin`.
     pub fn center_world(&self, body: CelestialBody) -> DVec3 {
         self.body(body)
             .map(|state| state.placement.pos_world)

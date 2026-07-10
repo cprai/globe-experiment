@@ -27,8 +27,8 @@ paths:
   `new()` builds `Clock::new(epoch)` +
   `PtzCamera::default()` (or a `looking_toward` framing, below — the only
   case where `new()` evaluates a throwaway local sphere) +
-  `CameraTarget::terra()` (or the body matching the seeded framing/selector
-  default, so the first frame does not reframe); `advance()`
+  `CameraTarget::terra()` (or the body matching the seeded framing, so the
+  first frame does not reframe); `advance()`
   just ticks the clock (and nothing else, unless the scene has extra
   per-frame state like `manual_control`'s orbit re-anchor) - any Time-panel
   pause/speed edit already landed directly during the previous egui pass.
@@ -67,13 +67,12 @@ paths:
   The `impl CameraView` block is `frame_state`, the frame
   recipe: evaluate this frame's sphere
   (`let sphere = CelestialSphere::at(&now)`), derive
-  `celestial_to_world = sphere.star_rot_inv.transpose()`,
-  resolve the frame's target (the fixed `self.camera_target` for satellite
-  scenes; selector scenes resolve the selector, call
-  `self.camera.reframe(&target, &sphere, c2w)` when
-  `!self.camera_target.same_kind(&target)`, and store the result in
-  `self.camera_target`), `world_rig(&target, &sphere, c2w)` -> (eye, look_at,
-  up), then pack `RenderState` (packing the SAME resolved `target`).
+  `celestial_to_world = sphere.star_rot_inv.transpose()`, take the frame's
+  target (`self.camera_target` - already current: a multi-target scene's
+  Camera Target key callbacks wrote it, and reframed, at fire time; fixed at
+  Terra for satellite scenes), `world_rig(&target, &sphere, c2w)` ->
+  (eye, look_at, up), then pack `RenderState` (packing the SAME `target`
+  the rig was built for).
 
 ### Empty (no-satellite) scenes
 
@@ -81,7 +80,8 @@ Some scenes track **no** objects and just wind the celestial sphere to an
 event (e.g. `solar_eclipse`, `lunar_eclipse`). They omit the `Vec<Satellite>`
 field entirely: `CameraView::frame_state` returns `markers:
 Vec::new()` and the time from the scene's own clock; `get_drawables`
-returns the Time panel (plus a selector panel if the scene has one). With
+returns the Time panel (plus a Camera Target panel if the scene offers
+more than one orbit body). With
 no TLE there is no epoch to borrow, so `new()` sets the clock start
 **directly** from the event datetime via `satkit::Instant::from_datetime(...)`
 (still range-check it against the EOP window below).
@@ -97,8 +97,7 @@ world_look, distance)` (orbits `target` with the look axis along a world-frame
 direction — e.g. Terra target aimed at `-sol_dir` for the day side, or a Luna
 target aimed at Luna's center (`celestial.luna().placement.pos_world`))
 instead of `PtzCamera::default()` — and seed `camera_target` with that same
-target, so the first frame's `same_kind` check does not reframe away the
-framing. The camera is fully interactive afterward
+target, so the framing starts on the body the camera orbits. The camera is fully interactive afterward
 (`ApplicationState::with_camera` no longer exists - the scene owns its
 camera and its target). The solar eclipse frames the Terra day side; the lunar eclipse
 launches **orbiting Luna** (a Luna-target camera looking toward Luna's center
@@ -107,40 +106,39 @@ offset needed).
 
 ### Camera-target selection (Terra or Luna)
 
-A scene that offers more than Terra holds a `scene::TargetSelector`;
-its `CameraView::frame_state` resolves it (`self.selector.resolve()`, a
-`CameraTarget` identity - the center is resolved from the sphere downstream)
-into `self.camera_target` each frame, calling `self.camera.reframe(..)`
-first when the resolved target is a genuine switch (`same_kind`).
-The selector's Terra / Luna radio panel is appended in `get_drawables` via
-`self.selector.panel(|scene: &mut Self| &mut scene.selector)` - the accessor
-re-finds the selector in the scene when a key fires, since the owned panel
-cannot borrow it. A key callback writes `luna_selected` directly (a fixed
-value per key, idempotent); the press lands during the egui pass and the
-*next* frame's `frame_state` resolves it - the same one-frame latency the old
-request-flag fold had. Satellite scenes skip all this and
-keep their `camera_target` fixed at `CameraTarget::terra()` (never reframed).
+There are **no selector types**: a scene that offers more than Terra holds
+no state beyond its `camera_target` and builds its Terra / Luna Camera
+Target panel **inline in `get_drawables`** (a header plus two latching keys
+splitting one row, the orbited body lit via
+`self.camera_target.same_kind(..)`). Each key's callback receives the scene
+at fire time and writes the camera target **directly** through the scene's
+private `set_camera_target(&mut self, target)` helper: a `same_kind` guard
+(re-pressing the lit key is a no-op, which also keeps the callback
+idempotent under egui's discard-pass double fire), then
+`self.camera.reframe(&target, &sphere, c2w)` against a sphere evaluated at
+the current clock instant, then the `camera_target` write. The switch (and
+reframe) lands during the egui pass; the next frame's `frame_state` simply
+rigs on `self.camera_target`. The helper is deliberately duplicated per
+scene, like the Time panel. Satellite scenes skip all this and keep their
+`camera_target` fixed at `CameraTarget::terra()` (never reframed).
 
 ### Multi-body selection (solar_system)
 
-The `solar_system` scene (empty, no satellites; clock from 2025-06-01) offers
-**nine** orbit bodies, so it holds a `scene::BodySelector` instead of
-`TargetSelector`. `SELECTABLE_BODIES` lists them ordered by distance from the
-Sol with Luna right after Terra (Mercury, Venus, Terra, Luna, Mars, Jupiter,
-Saturn, Uranus, Neptune); `selected` defaults to `TERRA_INDEX` so the scene
-starts on Terra (matching the default whole-Terra camera). The panel shows
-**one always-visible latching key per body** (a single column, the chosen one
-lit), built by one loop over `SELECTABLE_BODIES` in `panel<S>(access)`: each
-key's callback writes its own fixed index into `selected` through the
-accessor (idempotent; resolved by the next frame's `frame_state`, like the
-eclipse selector). Its `resolve()` returns the chosen body's `CameraTarget`
-identity (the center is resolved from the sphere downstream).
-`CameraView::frame_state` refreshes `self.camera_target` from it (reframing
-the camera on a genuine switch), rigs on it, and fills the reduced
-`RenderState` (the frame's time + camera rig + `camera_target` (= the resolved
-target) + empty markers); the renderer derives every body's geometry from the
-time and takes the render origin from the `camera_target`. The panel is appended
-in `get_drawables` like the eclipse selector.
+The `solar_system` scene (empty, no satellites; clock from 2025-06-01)
+offers **nine** orbit bodies - same inline pattern as the eclipse scenes,
+scaled up. `CelestialBody::ALL` (in `scene/body.rs`) lists them ordered by
+distance from Sol with Luna right after Terra (Mercury, Venus, Terra, Luna,
+Mars, Jupiter, Saturn, Uranus, Neptune); the scene starts on
+`CameraTarget::terra()` (matching the default whole-Terra camera). The
+Camera Target panel shows **one always-visible latching key per body** (a
+single column, the orbited one lit), built by one loop over
+`CelestialBody::ALL` in `get_drawables`: each key's callback writes its own
+fixed body into the camera target directly through the same
+`set_camera_target` helper as the eclipse scenes (same_kind-guarded reframe
++ write; idempotent). `frame_state` rigs on `self.camera_target` and fills
+the reduced `RenderState` (the frame's time + camera rig + `camera_target` +
+empty markers); the renderer derives every body's geometry from the time and
+takes the render origin from the `camera_target`.
 
 ### Manually-controlled satellite (manual_control)
 
@@ -183,9 +181,11 @@ The pattern:
   behind the Inner's `SceneClock` impl, re-exposed to the script as pyclass
   properties (`paused`/`multiplier` getter+setter pairs + `datetime_label()`,
   each pymethod delegating to the trait API), so a script callback like
-  `scene.paused = ...` drives the same clock Rust ticks. Only
-  non-clock shared state stays a `Py<..>` field with `#[pyo3(get)]`
-  (solar_system_py's `selector: Py<BodySelector>`). Rust-private simulation
+  `scene.paused = ...` drives the same clock Rust ticks. The camera target
+  gets the same treatment (solar_system_py): a plain `selected_body: usize`
+  Inner field (index into `CelestialBody::ALL`) re-exposed as
+  `selected_body`/`body_names()`/`request_body(i)` pymethods - no shared
+  `Py<..>` state at all. Rust-private simulation
   state (orbit) stays in plain Inner fields. The Rust side of the
   Inner mirrors the sibling's `new`/`advance` body for body (the clock
   ticks via `self.tick_clock()` — the script's setters apply directly,
@@ -194,14 +194,17 @@ The pattern:
   Py<PyAny>, camera: PtzCamera, camera_target: CameraTarget }` implements
   the four engine traits. The camera + target are **plain wrapper fields,
   deliberately outside the pyclass** — a script has no camera surface (its
-  only camera influence is the target choice requested through the
-  selector), and only a plain field can hand out the `&mut PtzCamera` that
+  only camera influence is the orbit body requested through
+  `request_body`), and only a plain field can hand out the `&mut PtzCamera` that
   `ScenePtzCamera` requires (a pyclass cell's borrow guard cannot) — so the
   wrapper implements `ScenePtzCamera` and takes the blanket `CameraControl`
   exactly like the Rust scenes. Consequently `frame_state` lives on the
   **wrapper** (`CameraView`): it borrows the Inner for the clock/orbit (and
-  borrows the shared selector cell to resolve the target, reframing on a
-  genuine switch) and rigs the wrapper's own camera; the sibling's recipe,
+  folds the Inner's script-requested `selected_body` into the wrapper-owned
+  `camera_target`, reframing on a genuine switch - the Rust sibling
+  retargets directly in its key callbacks, but the script can only reach
+  the Inner, so the fold lands here one frame later) and rigs the wrapper's
+  own camera; the sibling's recipe,
   split across the boundary. The remaining pyclass-touching methods are
   `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
   rule: never hold a pyclass borrow across a call into Python.** The trait
@@ -209,12 +212,13 @@ The pattern:
   passes `self.inner.bind(py)` into the script, whose property/method
   accesses each take their own transient borrow. Script callbacks fire later,
   during `control_panel`'s render, when no borrow is live.
-- **Burn keys / selector keys**: the script passes the Inner's bound `&mut
-  self` methods (`scene.request_prograde`, `selector.request(i)`) as
+- **Burn keys / Camera Target keys**: the script passes the Inner's bound
+  `&mut self` methods (`scene.request_prograde`, `scene.request_body(i)`) as
   callbacks - the converted `Interactive*<S>` twins ignore their `&mut S`
   fire-time argument and call the Python callable, which reaches the scene
-  through its own transient pyclass borrow. `request(i)` writes `selected`
-  directly (the pymethod twin of a Rust key's write); the burn `request_*`
+  through its own transient pyclass borrow. `request_body(i)` writes
+  `selected_body` directly (the pymethod twin of a Rust key's camera-target
+  write); the burn `request_*`
   methods set the per-key flags both siblings keep (dt-scaled in `advance`).
 - **run() order**: `run(args: Args)` carries the script path (the `*_py`
   scenes' required `--script` flag, declared on their own `Args` struct so
@@ -230,7 +234,7 @@ The pattern:
   speed-slider mapping
   is done in Python (`math.log`/`math.exp` against `Clock.MIN_MULTIPLIER`/
   `MAX_MULTIPLIER` — the classattrs are all `Clock` is still imported for).
-  The 9-key selector loop needs the `lambda i=i:` capture
+  The 9-key Camera Target loop needs the `lambda i=i:` capture
   (Python's late binding).
 - **Error policy**: script load/compile failure and a per-frame
   `get_drawables` exception print the traceback and **panic** (they would

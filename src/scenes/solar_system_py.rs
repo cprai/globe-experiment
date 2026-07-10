@@ -1,7 +1,7 @@
 //! The solar-system scene with its UI panels produced by **Python**: a clone
-//! of `solar_system` (same nine-body selector, camera, and clock) whose
-//! `UIDrawable::get_drawables` delegates to a Python script whose path is
-//! the scene's required `--script` argument (the repo ships
+//! of `solar_system` (same nine-body Camera Target panel, camera, and clock)
+//! whose `UIDrawable::get_drawables` delegates to a Python script whose path
+//! is the scene's required `--script` argument (the repo ships
 //! `scenes/solar_system_py.py`). The two scenes live side by side so the
 //! Rust and Python panel APIs can be compared (CLI: `globe-experiment scene
 //! solar_system_py --script scenes/solar_system_py.py`).
@@ -11,11 +11,13 @@
 //! [`SolarSystemPyScene`] for the four engine traits; borrows of the pyclass
 //! cell never span a call into Python. The script sees the clock properties
 //! (`paused`/`multiplier`/`datetime_label()` - the `SceneClock` trait API's
-//! Python face) and the shared `selector` handle - its selector panel reads
-//! `selector.selected` / `BodySelector.body_names()` and its key callbacks
-//! call `selector.request(i)`, the pymethod twin of a Rust key's direct
-//! `selected` write. Script errors fail fast (traceback + panic); callback
-//! errors only print (see `ui::py`).
+//! Python face) and the camera-target properties (`selected_body` /
+//! `body_names()` / `request_body(i)`, the pymethod face of the Rust
+//! sibling's direct camera-target write - the script cannot touch the
+//! wrapper-owned camera, so the Inner holds the requested body and the
+//! wrapper's `frame_state` folds it into the camera target). Script errors
+//! fail fast (traceback + panic); callback errors only print (see
+//! `ui::py`).
 
 use std::path::PathBuf;
 
@@ -27,25 +29,28 @@ use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
 use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{
-    self, BodySelector, CameraTarget, Clock, RenderState, Scene, SceneClock,
+    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock,
 };
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
 
 /// The live simulation state, as a pyclass: the script reads/drives the
 /// clock properties (the `SceneClock` API's pymethod face below) and the
-/// shared `selector`; the clock object itself stays Rust-private. The
-/// camera is not even in here: it lives on the wrapper, outside the
-/// pyclass, so a script's only camera influence is the orbit-target choice
-/// it requests through the selector.
+/// camera-target properties; the clock object itself stays Rust-private.
+/// The camera is not even in here: it lives on the wrapper, outside the
+/// pyclass, so a script's only camera influence is the orbit-body choice
+/// it requests through `request_body`.
 #[pyclass(name = "SolarSystemScene", module = "globe")]
 pub struct SolarSystemSceneInner {
     /// Simulation clock (datetime + play/paused + speed), reached only via
     /// the `SceneClock` API (and, from the script, its pymethod face).
     clock: Clock,
-    /// The nine-body camera-target selector, shared with the script (which
-    /// rebuilds its panel in Python and requests switches through it).
-    #[pyo3(get)]
-    selector: Py<BodySelector>,
+    /// Index into [`CelestialBody::ALL`] of the body the camera orbits -
+    /// the Python face of the Rust sibling's direct camera-target write.
+    /// The script reads it (`selected_body`) and requests switches
+    /// (`request_body(i)`); the wrapper's `frame_state` folds it into the
+    /// wrapper-owned `camera_target` (reframing the camera on a genuine
+    /// switch), since the script cannot touch the camera itself.
+    selected_body: usize,
 }
 
 /// The script-facing clock surface: the `SceneClock` API re-exposed as
@@ -79,6 +84,39 @@ impl SolarSystemSceneInner {
     fn datetime_label(&mut self) -> String {
         self.clock_datetime_label()
     }
+
+    /// Index into [`CelestialBody::ALL`] (= the panel's key order) of the
+    /// body the camera orbits.
+    #[getter]
+    fn selected_body(&self) -> usize {
+        self.selected_body
+    }
+
+    /// Every selectable body's display name, in [`CelestialBody::ALL`]
+    /// (panel key) order - what the script labels its keys with.
+    #[staticmethod]
+    fn body_names() -> Vec<String> {
+        CelestialBody::ALL
+            .iter()
+            .map(|body| body.name().to_string())
+            .collect()
+    }
+
+    /// Requests a switch to `CelestialBody::ALL[index]` - the pymethod twin
+    /// of a Rust key's direct camera-target write (a script callback fires
+    /// during the egui pass; the wrapper's `frame_state` folds the new body
+    /// into the camera target next frame). Writing a fixed index per key is
+    /// idempotent under egui's discard-pass double fire.
+    fn request_body(&mut self, index: usize) -> PyResult<()> {
+        if index >= CelestialBody::ALL.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "body index {index} out of range 0..{}",
+                CelestialBody::ALL.len()
+            )));
+        }
+        self.selected_body = index;
+        Ok(())
+    }
 }
 
 impl SceneClock for SolarSystemSceneInner {
@@ -88,27 +126,33 @@ impl SceneClock for SolarSystemSceneInner {
 }
 
 /// The Rust-only half: construction and the per-frame simulation work,
-/// mirroring the Rust sibling body for body (only the selector accesses
-/// differ - `borrow` through the shared pyclass cell). The frame recipe
+/// mirroring the Rust sibling body for body. The frame recipe
 /// (`frame_state`) lives on the wrapper, beside the camera it rigs.
 impl SolarSystemSceneInner {
-    fn new(py: Python<'_>) -> Self {
+    fn new() -> Self {
         // A fixed recent past date, well inside the bundled EOP range (see
         // the Rust sibling).
         let epoch =
             Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
         Self {
             clock: Clock::new(epoch),
-            selector: Py::new(py, BodySelector::default()).expect("selector pyclass"),
+            // Start on Terra (the familiar default view), matching the
+            // wrapper's whole-Terra camera + Terra camera_target. Looked up
+            // rather than hard-coded so the index space stays correct by
+            // construction if `ALL`'s order ever changes.
+            selected_body: CelestialBody::ALL
+                .iter()
+                .position(|body| *body == CelestialBody::TERRA)
+                .expect("Terra is in CelestialBody::ALL"),
         }
     }
 
     fn advance(&mut self) -> bool {
         // Tick through the SceneClock API. Any body-key press already landed
-        // directly (the script's key callbacks called `selector.request(i)`
-        // during the previous egui pass, a direct `selected` write), as did
-        // any pause/speed change via the pymethod setters; this frame's
-        // `frame_state` resolves the selection.
+        // directly (the script's key callbacks called `request_body(i)`
+        // during the previous egui pass, a direct `selected_body` write), as
+        // did any pause/speed change via the pymethod setters; this frame's
+        // `frame_state` folds the requested body into the camera target.
         self.tick_clock()
     }
 }
@@ -126,24 +170,25 @@ pub struct SolarSystemPyScene {
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); starts on the default whole-Terra view. A plain wrapper
     /// field, deliberately OUTSIDE the pyclass: the script has no camera
-    /// surface (only the selector), and keeping it here lets the wrapper
-    /// hand out the real borrows `ScenePtzCamera` needs (a pyclass cell's
-    /// borrow guard could not), taking the same blanket `CameraControl`
-    /// impl as every Rust scene.
+    /// surface (only the `request_body` pymethod), and keeping it here lets
+    /// the wrapper hand out the real borrows `ScenePtzCamera` needs (a
+    /// pyclass cell's borrow guard could not), taking the same blanket
+    /// `CameraControl` impl as every Rust scene.
     camera: PtzCamera,
-    /// The body the camera orbits this frame - refreshed from the shared
-    /// selector each frame; a genuine switch reframes the camera.
+    /// The body the camera orbits this frame - refreshed from the Inner's
+    /// script-requested `selected_body` each frame; a genuine switch
+    /// reframes the camera.
     camera_target: CameraTarget,
 }
 
 impl SolarSystemPyScene {
     fn new(script: PathBuf) -> Self {
         Python::attach(|py| Self {
-            inner: Py::new(py, SolarSystemSceneInner::new(py)).expect("scene pyclass"),
+            inner: Py::new(py, SolarSystemSceneInner::new()).expect("scene pyclass"),
             get_drawables_fn: py::load_get_drawables(py, &script),
             script,
             camera: PtzCamera::default(),
-            // Matches the selector default (Terra) and the whole-Terra
+            // Matches the Inner's start body (Terra) and the whole-Terra
             // camera above, so the first frame does not reframe.
             camera_target: CameraTarget::terra(),
         })
@@ -176,9 +221,12 @@ impl ScenePtzCamera for SolarSystemPyScene {
 impl CameraView for SolarSystemPyScene {
     fn frame_state(&mut self) -> RenderState {
         // The Rust sibling's frame recipe, split across the wrapper/pyclass
-        // boundary: the simulation state (clock, shared selector) is read
-        // through its own borrows for the whole body - safe, nothing here
+        // boundary: the simulation state (clock, requested body) is read
+        // through its own borrow for the whole body - safe, nothing here
         // calls into Python - while the camera rig lives on the wrapper.
+        // The Rust sibling retargets directly in its key callbacks; here the
+        // script can only reach the Inner, so the fold into the
+        // wrapper-owned camera target happens one frame later, right here.
         Python::attach(|py| {
             let mut inner = self.inner.borrow_mut(py);
             let now = inner.clock_now();
@@ -186,12 +234,12 @@ impl CameraView for SolarSystemPyScene {
             // function of time, same as the Rust sibling).
             let sphere = CelestialSphere::at(&now);
 
-            // Refresh the wrapper-owned camera target from the shared
-            // selector (any script-requested switch already landed via
-            // `selector.request(i)` during the previous egui pass); a
-            // genuine body switch reframes the camera.
+            // Refresh the wrapper-owned camera target from the Inner's
+            // requested body (any script-requested switch already landed via
+            // `request_body(i)` during the previous egui pass); a genuine
+            // body switch reframes the camera.
             let celestial_to_world = sphere.star_rot_inv.transpose();
-            let target = inner.selector.borrow(py).resolve();
+            let target = CameraTarget::Body(CelestialBody::ALL[inner.selected_body]);
             if !self.camera_target.same_kind(&target) {
                 self.camera.reframe(&target, &sphere, celestial_to_world);
             }
@@ -261,12 +309,12 @@ mod tests {
     use crate::engine::ui::PanelAnchor;
 
     /// Executes the real `scenes/solar_system_py.py` end to end: the script
-    /// must load, its selector loop must build one key per selectable body,
-    /// and the converted panels must match the Rust sibling's shape (Time
-    /// top-left, the 10-row selector - header + 9 keys - top-right). No
-    /// satkit seeding: this path only reads the clock (pure time math) and
-    /// the selector. The interactive callback plumbing is proven once, by
-    /// manual_control_py's round-trip test.
+    /// must load, its Camera Target loop must build one key per body, and
+    /// the converted panels must match the Rust sibling's shape (Time
+    /// top-left, the 10-row Camera Target panel - header + 9 keys -
+    /// top-right). No satkit seeding: this path only reads the clock (pure
+    /// time math) and the requested body index. The interactive callback
+    /// plumbing is proven once, by manual_control_py's round-trip test.
     /// The repo's reference script, resolved against the manifest dir so the
     /// test runs from any cwd - the same file the CLI example passes.
     fn repo_script() -> PathBuf {
@@ -287,7 +335,7 @@ mod tests {
         assert_eq!(
             panels[1].rows.len(),
             10,
-            "selector panel must hold a header plus one key per body"
+            "Camera Target panel must hold a header plus one key per body"
         );
         assert!(panels[1].rows.iter().all(|row| row.len() == 1));
     }

@@ -1,10 +1,8 @@
 # UI-panel producer for the `solar_system_py` scene - the Python twin of the
-# panel builder in `src/scenes/solar_system.rs` and of
-# `BodySelector::panel()` in `src/engine/scene/mod.rs` (kept side by side so
-# the two APIs can be compared). Passed to the scene as its required CLI
-# script path (`scene solar_system_py scenes/solar_system_py.py`), loaded at
-# startup and re-read on every launch: edit this file and relaunch, no
-# rebuild.
+# panel builder in `src/scenes/solar_system.rs` (kept side by side so the two
+# APIs can be compared). Passed to the scene as its required CLI script path
+# (`scene solar_system_py scenes/solar_system_py.py`), loaded at startup and
+# re-read on every launch: edit this file and relaunch, no rebuild.
 #
 # Contract: define `get_drawables(scene) -> list[Panel]`. It runs every
 # frame with the live scene object (`globe.SolarSystemScene`); panel
@@ -14,7 +12,6 @@
 import math
 
 from globe import (
-    BodySelector,
     Clock,
     Header,
     InteractiveSlider,
@@ -67,18 +64,23 @@ def time_panel(scene):
     return Panel(PanelAnchor.TopLeft, rows)
 
 
-def selector_panel(selector):
-    """The top-right camera-target selector: one latching key per body (the
-    chosen one lit), a single column ordered by distance from Sol."""
-    selected = selector.selected
+def target_panel(scene):
+    """The top-right Camera Target panel: one latching key per body (the
+    orbited one lit), a single column ordered by distance from Sol.
+
+    The camera target is driven through the scene's own properties
+    (selected_body / body_names() / request_body(i) - the Python face of
+    the Rust sibling's direct camera-target write; the scene folds a
+    requested body into its camera target next frame)."""
+    selected = scene.selected_body
     rows = [[Header("Camera Target")]]
-    for i, name in enumerate(BodySelector.body_names()):
-        # `i=i` pins the loop index: a bare `lambda: selector.request(i)`
+    for i, name in enumerate(scene.body_names()):
+        # `i=i` pins the loop index: a bare `lambda: scene.request_body(i)`
         # would late-bind i and every key would request Neptune.
-        callback = lambda i=i: selector.request(i)
+        callback = lambda i=i: scene.request_body(i)
         rows.append([InteractiveToggle(Toggle(name, selected == i), callback)])
     return Panel(PanelAnchor.TopRight, rows)
 
 
 def get_drawables(scene):
-    return [time_panel(scene), selector_panel(scene.selector)]
+    return [time_panel(scene), target_panel(scene)]
