@@ -21,9 +21,11 @@ use pyo3::prelude::*;
 use satkit::Instant;
 
 pub use body::CelestialBody;
-// Only the main binary's scenes name these re-exports; the headless bin tree
-// compiles this module with no clock consumer, so the import would warn
-// there (its crate-level allow covers `dead_code`, not `unused_imports`).
+// `SceneClock` is named by the `Scene` trait itself (the `tick_scene`
+// bound), so that half of the import is used in both bin trees; `Clock` is
+// named only by the main binary's scenes, so the headless tree (whose
+// crate-level allow covers `dead_code`, not `unused_imports`) would warn on
+// it without the allow.
 #[allow(unused_imports)]
 pub use clock::{Clock, SceneClock};
 
@@ -172,10 +174,24 @@ impl CameraTarget {
 /// `crate::engine::camera::CameraView` impl - each concern is a distinct
 /// trait on the same scene struct.
 pub trait Scene {
-    /// Advance the clock (plus any scene-specific per-frame state). Returns
-    /// whether the clock is running, i.e. the app should keep requesting
-    /// frames.
-    fn advance(&mut self) -> bool;
+    /// Scene-specific per-frame work (e.g. `manual_control`'s orbit
+    /// re-anchor; most scenes have none). Called by [`Scene::tick_scene`]
+    /// AFTER the clock has ticked; `running` says whether it advanced.
+    fn advance(&mut self, running: bool);
+
+    /// The per-frame entry point the application calls: tick the clock, then
+    /// run the scene's own [`Scene::advance`]. Returns whether the clock is
+    /// running, i.e. the app should keep requesting frames (paused = the app
+    /// can go idle). Provided for every scene that implements [`SceneClock`]
+    /// (all of them), so no scene hand-writes the clock tick.
+    fn tick_scene(&mut self) -> bool
+    where
+        Self: SceneClock,
+    {
+        let running = self.tick_clock();
+        self.advance(running);
+        running
+    }
 }
 
 /// The minimal render contract for one frame: the simulation time plus the

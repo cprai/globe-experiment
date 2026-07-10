@@ -147,13 +147,12 @@ impl SceneClock for ManualControlScene {
 }
 
 impl Scene for ManualControlScene {
-    fn advance(&mut self) -> bool {
-        // Advance the clock (any Time-panel pause/speed edit already landed
-        // via the SceneClock setters during the previous egui pass; paused =
-        // nothing advances and the app can go idle). The celestial sphere is
-        // not stashed here: `frame_state` re-derives it at the frame's clock
-        // instant.
-        let running = self.tick_clock();
+    fn advance(&mut self, _running: bool) {
+        // The clock already ticked in `tick_scene` (any Time-panel
+        // pause/speed edit already landed via the SceneClock setters during
+        // the previous egui pass); only the scene-specific work remains. The
+        // celestial sphere is not stashed here: `frame_state` re-derives it
+        // at the frame's clock instant.
         let now = self.clock_now();
 
         // Re-anchor the state vector to the clock: one numerical step over
@@ -182,8 +181,6 @@ impl Scene for ManualControlScene {
         self.burn_anti_normal = false;
         self.burn_radial_out = false;
         self.burn_radial_in = false;
-
-        running
     }
 }
 

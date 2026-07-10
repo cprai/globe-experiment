@@ -21,7 +21,8 @@ use satkit::{Duration, Instant};
 /// `pyclass` only for the `MIN_MULTIPLIER`/`MAX_MULTIPLIER` classattrs (a
 /// script reads them for its speed-slider range): no `Clock` instance
 /// crosses into Python - a `*_py` scene exposes the clock through its own
-/// scene pyclass properties, which delegate to the [`SceneClock`] trait API.
+/// scene pyclass properties, a snapshot/request mirror of the wrapper-owned
+/// clock behind the [`SceneClock`] trait API.
 /// All fields are private: every consumer (Rust scene or script) goes
 /// through that API, so no field can be mutated behind the clock's back.
 #[pyclass(module = "globe")]
@@ -66,12 +67,15 @@ impl Clock {
 }
 
 /// The public clock API every scene goes through. A scene implements only
-/// `clock_mut` (where the clock lives depends on the struct - a plain field
-/// for the Rust scenes, a field of the pyclass Inner for the `*_py` scenes);
-/// everything else is a default method working directly on the [`Clock`]
-/// fields (private, so only this module's defaults can - the API surface AND
-/// its logic live in one place). The `*_py` scenes re-expose these to their
-/// scripts as scene-pyclass properties.
+/// `clock_mut` (a plain `clock` field in every scene struct - the `*_py`
+/// scenes keep it on their wrapper, outside the pyclass, precisely so this
+/// hook can hand out the `&mut Clock` a pyclass cell's borrow guard could
+/// not); everything else is a default method working directly on the
+/// [`Clock`] fields (private, so only this module's defaults can - the API
+/// surface AND its logic live in one place). Implementing this is also what
+/// grants a scene the `Scene` trait's provided `tick_scene`. The `*_py`
+/// scenes mirror the API to their scripts as scene-pyclass snapshot/request
+/// properties.
 ///
 /// The Time panel's Run-toggle/speed-slider callbacks call the setters
 /// directly: a panel callback receives the live scene as its `&mut S`

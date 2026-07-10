@@ -115,9 +115,13 @@ classattrs), readout types — the dual Rust/Python UI
 API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`)
 whose `paused`/`multiplier`/`datetime_label()` properties (and, in
 `solar_system_py`, `selected_body`/`body_names()`/`request_body(i)` — the
-camera-target twin of the clock properties) — the Python face
-of the `SceneClock` trait API (`engine::scene::clock`, which holds all the
-clock logic as trait default methods; `Clock` itself is plain data) — are
+camera-target twin of the clock properties) — a snapshot/request mirror of
+the wrapper-owned clock behind the `SceneClock` trait API
+(`engine::scene::clock`, which holds all the
+clock logic as trait default methods; `Clock` itself is plain data;
+implementing `SceneClock` is also what grants every scene the `Scene`
+trait's provided `tick_scene` — clock tick + scene-specific
+`advance(running)` — that the application calls each frame) — are
 how a script reads and drives the clock (no `Clock` instance crosses into
 Python).
 Both scene pairs live side by side so the two APIs can be compared.

@@ -28,9 +28,12 @@ paths:
   `PtzCamera::default()` (or a `looking_toward` framing, below — the only
   case where `new()` evaluates a throwaway local sphere) +
   `CameraTarget::terra()` (or the body matching the seeded framing, so the
-  first frame does not reframe); `advance()`
-  just ticks the clock (and nothing else, unless the scene has extra
-  per-frame state like `manual_control`'s orbit re-anchor) - any Time-panel
+  first frame does not reframe). **The clock tick is NOT the scene's job**:
+  the application calls `Scene::tick_scene` (a default method provided
+  `where Self: SceneClock`, i.e. for every scene), which ticks the clock and
+  then calls `advance(running)`; the scene's `advance(&mut self, running:
+  bool)` holds only scene-specific per-frame work (empty for most scenes;
+  `manual_control`'s orbit re-anchor is the exception) - any Time-panel
   pause/speed edit already landed directly during the previous egui pass.
   **All clock access goes through the `SceneClock` trait** in
   `src/engine/scene/clock.rs` (beside `Clock` itself): the scene implements
@@ -177,30 +180,41 @@ The pattern:
 - **Split struct**: the scene state lives in a `<Name>SceneInner` that is
   itself a `#[pyclass]` (Python-side name `<Name>Scene`, module `globe`, NOT
   registered in the `globe` module — it reaches Python only as the instance
-  handed into the script). The clock is a **plain `clock: Clock` field**
-  behind the Inner's `SceneClock` impl, re-exposed to the script as pyclass
-  properties (`paused`/`multiplier` getter+setter pairs + `datetime_label()`,
-  each pymethod delegating to the trait API), so a script callback like
-  `scene.paused = ...` drives the same clock Rust ticks. The camera target
+  handed into the script). The Inner carries a **snapshot/request mirror of
+  the wrapper-owned clock** as pyclass properties (`paused`/`multiplier`
+  getter+setter pairs + `datetime_label()`): the getters return snapshot
+  fields the wrapper refreshes after every advance (so both discard-pass
+  fires of a callback like `scene.paused = not scene.paused` read the same
+  value - idempotent), and the setters record `requested_*` options the
+  wrapper folds into the clock before the next tick - the same one-frame
+  timing as the Rust siblings' direct setter callbacks. The camera target
   gets the same treatment (solar_system_py): a plain `selected_body: usize`
   Inner field (index into `CelestialBody::ALL`) re-exposed as
   `selected_body`/`body_names()`/`request_body(i)` pymethods - no shared
   `Py<..>` state at all. Rust-private simulation
   state (orbit) stays in plain Inner fields. The Rust side of the
-  Inner mirrors the sibling's `new`/`advance` body for body (the clock
-  ticks via `self.tick_clock()` — the script's setters apply directly,
-  exactly like the Rust siblings' scene-receiving callbacks).
+  Inner mirrors the sibling's `new`/`advance` body for body (minus the
+  clock: the wrapper ticks it and passes the frame instant into the Inner's
+  `advance(&now)`).
 - **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
-  Py<PyAny>, camera: PtzCamera, camera_target: CameraTarget }` implements
-  the four engine traits. The camera + target are **plain wrapper fields,
-  deliberately outside the pyclass** — a script has no camera surface (its
-  only camera influence is the orbit body requested through
-  `request_body`), and only a plain field can hand out the `&mut PtzCamera` that
-  `ScenePtzCamera` requires (a pyclass cell's borrow guard cannot) — so the
-  wrapper implements `ScenePtzCamera` and takes the blanket `CameraControl`
-  exactly like the Rust scenes. Consequently `frame_state` lives on the
-  **wrapper** (`CameraView`): it borrows the Inner for the clock/orbit (and
-  folds the Inner's script-requested `selected_body` into the wrapper-owned
+  Py<PyAny>, clock: Clock, camera: PtzCamera, camera_target: CameraTarget }`
+  implements the four engine traits. The clock, camera, and target are
+  **plain wrapper fields, deliberately outside the pyclass** — a script has
+  no direct clock/camera surface (only the mirror setters and
+  `request_body`), and only a plain field can hand out the `&mut Clock` /
+  `&mut PtzCamera` that `SceneClock::clock_mut` / `ScenePtzCamera` require
+  (a pyclass cell's borrow guard cannot) — so the wrapper implements
+  `SceneClock` (granting `Scene`'s provided `tick_scene`) and
+  `ScenePtzCamera` (taking the blanket `CameraControl`) exactly like the
+  Rust scenes. The wrapper **overrides `tick_scene`** to first drain the
+  Inner's `requested_*` clock edits into the wrapper clock (the clock twin
+  of the `selected_body` fold), then run the default's body (tick +
+  `advance(running)`); its `advance` does the sibling's scene-specific work
+  through the Inner (passing the ticked `clock_now()` in) and pushes fresh
+  clock snapshots for the coming `get_drawables`. `frame_state` also lives
+  on the **wrapper** (`CameraView`): it reads the frame instant off the
+  wrapper clock, borrows the Inner for the orbit / script-requested
+  `selected_body` (folding the latter into the wrapper-owned
   `camera_target`, reframing on a genuine switch - the Rust sibling
   retargets directly in its key callbacks, but the script can only reach
   the Inner, so the fold lands here one frame later) and rigs the wrapper's
@@ -219,7 +233,9 @@ The pattern:
   through its own transient pyclass borrow. `request_body(i)` writes
   `selected_body` directly (the pymethod twin of a Rust key's camera-target
   write); the burn `request_*`
-  methods set the per-key flags both siblings keep (dt-scaled in `advance`).
+  methods set the per-key flags both siblings keep (dt-scaled in `advance`);
+  the clock setters record the `requested_*` mirror values (folded by the
+  wrapper's `tick_scene`).
 - **run() order**: `run(args: Args)` carries the script path (the `*_py`
   scenes' required `--script` flag, declared on their own `Args` struct so
   clap rejects it on every other scene; the repo ships the reference

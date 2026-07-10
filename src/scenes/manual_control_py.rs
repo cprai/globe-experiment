@@ -10,15 +10,18 @@
 //! Structure: the simulation state lives in [`ManualControlSceneInner`],
 //! itself a `#[pyclass]` - the script receives the *live* scene object and
 //! reads/drives it through its curated Python surface (the clock properties
-//! `paused`/`multiplier`/`datetime_label()`, the Python face of the
-//! `SceneClock` trait API, plus the telemetry/orbit-shape readouts and the
+//! `paused`/`multiplier`/`datetime_label()` - a snapshot/request mirror of
+//! the wrapper-owned clock - plus the telemetry/orbit-shape readouts and the
 //! six burn-request methods). Rust
 //! owns it as [`ManualControlPyScene`], a thin wrapper holding the `Py<..>`
-//! handle, the script's `get_drawables` function, and the camera + its
-//! target as plain wrapper fields - deliberately OUTSIDE the pyclass (the
-//! script has no camera surface), which lets the wrapper implement
-//! `ScenePtzCamera` like every Rust scene and take the blanket
-//! `CameraControl` impl. The remaining trait methods
+//! handle, the script's `get_drawables` function, and the clock + camera +
+//! its target as plain wrapper fields - deliberately OUTSIDE the pyclass
+//! (the script has no camera surface, and `SceneClock::clock_mut` /
+//! `ScenePtzCamera::camera_mut` hand out real `&mut` borrows a pyclass
+//! cell's borrow guard could not), which lets the wrapper implement
+//! `SceneClock` (taking the `Scene` trait's provided `tick_scene`) and
+//! `ScenePtzCamera` (taking the blanket `CameraControl` impl) like every
+//! Rust scene. The remaining trait methods
 //! attach to the interpreter and borrow the inner pyclass cell for their own
 //! duration only - no borrow is ever held across a call into Python, which
 //! is what keeps the script's re-entrant property/method borrows safe.
@@ -63,17 +66,14 @@ const BURN_ACCEL_M_S2: f64 = 10.0;
 
 /// The live simulation state, as a pyclass: the Python side of the scene.
 /// The script sees the clock properties (`scene.paused`/`scene.multiplier`/
-/// `scene.datetime_label()` - the `SceneClock` API re-exposed as pymethods,
-/// so its Run/speed callbacks drive the same clock Rust ticks), `scene.name`,
-/// the readout methods, and the burn-request methods; everything else (the
-/// clock object itself, the orbit state) stays Rust-private. The camera is
-/// not even in here: it lives on the wrapper, outside the pyclass, so a
-/// script cannot reach it at all.
+/// `scene.datetime_label()` - the snapshot/request mirror of the
+/// wrapper-owned clock, so its Run/speed callbacks drive the same clock the
+/// wrapper ticks), `scene.name`, the readout methods, and the burn-request
+/// methods; everything else (the orbit state) stays Rust-private. The clock
+/// and camera are not even in here: they live on the wrapper, outside the
+/// pyclass, so a script cannot reach them at all.
 #[pyclass(name = "ManualControlScene", module = "globe")]
 pub struct ManualControlSceneInner {
-    /// Simulation clock (datetime + play/paused + speed), reached only via
-    /// the `SceneClock` API (and, from the script, its pymethod face).
-    clock: Clock,
     /// Object name from the seed TLE, for the panel header.
     #[pyo3(get)]
     name: String,
@@ -94,6 +94,17 @@ pub struct ManualControlSceneInner {
     burn_anti_normal: bool,
     burn_radial_out: bool,
     burn_radial_in: bool,
+    /// Script-facing clock mirror. The `Clock` itself lives on the WRAPPER
+    /// (`SceneClock::clock_mut` hands out `&mut Clock`, which a pyclass
+    /// cell's borrow guard could not), so the script reads these snapshots -
+    /// refreshed by the wrapper after every advance - and its setters record
+    /// the `requested_*` values the wrapper folds into the clock before the
+    /// next tick: the clock twin of solar_system_py's `selected_body` fold.
+    paused: bool,
+    multiplier: f32,
+    datetime_label: String,
+    requested_paused: Option<bool>,
+    requested_multiplier: Option<f32>,
 }
 
 /// The script-facing surface. Bound methods double as panel callbacks: the
@@ -102,12 +113,13 @@ pub struct ManualControlSceneInner {
 #[pymethods]
 impl ManualControlSceneInner {
     /// The satellite's lat/lon/alt readout at the frame's clock instant - a
-    /// pure frame change (`advance` re-anchored the orbit to the same
-    /// instant), so it matches the rendered marker. f64 -> f32 at this
-    /// egui-facing boundary, same as the Rust sibling.
-    fn telemetry(&mut self) -> SatelliteTelemetry {
-        let now = self.clock_now();
-        let state = satellite::resolve_orbit(&self.orbit, &now);
+    /// pure frame change: `advance` re-anchored the orbit to that instant,
+    /// so `orbit_epoch` IS the frame's clock reading (the clock itself lives
+    /// on the wrapper, out of the pyclass's reach) and the readout matches
+    /// the rendered marker. f64 -> f32 at this egui-facing boundary, same as
+    /// the Rust sibling.
+    fn telemetry(&self) -> SatelliteTelemetry {
+        let state = satellite::resolve_orbit(&self.orbit, &self.orbit_epoch);
         SatelliteTelemetry {
             name: self.name.clone(),
             latitude_deg: state.latitude_deg as f32,
@@ -152,40 +164,37 @@ impl ManualControlSceneInner {
         self.burn_radial_in = true;
     }
 
-    // The clock properties - the `SceneClock` API's Python face. The script's
-    // Run/speed callbacks assign these; no `Clock` instance crosses into
-    // Python (`&mut self` getters are fine: each pyclass access takes its own
-    // transient runtime borrow, and no Rust borrow is live during the script).
+    // The clock properties - the script's face of the wrapper-owned clock.
+    // Getters return the frame's snapshots (pushed by the wrapper after each
+    // advance), so both discard-pass fires of a callback like
+    // `scene.paused = not scene.paused` read the same value - idempotent.
+    // Setters record requests the wrapper folds into the clock before the
+    // next tick (`tick_scene`), the same frame timing as the Rust sibling's
+    // direct setter callbacks. No `Clock` instance crosses into Python.
 
     #[getter]
-    fn get_paused(&mut self) -> bool {
-        self.clock_paused()
+    fn get_paused(&self) -> bool {
+        self.paused
     }
 
     #[setter]
     fn set_paused(&mut self, paused: bool) {
-        self.set_clock_paused(paused);
+        self.requested_paused = Some(paused);
     }
 
     #[getter]
-    fn get_multiplier(&mut self) -> f32 {
-        self.clock_multiplier()
+    fn get_multiplier(&self) -> f32 {
+        self.multiplier
     }
 
     #[setter]
     fn set_multiplier(&mut self, multiplier: f32) {
-        self.set_clock_multiplier(multiplier);
+        self.requested_multiplier = Some(multiplier);
     }
 
     /// The current simulation datetime formatted for display (UTC).
-    fn datetime_label(&mut self) -> String {
-        self.clock_datetime_label()
-    }
-}
-
-impl SceneClock for ManualControlSceneInner {
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.clock
+    fn datetime_label(&self) -> String {
+        self.datetime_label.clone()
     }
 }
 
@@ -202,7 +211,6 @@ impl ManualControlSceneInner {
         let epoch = seed.epoch();
         let orbit = seed.state_at(&epoch).orbit;
         Self {
-            clock: Clock::new(epoch),
             name: seed.name,
             orbit,
             orbit_epoch: epoch,
@@ -212,6 +220,13 @@ impl ManualControlSceneInner {
             burn_anti_normal: false,
             burn_radial_out: false,
             burn_radial_in: false,
+            // Mirror defaults matching a fresh `Clock`; the wrapper's `new`
+            // pushes the real snapshots right after it builds the clock.
+            paused: false,
+            multiplier: Clock::MIN_MULTIPLIER,
+            datetime_label: String::new(),
+            requested_paused: None,
+            requested_multiplier: None,
         }
     }
 
@@ -248,18 +263,14 @@ impl ManualControlSceneInner {
         sum.try_normalize()
     }
 
-    fn advance(&mut self) -> bool {
-        // Tick the clock through the SceneClock API (any script-requested
-        // pause/speed change already landed via the pymethod setters during
-        // the previous egui pass).
-        let running = self.tick_clock();
-        let now = self.clock_now();
-
-        // Re-anchor the state vector to the clock (see the Rust sibling).
-        let dt = (now - self.orbit_epoch).as_seconds();
+    fn advance(&mut self, now: &Instant) {
+        // Re-anchor the state vector to the clock instant the wrapper just
+        // ticked (see the Rust sibling; the clock lives on the wrapper, so
+        // the frame instant is passed in).
+        let dt = (*now - self.orbit_epoch).as_seconds();
         if dt > 0.0 {
-            self.orbit = satellite::propagate_numerical(&self.orbit, &self.orbit_epoch, &now);
-            self.orbit_epoch = now;
+            self.orbit = satellite::propagate_numerical(&self.orbit, &self.orbit_epoch, now);
+            self.orbit_epoch = *now;
 
             if let Some(direction) = self.burn_direction() {
                 self.orbit.vel_gcrf_m_s += direction * (BURN_ACCEL_M_S2 * dt);
@@ -274,21 +285,26 @@ impl ManualControlSceneInner {
         self.burn_anti_normal = false;
         self.burn_radial_out = false;
         self.burn_radial_in = false;
-
-        running
     }
 }
 
 /// What the application owns: the `Py` handle to the scene pyclass, the
-/// script's `get_drawables` function (loaded once at startup), and the
-/// camera. The pyclass-touching trait methods open their own interpreter
-/// attach + pyclass borrow; the camera path never attaches at all.
+/// script's `get_drawables` function (loaded once at startup), the clock,
+/// and the camera. The pyclass-touching trait methods open their own
+/// interpreter attach + pyclass borrow; the clock and camera paths never
+/// attach at all.
 pub struct ManualControlPyScene {
     inner: Py<ManualControlSceneInner>,
     get_drawables_fn: Py<PyAny>,
     /// The script's CLI-given path, kept only so per-frame failures name the
     /// file that raised (the function itself is already loaded).
     script: PathBuf,
+    /// Simulation clock (datetime + play/paused + speed), reached only via
+    /// the `SceneClock` API. A plain wrapper field like the camera,
+    /// deliberately OUTSIDE the pyclass: `SceneClock::clock_mut` hands out
+    /// `&mut Clock`, which a pyclass cell's borrow guard could not. The
+    /// script drives it through the Inner's snapshot/request mirror.
+    clock: Clock,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view. A plain wrapper field,
     /// deliberately OUTSIDE the pyclass: the script has no camera surface,
@@ -302,19 +318,91 @@ pub struct ManualControlPyScene {
 
 impl ManualControlPyScene {
     fn new(script: PathBuf) -> Self {
-        Python::attach(|py| Self {
-            inner: Py::new(py, ManualControlSceneInner::new()).expect("scene pyclass"),
-            get_drawables_fn: py::load_get_drawables(py, &script),
-            script,
-            camera: PtzCamera::default(),
-            camera_target: CameraTarget::terra(),
-        })
+        let mut scene = Python::attach(|py| {
+            let inner = Py::new(py, ManualControlSceneInner::new()).expect("scene pyclass");
+            // The clock starts at the seed TLE's epoch, read back off the
+            // freshly built Inner (the wrapper owns the clock; the Inner
+            // keeps only the script-facing mirror).
+            let epoch = inner.borrow(py).orbit_epoch;
+            Self {
+                inner,
+                get_drawables_fn: py::load_get_drawables(py, &script),
+                script,
+                clock: Clock::new(epoch),
+                camera: PtzCamera::default(),
+                camera_target: CameraTarget::terra(),
+            }
+        });
+        // Seed the script-facing snapshots so a `get_drawables` that runs
+        // before the first advance (the test harnesses do) reads real clock
+        // values instead of the mirror defaults.
+        scene.push_clock_snapshots();
+        scene
+    }
+
+    /// Refreshes the Inner's script-facing clock snapshots (paused /
+    /// multiplier / datetime label) from the wrapper clock, so the coming
+    /// `get_drawables` reads current values. The values are read before
+    /// attaching: the `SceneClock` getters need `&mut self`, which cannot
+    /// overlap the cell borrow of `self.inner`.
+    fn push_clock_snapshots(&mut self) {
+        let paused = self.clock_paused();
+        let multiplier = self.clock_multiplier();
+        let datetime_label = self.clock_datetime_label();
+        Python::attach(|py| {
+            let mut inner = self.inner.borrow_mut(py);
+            inner.paused = paused;
+            inner.multiplier = multiplier;
+            inner.datetime_label = datetime_label;
+        });
+    }
+}
+
+impl SceneClock for ManualControlPyScene {
+    // The hook behind the `Scene` trait's provided `tick_scene`, same as
+    // every Rust scene - possible because the clock lives on the wrapper,
+    // not behind the pyclass cell's borrow guard.
+    fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
     }
 }
 
 impl Scene for ManualControlPyScene {
-    fn advance(&mut self) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).advance())
+    fn tick_scene(&mut self) -> bool {
+        // Fold the script's requested clock edits (recorded by the pymethod
+        // setters during the previous egui pass) into the wrapper clock
+        // BEFORE ticking - the same frame timing as the Rust sibling, whose
+        // Time-panel callbacks write the clock directly at fire time. The
+        // requests are drained out of the cell first: the SceneClock setters
+        // need `&mut self`, which cannot overlap the cell borrow.
+        let (paused, multiplier) = Python::attach(|py| {
+            let mut inner = self.inner.borrow_mut(py);
+            (
+                inner.requested_paused.take(),
+                inner.requested_multiplier.take(),
+            )
+        });
+        if let Some(paused) = paused {
+            self.set_clock_paused(paused);
+        }
+        if let Some(multiplier) = multiplier {
+            self.set_clock_multiplier(multiplier);
+        }
+
+        // The trait default's body: tick, then the scene-specific advance.
+        let running = self.tick_clock();
+        self.advance(running);
+        running
+    }
+
+    fn advance(&mut self, _running: bool) {
+        // Re-anchor the orbit to the already-ticked clock (the Rust
+        // sibling's advance, split across the wrapper/pyclass boundary),
+        // then refresh the Inner's script-facing clock snapshots for the
+        // coming get_drawables.
+        let now = self.clock_now();
+        Python::attach(|py| self.inner.borrow_mut(py).advance(&now));
+        self.push_clock_snapshots();
     }
 }
 
@@ -337,39 +425,35 @@ impl ScenePtzCamera for ManualControlPyScene {
 
 impl CameraView for ManualControlPyScene {
     fn frame_state(&mut self) -> RenderState {
-        // The Rust sibling's frame recipe, split across the wrapper/pyclass
-        // boundary: the simulation state (clock, orbit) is borrowed from the
-        // cell for the whole body - safe, nothing here calls into Python -
-        // while the camera rig lives on the wrapper itself.
-        Python::attach(|py| {
-            let mut inner = self.inner.borrow_mut(py);
-            let now = inner.clock_now();
-            // This frame's celestial sphere, evaluated on the spot (pure
-            // function of time, same as the Rust sibling).
-            let sphere = CelestialSphere::at(&now);
+        // The Rust sibling's frame recipe: the clock and camera rig live on
+        // the wrapper itself, so only the orbit state is read out of the
+        // pyclass cell (a transient borrow; nothing here calls into Python).
+        let now = self.clock_now();
+        // This frame's celestial sphere, evaluated on the spot (pure
+        // function of time, same as the Rust sibling).
+        let sphere = CelestialSphere::at(&now);
 
-            let celestial_to_world = sphere.star_rot_inv.transpose();
-            let target = self.camera_target;
-            let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
+        let celestial_to_world = sphere.star_rot_inv.transpose();
+        let target = self.camera_target;
+        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-            // `advance` just re-anchored the state to `now`: pure frame
-            // change.
-            let state = satellite::resolve_orbit(&inner.orbit, &now);
-            let markers = vec![SatelliteMarker {
-                position_km: state.position_km,
-                visible: !marker_occluded(eye, state.position_km),
-                propagation: Propagation::Numerical(inner.orbit),
-            }];
+        // `advance` just re-anchored the state to `now`: pure frame change.
+        let orbit = Python::attach(|py| self.inner.borrow(py).orbit);
+        let state = satellite::resolve_orbit(&orbit, &now);
+        let markers = vec![SatelliteMarker {
+            position_km: state.position_km,
+            visible: !marker_occluded(eye, state.position_km),
+            propagation: Propagation::Numerical(orbit),
+        }];
 
-            RenderState {
-                time: now,
-                camera_target: target,
-                camera_pos: eye,
-                camera_look_at: look_at,
-                camera_up: up,
-                markers,
-            }
-        })
+        RenderState {
+            time: now,
+            camera_target: target,
+            camera_pos: eye,
+            camera_look_at: look_at,
+            camera_up: up,
+            markers,
+        }
     }
 }
 
@@ -461,8 +545,9 @@ mod tests {
         ]
     }
 
-    fn clock_paused(scene: &ManualControlPyScene) -> bool {
-        Python::attach(|py| scene.inner.borrow_mut(py).clock_paused())
+    fn clock_paused(scene: &mut ManualControlPyScene) -> bool {
+        // The clock lives on the wrapper; read it through the SceneClock API.
+        scene.clock_paused()
     }
 
     /// The repo's reference script, resolved against the manifest dir so the
@@ -495,10 +580,11 @@ mod tests {
         // Interactivity: probe click positions down the top-left panel until
         // one lands on the Run key (taffy sizes the panel to content, so the
         // rect is not known a priori - the hold-button test's probe pattern).
-        // The clock starts running; the script's on_toggle flips the scene's
-        // `paused` property (the SceneClock API's Python face), which is the
-        // assertion target.
-        assert!(!clock_paused(&scene), "clock must start running");
+        // The clock starts running; the script's on_toggle sets the scene's
+        // `paused` property (recording a request on the Inner), and the next
+        // `tick_scene` - called below like the live loop's per-frame entry -
+        // folds it into the wrapper clock, which is the assertion target.
+        assert!(!clock_paused(&mut scene), "clock must start running");
         let mut y = 8.0;
         while y < 300.0 {
             let mut x = 8.0;
@@ -509,7 +595,8 @@ mod tests {
                 run_frame(&ctx, &mut scene, 0.0, Vec::new());
                 run_frame(&ctx, &mut scene, 0.05, click_events(pos, true));
                 run_frame(&ctx, &mut scene, 0.10, click_events(pos, false));
-                if clock_paused(&scene) {
+                scene.tick_scene();
+                if clock_paused(&mut scene) {
                     return;
                 }
                 x += 12.0;

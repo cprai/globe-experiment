@@ -88,14 +88,11 @@ impl SceneClock for SolarSystemScene {
 }
 
 impl Scene for SolarSystemScene {
-    fn advance(&mut self) -> bool {
-        // Advance the clock (any body-key press or Time-panel edit already
-        // landed directly during the previous egui pass). Returns whether it
-        // is running - an "animating" source that keeps frames coming; when
-        // paused nothing advances and the app can go idle. Nothing else to
-        // update: `frame_state` re-derives the celestial sphere at the
-        // frame's clock instant.
-        self.tick_clock()
+    fn advance(&mut self, _running: bool) {
+        // Nothing scene-specific: the clock tick lives in `tick_scene` (any
+        // body-key press or Time-panel edit already landed directly during
+        // the previous egui pass), and `frame_state` re-derives the celestial
+        // sphere at the frame's clock instant.
     }
 }
 

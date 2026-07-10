@@ -25,14 +25,16 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::engine::camera::{CameraControl, CameraView, CursorHint, PointerButton, ScrollDelta};
 use crate::engine::renderer::UiFrame;
-use crate::engine::scene::Scene;
+use crate::engine::scene::{Scene, SceneClock};
 use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
 
 /// Runs the winit event loop to completion, driving `app`. Frames are driven by
 /// explicit redraw requests (input, inertia, egui repaints); idle means zero
 /// GPU work.
-pub fn run<S: Scene + CameraControl + CameraView + UIDrawable>(mut app: ApplicationState<S>) {
+pub fn run<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable>(
+    mut app: ApplicationState<S>,
+) {
     let event_loop = build_event_loop();
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app).expect("run event loop");
@@ -63,7 +65,7 @@ fn build_event_loop() -> EventLoop<()> {
 /// window/egui_state/gfx are created on `resumed`. Generic over
 /// `S: Scene + CameraControl + CameraView + UIDrawable` so any scene
 /// can be plugged in without changing the application layer.
-pub struct ApplicationState<S: Scene + CameraControl + CameraView + UIDrawable> {
+pub struct ApplicationState<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> {
     simulation: S,
     /// The window, created on `resumed`. Shared with the renderer's surface.
     window: Option<Arc<Window>>,
@@ -76,7 +78,7 @@ pub struct ApplicationState<S: Scene + CameraControl + CameraView + UIDrawable> 
     shown: bool,
 }
 
-impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
+impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
     /// Builds the application around an already-constructed simulation (which
     /// carries its own camera - a scene that frames a specific event on
     /// launch seeds its `PtzCamera` in its `new()`). The window, egui platform
@@ -97,7 +99,7 @@ impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
     }
 }
 
-impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationHandler
+impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> ApplicationHandler
     for ApplicationState<S>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -165,7 +167,7 @@ impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationHandler
     }
 }
 
-impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
+impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
     /// Routes an input event: egui gets first claim (sliders, panel
     /// hover); whatever it doesn't consume is translated into the
     /// scene's `CameraControl` impl.
@@ -208,13 +210,14 @@ impl<S: Scene + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
         // time; while something is coasting, each frame requests the next one.
         let mut animating = self.simulation.tick(gfx.viewport().1);
 
-        // Advance the simulation: the clock steps and, while it runs, the
-        // ephemeris-driven celestial sphere is re-evaluated at the new time.
+        // Advance the simulation: tick_scene steps the clock, then runs the
+        // scene's own advance (the shared tick lives in the Scene trait's
+        // default, so scenes handle only what is unique to them).
         // (This frame's play/pause and speed edits come from the previous
         // frame's UI, applied here - a one-frame, ~16 ms delay, imperceptible.)
         // A running clock is another "animating" source - it keeps requesting
         // frames; when paused nothing advances and the app can go idle.
-        animating |= self.simulation.advance();
+        animating |= self.simulation.tick_scene();
 
         // Produce this frame's RenderState. The scene's CameraView impl
         // resolves its own view - it re-aims at the frame's target and

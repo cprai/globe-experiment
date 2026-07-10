@@ -104,18 +104,25 @@ src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
                          delegates to the CLI-given script (the repo ships
                          scenes/manual_control_py.py; side by side for API
                          comparison). ManualControlSceneInner is a
-                         #[pyclass] (plain clock: Clock behind its SceneClock
-                         impl, re-exposed to the script as paused/multiplier
-                         getter+setter properties + datetime_label();
-                         telemetry()/orbit_shape()/speed_m_s readout
-                         methods; six request_* burn methods - the script's
-                         hold-key callbacks) wrapped by ManualControlPyScene
-                         (Py<Inner> + the stashed script fn + camera/
-                         camera_target as plain wrapper fields OUTSIDE the
-                         pyclass - no script camera surface - so the wrapper
-                         implements ScenePtzCamera like every Rust scene and
-                         its CameraView::frame_state rigs the wrapper camera
-                         while borrowing the Inner for clock/orbit); the
+                         #[pyclass] (a paused/multiplier/datetime_label
+                         snapshot + requested_* mirror of the wrapper-owned
+                         clock, exposed to the script as getter+setter
+                         properties; telemetry()/orbit_shape()/speed_m_s
+                         readout methods; six request_* burn methods - the
+                         script's hold-key callbacks) wrapped by
+                         ManualControlPyScene (Py<Inner> + the stashed script
+                         fn + clock/camera/camera_target as plain wrapper
+                         fields OUTSIDE the pyclass - no script camera
+                         surface, and clock_mut/camera_mut hand out real
+                         `&mut` borrows a cell guard could not - so the
+                         wrapper implements SceneClock (taking Scene's
+                         provided tick_scene, overridden here to first fold
+                         the script's requested clock edits into the clock)
+                         and ScenePtzCamera like every Rust scene; its
+                         Scene::advance re-anchors the Inner's orbit to the
+                         ticked clock then pushes fresh snapshots, and its
+                         CameraView::frame_state rigs the wrapper camera
+                         while borrowing the Inner for the orbit); the
                          pyclass-touching trait impls each attach + borrow
                          the cell for their own duration only (no borrow
                          ever spans a call into
@@ -131,17 +138,20 @@ src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
                          delegates to the CLI-given script (the repo ships
                          scenes/solar_system_py.py); same
                          Inner-pyclass + wrapper pattern as manual_control_py
-                         (plain clock behind SceneClock + the same clock
-                         properties; camera/camera_target on the wrapper,
-                         whose frame_state folds the Inner's script-requested
-                         body into camera_target), with selected_body: usize
+                         (the same snapshot/request clock mirror on the Inner;
+                         clock/camera/camera_target on the wrapper, whose
+                         tick_scene override folds the requested clock edits
+                         and whose frame_state folds the Inner's
+                         script-requested body into camera_target), with
+                         selected_body: usize
                          (index into CelestialBody::ALL) re-exposed as scene
                          properties (the script rebuilds the 9-key Camera
                          Target panel via scene.selected_body /
                          scene.body_names() / scene.request_body(i))
-src/engine/application/mod.rs   ApplicationState<S: Scene + CameraControl +
-                         CameraView + UIDrawable>
-                         + winit ApplicationHandler + run(). Keeps NO camera or
+src/engine/application/mod.rs   ApplicationState<S: Scene + SceneClock +
+                         CameraControl + CameraView + UIDrawable>
+                         + winit ApplicationHandler + run() (redraw calls
+                         tick_scene, never advance directly). Keeps NO camera or
                          input state: translate_camera_event statelessly maps
                          each winit input event onto one device-neutral
                          CameraControl-trait call (raw positions/deltas pass
@@ -331,8 +341,12 @@ src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
                          order and index space). The shared vocabulary for the
                          celestial sphere, CameraTarget, and the scenes'
                          camera-target panels
-src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic; just
-                         advance(); the clock lives directly in each scene
+src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic;
+                         advance(running) - scene-specific work only - plus
+                         the provided tick_scene (for Self: SceneClock =
+                         every scene): tick_clock then advance, returning
+                         the running flag - the application's per-frame
+                         entry point; the clock lives directly in each scene
                          struct - the celestial sphere is NOT stored anywhere:
                          CelestialSphere::at is a pure function of time,
                          evaluated on the spot by frame_state and by the
@@ -382,7 +396,9 @@ src/engine/scene/clock.rs  simulation Clock (wall-dt x speed, play/pause) +
                          is plain data (new() + ALL-private fields); the
                          whole clock API AND its logic are SceneClock's
                          default methods (required clock_mut() -> &mut Clock
-                         per scene; tick_clock/clock_now/
+                         per scene - a plain field, on the wrapper for the
+                         *_py scenes - and implementing it is what grants
+                         Scene's provided tick_scene; tick_clock/clock_now/
                          clock_datetime_label/clock_paused/set_clock_paused/
                          clock_multiplier/set_clock_multiplier), which as
                          same-module code are
@@ -485,12 +501,19 @@ impl. (The `Scene` trait itself takes no UI or camera types, and the
 builders that needed it are gone.)
 
 ```
-advance(&mut self) -> bool
-    Tick the clock (plus any scene-specific per-frame state, e.g.
-    manual_control's orbit re-anchor). Returns whether the clock is running
-    (keeps frames coming; paused = app goes idle). The celestial sphere is
-    not touched here - frame_state re-derives it at the frame's clock
-    instant.
+advance(&mut self, running: bool)
+    Scene-specific per-frame work only (e.g. manual_control's orbit
+    re-anchor; empty for most scenes). Called by tick_scene AFTER the clock
+    ticked; `running` says whether it advanced. The celestial sphere is not
+    touched here - frame_state re-derives it at the frame's clock instant.
+
+tick_scene(&mut self) -> bool      [provided where Self: SceneClock]
+    The application's per-frame entry point: tick_clock(), then
+    advance(running), returning whether the clock is running (keeps frames
+    coming; paused = app goes idle). Provided by the trait for every scene
+    (all implement SceneClock), so no scene hand-writes the clock tick; the
+    *_py wrappers override it to first fold their script's requested clock
+    edits into the wrapper clock.
 ```
 
 ## `CameraControl` + `CameraView` traits + `PtzCamera`
@@ -535,7 +558,7 @@ scroll(&mut self, delta) -> bool              [default: no-op, false]
 tick(&mut self, viewport_height) -> bool      [default: no-op, false]
     Advance one frame of camera animation (flick coast, zoom glide) with
     real frame time. Called at the top of every redraw, BEFORE
-    Scene::advance. Returns true while another frame is needed; with a
+    Scene::tick_scene. Returns true while another frame is needed; with a
     paused clock this reaching false is what lets the app go idle.
 
 cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
@@ -562,9 +585,9 @@ frame_state(&mut self) -> RenderState
     RenderState MUST be the same one the rig was built for.
 ```
 
-Per-frame application order: `tick` -> `Scene::advance` ->
-`frame_state` (idle invariant: redraw is re-requested only while
-`tick() || advance()` reports motion, or egui asks for a repaint).
+Per-frame application order: `tick` -> `Scene::tick_scene` (= `tick_clock` +
+`advance`) -> `frame_state` (idle invariant: redraw is re-requested only
+while `tick() || tick_scene()` reports motion, or egui asks for a repaint).
 
 ## `UIDrawable` trait + `UIDrawablePanel` + `Instrument`
 

@@ -14,13 +14,14 @@
   `scenes/manual_control_py.rs` the full Python-scene round trip
   (`python_scene_round_trip`: loads the real `scenes/manual_control_py.py`,
   asserts the three converted panels, and click-probes a CPU-only egui pass
-  until the script's Run-toggle callback flips the scene's clock through its
-  `paused` property setter (the `SceneClock` API's Python face) —
+  until the script's Run-toggle callback records a `paused` request through
+  the property setter and the next `tick_scene` folds it into the
+  wrapper-owned clock (the snapshot/request mirror of the `SceneClock` API) —
   main-bin harness only), and in `scenes/solar_system_py.rs` the second
   script's load + Camera Target panel shape
   (`solar_system_script_builds_selector`,
-  no satkit — the panel path only reads the clock and the requested body
-  index) — run
+  no satkit — the panel path only reads the clock mirror and the requested
+  body index) — run
   them after touching those modules. The two scene tests read the real
   `scenes/*.py` at runtime, so they also stand in for the edit-without-
   rebuild check. Tests touching Python must call
