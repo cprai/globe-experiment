@@ -17,7 +17,8 @@
 //! there are no absolute pixel positions or fixed panel boxes. A producer
 //! groups instruments into rows; every metric comes from the `theme` tokens.
 //!
-//! The clock + celestial sphere live directly in each scene struct. The
+//! The clock lives directly in each scene struct (reached through the
+//! scenes' SceneClock API). The
 //! panel reads/drives a scene through its `UIDrawable` impl, which is kept
 //! separate from the `Scene` trait.
 

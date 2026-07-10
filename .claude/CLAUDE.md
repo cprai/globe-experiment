@@ -109,8 +109,12 @@ repo ships the reference scripts in the repo-root `scenes/` directory),
 **read at runtime** — edit + relaunch, no rebuild (the one deliberate
 exception to "everything embedded"). The script imports the embedded `globe` module
 (instruments, `Panel`/`PanelAnchor`, `Interactive*` twins holding Python
-callables, `Clock`, `BodySelector`, readout types — the dual Rust/Python UI
-API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`).
+callables, `Clock` (registered only for its `MIN`/`MAX_MULTIPLIER`
+classattrs), `BodySelector`, readout types — the dual Rust/Python UI
+API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`)
+whose `paused`/`multiplier`/`datetime_label()` properties — the Python face
+of the scenes' `SceneClock` trait API — are how a script reads and drives
+the clock (no `Clock` instance crosses into Python).
 Both scene pairs live side by side so the two APIs can be compared.
 
 The crate builds **two binaries over one shared `src/engine/`** (no lib

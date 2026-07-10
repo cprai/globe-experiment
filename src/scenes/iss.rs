@@ -16,6 +16,7 @@ use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
+use crate::scenes::SceneClock;
 
 // This scene's tracked-object TLE, inlined as a source literal. Unlike the
 // textures/ephemeris/EOP (build-downloaded straight into `OUT_DIR` and baked
@@ -40,8 +41,14 @@ const ISS_TLE: &str = concat!(
 /// is a pure function of time, so `frame_state` evaluates it fresh at each
 /// frame's clock instant (the same pattern as the renderer).
 pub struct IssScene {
-    /// Simulation clock (datetime + play/paused + speed).
+    /// Simulation clock (datetime + play/paused + speed), reached only via
+    /// the `SceneClock` API.
     clock: Clock,
+    /// Time-panel clock requests (the selector-key request-flag idiom): the
+    /// Run-toggle/speed-slider callbacks set these two disjoint fields, and
+    /// `advance()` folds them into the clock through the `SceneClock` API.
+    request_toggle_run: bool,
+    request_multiplier: Option<f32>,
     satellites: Vec<Satellite>,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations); the default whole-Terra view.
@@ -58,6 +65,8 @@ impl IssScene {
         let epoch = satellites.first().expect("TLE present").epoch();
         Self {
             clock: Clock::new(epoch),
+            request_toggle_run: false,
+            request_multiplier: None,
             satellites,
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
@@ -65,13 +74,24 @@ impl IssScene {
     }
 }
 
+impl SceneClock for IssScene {
+    fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
+    }
+}
+
 impl Scene for IssScene {
     fn advance(&mut self) -> bool {
-        // Advance the clock. Returns whether it is running - an "animating"
-        // source that keeps frames coming; when paused nothing advances and
-        // the app can go idle. Nothing else to update: `frame_state`
-        // re-derives the celestial sphere at the frame's clock instant.
-        self.clock.tick()
+        // Fold the Time panel's requests into the clock first (the callbacks
+        // fired during the previous egui pass), then advance it. Returns
+        // whether it is running - an "animating" source that keeps frames
+        // coming; when paused nothing advances and the app can go idle.
+        // Nothing else to update: `frame_state` re-derives the celestial
+        // sphere at the frame's clock instant.
+        let toggle_run = std::mem::take(&mut self.request_toggle_run);
+        let multiplier = self.request_multiplier.take();
+        self.apply_clock_requests(toggle_run, multiplier);
+        self.tick_clock()
     }
 }
 
@@ -107,7 +127,7 @@ impl CameraControl for IssScene {
 
 impl CameraView for IssScene {
     fn frame_state(&mut self) -> RenderState {
-        let now = self.clock.now();
+        let now = self.clock_now();
         // This frame's celestial sphere, evaluated on the spot: `at` is a
         // pure function of time, so it needs no stashing between frames (the
         // renderer re-derives the same sphere from `RenderState.time`).
@@ -155,15 +175,16 @@ impl UIDrawable for IssScene {
         //
         // Snapshot the displayed values up front (owned values only), so no
         // borrow of the clock or the satellites outlives into the mutable
-        // callback captures below. The two control callbacks capture disjoint
-        // clock fields (`paused` vs `multiplier`) via direct field assignment
-        // - a `Clock` method would borrow the whole clock and collide.
+        // callback captures below. The two control callbacks set the disjoint
+        // `request_*` fields by direct assignment (a `SceneClock` method call
+        // would borrow the whole scene and collide); `advance()` folds them
+        // into the clock next frame.
         //
         // The readout re-propagates each satellite at the same instant
         // `frame_state` used (`Clock::now()` is pure and nothing ticks the
         // clock between the two calls) and SGP4 is deterministic, so the
         // values match the rendered markers with no stashed state.
-        let now = self.clock.now();
+        let now = self.clock_now();
         let telemetry: Vec<SatelliteTelemetry> = self
             .satellites
             .iter_mut()
@@ -178,17 +199,17 @@ impl UIDrawable for IssScene {
             })
             .collect();
 
-        let datetime = self.clock.datetime_label();
+        let datetime = self.clock_datetime_label();
         // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
         // font is monospace, so a fixed-width value keeps the digit window
         // from resizing as the speed changes.
-        let speed = format!("{:>5.1}", self.clock.multiplier);
-        let running = !self.clock.paused;
+        let speed = format!("{:>5.1}", self.clock_multiplier());
+        let running = !self.clock_paused();
 
         // Exponential (base e) speed: the slider edits the exponent, so
         // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
         // right, 10x at the midpoint. The mapping lives here, not in the panel.
-        let speed_exp = self.clock.multiplier.ln();
+        let speed_exp = self.clock_multiplier().ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
         // The producer groups instruments into rows + picks content only; all
@@ -214,7 +235,7 @@ impl UIDrawable for IssScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                    on_toggle: Box::new(|| self.request_toggle_run = true),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -222,7 +243,7 @@ impl UIDrawable for IssScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {

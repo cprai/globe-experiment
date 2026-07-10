@@ -29,30 +29,34 @@ from globe import (
 
 
 def time_panel(scene):
-    """The top-left Time panel: UTC + speed readouts, Run key, speed slider."""
-    clock = scene.clock  # the live shared clock - callbacks mutate it below
+    """The top-left Time panel: UTC + speed readouts, Run key, speed slider.
+
+    The clock is driven through the scene's own properties (paused /
+    multiplier / datetime_label() - the Python face of the Rust SceneClock
+    API); only the MIN/MAX_MULTIPLIER slider bounds still come from the
+    Clock class."""
 
     def toggle_run():
-        clock.paused = not clock.paused
+        scene.paused = not scene.paused
 
     def set_speed(exponent):
         # Exponential (base e) speed: the slider edits the exponent, so
         # multiplier = e^exp - real time at the left, 100x at the right.
-        clock.multiplier = math.exp(exponent)
+        scene.multiplier = math.exp(exponent)
 
     rows = [
         [Header("Time")],
-        [Readout("UTC", clock.datetime_label())],
+        [Readout("UTC", scene.datetime_label())],
         [
             # Padded to the widest value ("100.0" = 5 chars, monospace) so
             # the digit window keeps its size as the speed changes.
-            Readout("Speed", "%5.1f" % clock.multiplier, "x"),
-            InteractiveToggle(Toggle("Run", not clock.paused), toggle_run),
+            Readout("Speed", "%5.1f" % scene.multiplier, "x"),
+            InteractiveToggle(Toggle("Run", not scene.paused), toggle_run),
         ],
         [
             InteractiveSlider(
                 Slider(
-                    math.log(clock.multiplier),
+                    math.log(scene.multiplier),
                     (math.log(Clock.MIN_MULTIPLIER), math.log(Clock.MAX_MULTIPLIER)),
                 ),
                 set_speed,

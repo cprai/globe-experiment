@@ -14,7 +14,8 @@
   `scenes/manual_control_py.rs` the full Python-scene round trip
   (`python_scene_round_trip`: loads the real `scenes/manual_control_py.py`,
   asserts the three converted panels, and click-probes a CPU-only egui pass
-  until the script's Run-toggle callback flips the shared `Py<Clock>` —
+  until the script's Run-toggle callback flips the scene's clock through its
+  `paused` property setter (the `SceneClock` API's Python face) —
   main-bin harness only), and in `scenes/solar_system_py.rs` the second
   script's load + selector shape (`solar_system_script_builds_selector`,
   no satkit — the panel path only reads the clock and selector) — run

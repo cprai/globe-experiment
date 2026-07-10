@@ -27,11 +27,21 @@ paths:
   case where `new()` evaluates a throwaway local sphere) +
   `CameraTarget::terra()` (or the body matching the seeded framing/selector
   default, so the first frame does not reframe); `advance()`
-  ticks the clock (and nothing else, unless the scene has extra per-frame
-  state like `manual_control`'s orbit re-anchor).
+  folds the Time panel's clock requests (`std::mem::take` the
+  `request_toggle_run` / `request_multiplier` fields into
+  `apply_clock_requests`) then ticks the clock (and nothing else, unless the
+  scene has extra per-frame state like `manual_control`'s orbit re-anchor).
+  **All clock access goes through the `SceneClock` trait** in
+  `src/scenes/mod.rs`: the scene implements only `clock_mut()` and calls the
+  trait's default API (`tick_clock`/`clock_now`/`clock_datetime_label`/
+  `clock_paused`/`clock_multiplier`/...) - `Clock`'s fields are private, so
+  the compiler enforces it (the only direct `Clock` uses are `Clock::new` and
+  a framing `now()` on the local in `new()`, before `self` exists).
   `get_drawables` builds the top-left Time panel itself (UTC readout, speed
-  readout, Run toggle, speed slider - the toggle/slider callbacks mutate the
-  disjoint `clock.paused` / `clock.multiplier` fields by direct assignment).
+  readout, Run toggle, speed slider - the toggle/slider callbacks set the
+  scene's disjoint `request_toggle_run` / `request_multiplier` fields by
+  direct assignment, the selector request-flag idiom; a `SceneClock` call in
+  a closure would borrow the whole scene and collide).
   The Time-panel code is **deliberately duplicated across scenes** (like
   the propagation loop) so each can diverge in what it exposes. Name the
   struct `<Name>Scene` (e.g. `IssScene`, `IssAndHubbleScene`).
@@ -153,14 +163,18 @@ The pattern:
 - **Split struct**: the scene state lives in a `<Name>SceneInner` that is
   itself a `#[pyclass]` (Python-side name `<Name>Scene`, module `globe`, NOT
   registered in the `globe` module — it reaches Python only as the instance
-  handed into the script). Shared-mutable state the script drives is held as
-  `Py<..>` fields with `#[pyo3(get)]` (`clock: Py<Clock>`; solar_system_py
-  adds `selector: Py<BodySelector>`), so a script callback like
-  `clock.paused = ...` mutates the very object Rust ticks. Rust-private state
+  handed into the script). The clock is a **plain `clock: Clock` field**
+  behind the Inner's `SceneClock` impl, re-exposed to the script as pyclass
+  properties (`paused`/`multiplier` getter+setter pairs + `datetime_label()`,
+  each pymethod delegating to the trait API), so a script callback like
+  `scene.paused = ...` drives the same clock Rust ticks. Only
+  non-clock shared state stays a `Py<..>` field with `#[pyo3(get)]`
+  (solar_system_py's `selector: Py<BodySelector>`). Rust-private state
   (orbit, camera, camera_target) stays in plain fields. The Rust side of the
-  Inner mirrors the sibling's `new`/`advance`/`frame_state` body for body,
-  each taking `py: Python` and borrowing the shared cells
-  (`self.clock.borrow_mut(py).tick()`).
+  Inner mirrors the sibling's `new`/`advance`/`frame_state` body for body
+  (`py: Python` only where a shared cell is borrowed, e.g.
+  `self.selector.borrow_mut(py)`; the clock ticks via `self.tick_clock()` —
+  no `request_*` clock fields here, the script's setters apply directly).
 - **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
   Py<PyAny> }` implements the four engine traits; every method is
   `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
@@ -182,9 +196,13 @@ The pattern:
   construct the scene — construction loads the script at **runtime** (no
   path resolution; edit + relaunch, no rebuild).
 - **Script contract**: module-level `get_drawables(scene) -> list[Panel]`,
-  importing from the embedded `globe` module; the ln/exp speed-slider mapping
+  importing from the embedded `globe` module; the clock is read/driven
+  through the scene's own properties (`scene.paused`, `scene.multiplier`,
+  `scene.datetime_label()` — no `scene.clock` object); the ln/exp
+  speed-slider mapping
   is done in Python (`math.log`/`math.exp` against `Clock.MIN_MULTIPLIER`/
-  `MAX_MULTIPLIER`). The 9-key selector loop needs the `lambda i=i:` capture
+  `MAX_MULTIPLIER` — the classattrs are all `Clock` is still imported for).
+  The 9-key selector loop needs the `lambda i=i:` capture
   (Python's late binding).
 - **Error policy**: script load/compile failure and a per-frame
   `get_drawables` exception print the traceback and **panic** (they would

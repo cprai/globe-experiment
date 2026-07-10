@@ -18,26 +18,34 @@ time window) and wires it into the clap CLI.
      `concat!` of the three TLE lines (name + two element lines). TLE data is
      **deliberately duplicated** per scene — do not factor it into a
      shared const.
-   - defines a `pub struct <Name>Scene { clock: Clock, celestial_sphere:
-     CelestialSphere, satellites: Vec<Satellite> }` (the clock + celestial
-     sphere are direct fields; there is no shared core struct).
-   - implements `Scene` for it (`advance`, `celestial`, `frame_state`).
-     `advance` ticks the clock and, while it is running, re-evaluates
-     `CelestialSphere::at(&self.clock.now())`. The `frame_state` impl
-     propagates `self.satellites` using `self.clock.now()` and fills in
-     `RenderState`. Use `marker_occluded` from `crate::scene`
-     for visibility testing.
+   - defines a `pub struct <Name>Scene { clock: Clock, request_toggle_run:
+     bool, request_multiplier: Option<f32>, satellites: Vec<Satellite>,
+     camera: PtzCamera, camera_target: CameraTarget }` (direct fields; there
+     is no shared core struct, and no stored `CelestialSphere`).
+   - implements `crate::scenes::SceneClock` for it: just `clock_mut() ->
+     &mut Clock`. **All clock access goes through the trait's default API**
+     (`tick_clock`/`clock_now`/`clock_datetime_label`/...) - `Clock`'s
+     fields are private, so the compiler enforces it.
+   - implements `Scene` (`advance`: fold the Time panel's requests -
+     `std::mem::take` the two `request_*` fields into
+     `apply_clock_requests` - then `self.tick_clock()`), `CameraControl`
+     (forward to the embedded `PtzCamera`), and `CameraView`
+     (`frame_state`: propagate `self.satellites` at `self.clock_now()` and
+     fill `RenderState`; use `marker_occluded` from `crate::scene` for
+     visibility testing).
    - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
      `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
      you use, from `crate::ui`): build the top-left **Time panel** first (copy
      it from an existing scene: UTC readout, speed readout, Run toggle +
-     speed slider whose callbacks assign the disjoint `self.clock.paused` /
-     `self.clock.multiplier` fields directly — the panel code is deliberately
+     speed slider whose callbacks assign the disjoint
+     `self.request_toggle_run` / `self.request_multiplier` fields directly
+     (never a `SceneClock` call - it would borrow the whole scene and
+     collide) — the panel code is deliberately
      duplicated per scene), then push **one** scene `UIDrawablePanel`
      (e.g. `anchor: PanelAnchor::TopRight`) whose rows are per-satellite
      readouts (e.g. `Box::new(Header { .. })`) built into an owned
      `Vec<SatelliteTelemetry>` at the top of `get_drawables` by
-     re-propagating `self.satellites` at `self.clock.now()` — the same
+     re-propagating `self.satellites` at `self.clock_now()` — the same
      instant `frame_state` used, so the values match the rendered markers.
    - has a `run()` function that: calls `scene::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
@@ -45,8 +53,7 @@ time window) and wires it into the clap CLI.
      `application::run(ApplicationState::new(<Name>Scene::new()))`.
    - In `<Name>Scene::new()`: build `satellites` first (for the epoch),
      take `satellites.first().expect(...).epoch()` as the clock start, then
-     `let clock = Clock::new(epoch);` and `celestial_sphere:
-     CelestialSphere::at(&clock.now())`.
+     `clock: Clock::new(epoch)` with both `request_*` fields `false`/`None`.
 2. **Wire the CLI**: give the scene module its own `#[derive(clap::Args)]
    pub struct Args {}` (empty until the scene needs flags; `run` takes it)
    and add a `SceneCommand` variant in `src/main.rs` wrapping it (use

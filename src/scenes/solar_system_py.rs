@@ -9,10 +9,11 @@
 //! Same structure as `manual_control_py`: the scene state is a `#[pyclass]`
 //! ([`SolarSystemSceneInner`]) handed live to the script, wrapped by
 //! [`SolarSystemPyScene`] for the four engine traits; borrows of the pyclass
-//! cell never span a call into Python. The script sees the shared `clock`
-//! and `selector` handles - its selector panel reads `selector.selected` /
-//! `BodySelector.body_names()` and its key callbacks call
-//! `selector.request(i)`, the index twin of the Rust panel's disjoint
+//! cell never span a call into Python. The script sees the clock properties
+//! (`paused`/`multiplier`/`datetime_label()` - the `SceneClock` trait API's
+//! Python face) and the shared `selector` handle - its selector panel reads
+//! `selector.selected` / `BodySelector.body_names()` and its key callbacks
+//! call `selector.request(i)`, the index twin of the Rust panel's disjoint
 //! request flags. Script errors fail fast (traceback + panic); callback
 //! errors only print (see `ui::py`).
 
@@ -29,15 +30,17 @@ use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{self, BodySelector, CameraTarget, Clock, RenderState, Scene};
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
+use crate::scenes::SceneClock;
 
-/// The live scene state, as a pyclass: the script reads/drives the shared
-/// `clock` and `selector`; the camera and its target stay Rust-private.
+/// The live scene state, as a pyclass: the script reads/drives the clock
+/// properties (the `SceneClock` API's pymethod face below) and the shared
+/// `selector`; the clock object itself, the camera, and its target stay
+/// Rust-private.
 #[pyclass(name = "SolarSystemScene", module = "globe")]
 pub struct SolarSystemSceneInner {
-    /// Simulation clock (datetime + play/paused + speed), shared with the
-    /// script. The getter hands Python the same live object.
-    #[pyo3(get)]
-    clock: Py<Clock>,
+    /// Simulation clock (datetime + play/paused + speed), reached only via
+    /// the `SceneClock` API (and, from the script, its pymethod face).
+    clock: Clock,
     /// The nine-body camera-target selector, shared with the script (which
     /// rebuilds its panel in Python and requests switches through it).
     #[pyo3(get)]
@@ -50,9 +53,48 @@ pub struct SolarSystemSceneInner {
     camera_target: CameraTarget,
 }
 
+/// The script-facing clock surface: the `SceneClock` API re-exposed as
+/// pyclass properties, so the script's Run/speed callbacks drive the same
+/// clock Rust ticks (no `Clock` instance crosses into Python; `&mut self`
+/// getters are fine - each access takes its own transient runtime borrow,
+/// and no Rust borrow is live during the script).
+#[pymethods]
+impl SolarSystemSceneInner {
+    #[getter]
+    fn get_paused(&mut self) -> bool {
+        self.clock_paused()
+    }
+
+    #[setter]
+    fn set_paused(&mut self, paused: bool) {
+        self.set_clock_paused(paused);
+    }
+
+    #[getter]
+    fn get_multiplier(&mut self) -> f32 {
+        self.clock_multiplier()
+    }
+
+    #[setter]
+    fn set_multiplier(&mut self, multiplier: f32) {
+        self.set_clock_multiplier(multiplier);
+    }
+
+    /// The current simulation datetime formatted for display (UTC).
+    fn datetime_label(&mut self) -> String {
+        self.clock_datetime_label()
+    }
+}
+
+impl SceneClock for SolarSystemSceneInner {
+    fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
+    }
+}
+
 /// The Rust-only half: construction and the per-frame work, mirroring the
-/// Rust sibling body for body (only the clock/selector accesses differ -
-/// `borrow` through the shared pyclass cells).
+/// Rust sibling body for body (only the selector accesses differ - `borrow`
+/// through the shared pyclass cell).
 impl SolarSystemSceneInner {
     fn new(py: Python<'_>) -> Self {
         // A fixed recent past date, well inside the bundled EOP range (see
@@ -60,7 +102,7 @@ impl SolarSystemSceneInner {
         let epoch =
             Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
         Self {
-            clock: Py::new(py, Clock::new(epoch)).expect("clock pyclass"),
+            clock: Clock::new(epoch),
             selector: Py::new(py, BodySelector::default()).expect("selector pyclass"),
             camera: PtzCamera::default(),
             // Matches the selector default (Terra) and the whole-Terra camera
@@ -72,13 +114,15 @@ impl SolarSystemSceneInner {
     fn advance(&mut self, py: Python<'_>) -> bool {
         // Fold in any pending body-key request before the camera target is
         // read (the script's key callbacks called `selector.request(i)`
-        // during the previous egui pass).
+        // during the previous egui pass; any pause/speed change already
+        // landed via the pymethod setters), then tick through the SceneClock
+        // API.
         self.selector.borrow_mut(py).apply_requests();
-        self.clock.borrow_mut(py).tick()
+        self.tick_clock()
     }
 
     fn frame_state(&mut self, py: Python<'_>) -> RenderState {
-        let now = self.clock.borrow(py).now();
+        let now = self.clock_now();
         // This frame's celestial sphere, evaluated on the spot (pure
         // function of time, same as the Rust sibling).
         let sphere = CelestialSphere::at(&now);

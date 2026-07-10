@@ -12,13 +12,13 @@ use std::time::Instant as WallClock;
 use pyo3::prelude::*;
 use satkit::{Duration, Instant};
 
-/// `pyclass`: a `*_py` scene holds its clock as `Py<Clock>` and hands the
-/// live handle to its script, whose Run/speed callbacks mutate the same
-/// `paused`/`multiplier` the Rust side ticks - the Python face of the dual
-/// clock API. `new`/`now`/`tick` stay Rust-only below (they speak
-/// `satkit::Instant`, which has no Python conversion); `datetime_label` and
-/// the multiplier bounds live in the `#[pymethods]` block (still plain Rust
-/// items - a duplicate inherent definition would not compile).
+/// `pyclass` only for the `MIN_MULTIPLIER`/`MAX_MULTIPLIER` classattrs (a
+/// script reads them for its speed-slider range): no `Clock` instance
+/// crosses into Python - a `*_py` scene exposes the clock through its own
+/// scene pyclass properties, which delegate to the scenes' `SceneClock`
+/// trait API. All fields are private: every consumer (Rust scene or script)
+/// goes through that API, so no field can be mutated behind the clock's
+/// back.
 #[pyclass(module = "globe")]
 pub struct Clock {
     /// Simulation time zero - the TLE's epoch.
@@ -28,11 +28,9 @@ pub struct Clock {
     /// Time scale: 1.0 = real time, up to 100.0 = 100x real time. The UI
     /// drives this on an exponential (base e) slider, but it is stored as the
     /// plain linear factor.
-    #[pyo3(get, set)]
-    pub multiplier: f32,
+    multiplier: f32,
     /// When true, time is frozen.
-    #[pyo3(get, set)]
-    pub paused: bool,
+    paused: bool,
     /// Wall-clock instant of the previous advance; `None` whenever the clock
     /// is not running, so resuming doesn't jump by the paused interval.
     last: Option<WallClock>,
@@ -47,15 +45,6 @@ impl Clock {
     pub const MIN_MULTIPLIER: f32 = 1.0;
     #[classattr]
     pub const MAX_MULTIPLIER: f32 = 100.0;
-
-    /// The current simulation datetime formatted for display (UTC).
-    pub fn datetime_label(&self) -> String {
-        let (year, month, day, hour, minute, second) = self.now().as_datetime();
-        format!(
-            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{:02} UTC",
-            second as i32
-        )
-    }
 }
 
 impl Clock {
@@ -73,6 +62,31 @@ impl Clock {
     /// The current simulation time.
     pub fn now(&self) -> Instant {
         self.epoch + Duration::from_seconds(self.elapsed_seconds)
+    }
+
+    /// The current simulation datetime formatted for display (UTC).
+    pub fn datetime_label(&self) -> String {
+        let (year, month, day, hour, minute, second) = self.now().as_datetime();
+        format!(
+            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{:02} UTC",
+            second as i32
+        )
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn multiplier(&self) -> f32 {
+        self.multiplier
+    }
+
+    pub fn set_multiplier(&mut self, multiplier: f32) {
+        self.multiplier = multiplier;
     }
 
     /// Advances simulation time by the wall-clock delta since the previous

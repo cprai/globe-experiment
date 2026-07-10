@@ -71,7 +71,14 @@ scenes/*.py              the repo-root scene-script directory (NOT src/scenes):
                          relaunch, no rebuild (the one deliberate exception to
                          everything-embedded). Contract: module-level
                          get_drawables(scene) -> list[Panel]
-src/scenes/mod.rs     scene registry
+src/scenes/mod.rs     scene registry + the SceneClock trait (required
+                         clock_mut() -> &mut Clock per scene; default methods
+                         are the whole clock API - tick_clock/clock_now/
+                         clock_datetime_label/clock_paused/set_clock_paused/
+                         clock_multiplier/set_clock_multiplier/
+                         apply_clock_requests. Scene code never touches Clock
+                         internals - its fields are private, so the compiler
+                         enforces it)
 src/scenes/iss_and_hubble.rs  IssAndHubbleScene (Scene impl); ISS_TLE/HST_TLE consts
 src/scenes/iss.rs     IssScene (Scene impl); own ISS_TLE const (duplicated on purpose)
 src/scenes/solar_eclipse.rs  SolarEclipseScene: empty (NO satellites);
@@ -98,8 +105,10 @@ src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
                          delegates to the CLI-given script (the repo ships
                          scenes/manual_control_py.py; side by side for API
                          comparison). ManualControlSceneInner is a
-                         #[pyclass] (clock: Py<Clock> shared live with the
-                         script; telemetry()/orbit_shape()/speed_m_s readout
+                         #[pyclass] (plain clock: Clock behind its SceneClock
+                         impl, re-exposed to the script as paused/multiplier
+                         getter+setter properties + datetime_label();
+                         telemetry()/orbit_shape()/speed_m_s readout
                          methods; six request_* burn methods - the script's
                          hold-key callbacks) wrapped by ManualControlPyScene
                          (Py<Inner> + the stashed script fn), whose four trait
@@ -114,9 +123,10 @@ src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
 src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
                          delegates to the CLI-given script (the repo ships
                          scenes/solar_system_py.py); same
-                         Inner-pyclass + wrapper pattern as manual_control_py,
-                         with clock: Py<Clock> + selector: Py<BodySelector>
-                         shared live with the script (the script rebuilds the
+                         Inner-pyclass + wrapper pattern as manual_control_py
+                         (plain clock behind SceneClock + the same clock
+                         properties), with selector: Py<BodySelector> shared
+                         live with the script (the script rebuilds the
                          9-key selector panel via selector.selected /
                          BodySelector.body_names() / selector.request(i))
 src/engine/application/mod.rs   ApplicationState<S: Scene + CameraControl +
@@ -340,13 +350,15 @@ src/engine/scene/satellite.rs  TLE parse + satkit SGP4 + TEME->world-km conversi
                          (osculating apo/peri/speed, None for e >= 1;
                          OrbitShape is a #[pyclass(get_all)] readout); plus a
                          render-free circular-LEO unit test of that pipeline
-src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause. Also
-                         a #[pyclass] (get/set multiplier + paused;
-                         datetime_label and the MIN/MAX_MULTIPLIER classattr
-                         consts live in the #[pymethods] block - still plain
-                         Rust items; new/now/tick stay Rust-only, they speak
-                         satkit::Instant). The *_py scenes hold Py<Clock> so
-                         script callbacks mutate the same clock Rust ticks
+src/engine/scene/clock.rs  simulation Clock: wall-dt x speed, play/pause.
+                         ALL fields private - consumers go through the
+                         accessors (paused/set_paused/multiplier/
+                         set_multiplier/now/tick/datetime_label), which the
+                         scenes' SceneClock trait wraps. Still a #[pyclass],
+                         but registered only for the MIN/MAX_MULTIPLIER
+                         classattrs (a script's slider bounds): no Clock
+                         instance crosses into Python - the *_py scenes
+                         re-expose the clock as scene-pyclass properties
 shaders/scene.wgsl       ALL shader code (5 passes in one module: a single
                          distance-adaptive body impostor for all 9 bodies
                          (perspective/orthographic ray trace, writes
@@ -562,11 +574,13 @@ PanelAnchor::{ TopLeft, TopRight, BottomCenter }   # add more when needed
 ```
 
 - Each scene's `impl UIDrawable` emits the **Time panel** (top-left) first,
-  built from live state: the UTC datetime + speed readouts, and the Run toggle
-  + speed slider whose callbacks mutate the live clock (each captures a
-  *disjoint* clock field - `paused` vs `multiplier` - via direct field
-  assignment, so both coexist with no interior mutability; do not call a
-  `Clock` method in those closures, it would borrow the whole clock). The
+  built from live state read through the `SceneClock` API: the UTC datetime +
+  speed readouts, and the Run toggle + speed slider whose callbacks set the
+  scene's *disjoint* `request_toggle_run` / `request_multiplier` fields by
+  direct assignment (the selector-key request-flag idiom; `advance()` folds
+  them into the clock via `SceneClock::apply_clock_requests`). Do not call a
+  `SceneClock` method in those closures - it would borrow the whole scene and
+  collide with the other panel closures' field captures. The
   panel-building code is **deliberately duplicated per scene** (like the
   propagation loop) so each scene can diverge in what it exposes.
 - After the Time panel, each scene pushes its own panel(s): top-right

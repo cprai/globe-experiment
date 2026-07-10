@@ -23,6 +23,7 @@ use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
+use crate::scenes::SceneClock;
 
 // This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
 // format notes. (Deliberately duplicated per scene.) Unlike the tracking
@@ -51,8 +52,15 @@ const BURN_ACCEL_M_S2: f64 = 10.0;
 /// evaluates it fresh at each frame's clock instant (the same pattern as the
 /// renderer).
 pub struct ManualControlScene {
-    /// Simulation clock (datetime + play/paused + speed).
+    /// Simulation clock (datetime + play/paused + speed), reached only via
+    /// the `SceneClock` API.
     clock: Clock,
+    /// Time-panel clock requests (the same request-flag idiom as the burn
+    /// flags below): the Run-toggle/speed-slider callbacks set these two
+    /// disjoint fields, and `advance()` folds them into the clock through
+    /// the `SceneClock` API.
+    request_toggle_run: bool,
+    request_multiplier: Option<f32>,
     /// Object name from the seed TLE, for the panel header.
     name: String,
     /// The satellite's GCRF state vector, valid at `orbit_epoch`. THE orbit -
@@ -90,6 +98,8 @@ impl ManualControlScene {
         let orbit = seed.state_at(&epoch).orbit;
         Self {
             clock: Clock::new(epoch),
+            request_toggle_run: false,
+            request_multiplier: None,
             name: seed.name,
             orbit,
             orbit_epoch: epoch,
@@ -140,13 +150,23 @@ impl ManualControlScene {
     }
 }
 
+impl SceneClock for ManualControlScene {
+    fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
+    }
+}
+
 impl Scene for ManualControlScene {
     fn advance(&mut self) -> bool {
-        // Advance the clock (paused = nothing advances and the app can go
-        // idle). The celestial sphere is not stashed here: `frame_state`
-        // re-derives it at the frame's clock instant.
-        let running = self.clock.tick();
-        let now = self.clock.now();
+        // Fold the Time panel's clock requests (fired during the previous
+        // egui pass), then advance the clock (paused = nothing advances and
+        // the app can go idle). The celestial sphere is not stashed here:
+        // `frame_state` re-derives it at the frame's clock instant.
+        let toggle_run = std::mem::take(&mut self.request_toggle_run);
+        let multiplier = self.request_multiplier.take();
+        self.apply_clock_requests(toggle_run, multiplier);
+        let running = self.tick_clock();
+        let now = self.clock_now();
 
         // Re-anchor the state vector to the clock: one numerical step over
         // this frame's simulation dt, so the stored initial conditions are
@@ -211,7 +231,7 @@ impl CameraControl for ManualControlScene {
 
 impl CameraView for ManualControlScene {
     fn frame_state(&mut self) -> RenderState {
-        let now = self.clock.now();
+        let now = self.clock_now();
         // This frame's celestial sphere, evaluated on the spot: `at` is a
         // pure function of time, so it needs no stashing between frames (the
         // renderer re-derives the same sphere from `RenderState.time`).
@@ -250,18 +270,19 @@ impl CameraView for ManualControlScene {
 
 impl UIDrawable for ManualControlScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
-        // The Time panel first (its callbacks capture disjoint `self.clock`
-        // fields), then the telemetry panel, then the Burns panel whose key
-        // callbacks each capture one disjoint `burn_*` flag - all coexisting
-        // borrows of separate fields. The panel builder is deliberately kept
-        // per-scene (like the propagation loop) - scenes may diverge in what
-        // they expose.
+        // The Time panel first (its callbacks capture the disjoint clock
+        // request fields), then the telemetry panel, then the Burns panel
+        // whose key callbacks each capture one disjoint `burn_*` flag - all
+        // coexisting borrows of separate fields. The panel builder is
+        // deliberately kept per-scene (like the propagation loop) - scenes
+        // may diverge in what they expose.
         //
         // Snapshot the displayed values up front (owned values only), so no
         // shared borrow of the clock or the orbit outlives into the mutable
-        // callback captures below. The two control callbacks capture disjoint
-        // clock fields (`paused` vs `multiplier`) via direct field assignment
-        // - a `Clock` method would borrow the whole clock and collide.
+        // callback captures below. The two control callbacks set the disjoint
+        // `request_*` fields by direct assignment (a `SceneClock` method call
+        // would borrow the whole scene and collide); `advance()` folds them
+        // into the clock next frame.
         //
         // The readout re-derives from the live state at the same instant
         // `frame_state` used (`Clock::now()` is pure, `advance` anchored
@@ -269,20 +290,21 @@ impl UIDrawable for ManualControlScene {
         // since), so this pure frame change matches the rendered marker with
         // no stashed state. `shape` is `None` after a burn to escape (e >= 1:
         // no apsides).
-        let state = satellite::resolve_orbit(&self.orbit, &self.clock.now());
+        let now = self.clock_now();
+        let state = satellite::resolve_orbit(&self.orbit, &now);
         let shape = satellite::orbit_shape(&self.orbit);
 
-        let datetime = self.clock.datetime_label();
+        let datetime = self.clock_datetime_label();
         // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
         // font is monospace, so a fixed-width value keeps the digit window
         // from resizing as the speed changes.
-        let clock_speed = format!("{:>5.1}", self.clock.multiplier);
-        let running = !self.clock.paused;
+        let clock_speed = format!("{:>5.1}", self.clock_multiplier());
+        let running = !self.clock_paused();
 
         // Exponential (base e) speed: the slider edits the exponent, so
         // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
         // right, 10x at the midpoint. The mapping lives here, not in the panel.
-        let speed_exp = self.clock.multiplier.ln();
+        let speed_exp = self.clock_multiplier().ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
         // The producer groups instruments into rows + picks content only; all
@@ -308,7 +330,7 @@ impl UIDrawable for ManualControlScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                    on_toggle: Box::new(|| self.request_toggle_run = true),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -316,7 +338,7 @@ impl UIDrawable for ManualControlScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {

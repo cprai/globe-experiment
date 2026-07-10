@@ -20,9 +20,9 @@
 //! JSON deserializes straight into them (via the `ui::spec` tagged enum) with
 //! no mirror type. The wrapper's borrow `'a` is the `&mut self` of the
 //! producing [`crate::engine::ui::UIDrawable::get_drawables`]; each callback
-//! captures a *disjoint* field of live state (e.g. one mutates `Clock::paused`,
-//! another `Clock::multiplier`), so several coexist without interior
-//! mutability.
+//! captures a *disjoint* field of live state (e.g. one sets a scene's
+//! `request_toggle_run` flag, another its `request_multiplier`), so several
+//! coexist without interior mutability.
 
 mod button;
 mod dual_readout;

@@ -146,5 +146,7 @@ accuracy, so use a past, in-range datetime for a faithful frame.
   the reference scripts `scenes/manual_control_py.py` /
   `scenes/solar_system_py.py`). The script is read at launch - edit it and
   relaunch, no rebuild. The scripts drive the live scene through an embedded
-  `globe` module exposing the same instrument/panel/clock/selector API as
-  Rust; the two scene pairs live side by side so the APIs can be compared.
+  `globe` module exposing the same instrument/panel/selector API as Rust
+  (the clock is driven through the scene object's own paused/multiplier/
+  datetime properties); the two scene pairs live side by side so the APIs
+  can be compared.

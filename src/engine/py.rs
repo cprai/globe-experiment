@@ -46,7 +46,11 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ui::py::InteractiveHoldButton>()?;
     m.add_class::<ui::py::InteractiveToggle>()?;
     m.add_class::<ui::py::InteractiveSlider>()?;
-    // The scene-side dual API the scripts read/drive.
+    // The scene-side dual API the scripts read/drive. Clock is registered
+    // only for its MIN/MAX_MULTIPLIER classattrs (the speed-slider bounds):
+    // no Clock instance crosses into Python - a script drives the clock
+    // through its scene pyclass's paused/multiplier/datetime_label()
+    // properties, the Python face of the scenes' SceneClock trait API.
     m.add_class::<scene::Clock>()?;
     m.add_class::<scene::BodySelector>()?;
     m.add_class::<scene::SatelliteTelemetry>()?;

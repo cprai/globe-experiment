@@ -282,11 +282,12 @@ pub fn init() {
 ///
 /// Two radio toggles can't both `&mut` one selection field - a panel's element
 /// callbacks all coexist, so each must capture a *disjoint* mutable field (the
-/// same rule that makes the Run toggle and speed slider capture `paused` vs
-/// `multiplier` separately). So a key press only sets a disjoint `request_*`
+/// same rule that makes the Run toggle and speed slider capture a scene's
+/// `request_toggle_run` vs `request_multiplier` fields separately). So a key
+/// press only sets a disjoint `request_*`
 /// flag; [`apply_requests`](Self::apply_requests) reconciles it into
 /// `luna_selected` once per frame. That is a one-frame latency, imperceptible
-/// and identical to the existing clock-edit delay.
+/// and identical to the clock-request delay.
 pub struct TargetSelector {
     luna_selected: bool,
     /// Set by the Terra key; cleared in `apply_requests`.
@@ -393,8 +394,9 @@ const TERRA_INDEX: usize = 2;
 /// whole solar system is selectable at a glance.
 ///
 /// The panel's element callbacks all coexist, so each must capture a *disjoint*
-/// mutable field (the same rule the clock's Run toggle and speed slider
-/// follow); hence one `request_*` flag per body rather than a single shared
+/// mutable field (the same rule the Time panel's Run toggle and speed slider
+/// follow with their `request_*` clock fields); hence one `request_*` flag
+/// per body rather than a single shared
 /// selection a key could write. A click sets that body's flag;
 /// [`apply_requests`] folds it into `selected` once per frame, before the
 /// scene's `CameraView::frame_state` resolves it

@@ -19,6 +19,7 @@ use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };
+use crate::scenes::SceneClock;
 
 /// Eye distance for the day-side framing (km): Terra fills most of the
 /// frame with Luna's umbral shadow spot centered near the subsolar point.
@@ -31,8 +32,14 @@ const VIEW_DISTANCE_KM: f64 = 22000.0;
 /// `frame_state` evaluates it fresh at each frame's clock instant (`new`
 /// builds a throwaway one for the initial framing).
 pub struct SolarEclipseScene {
-    /// Simulation clock (datetime + play/paused + speed).
+    /// Simulation clock (datetime + play/paused + speed), reached only via
+    /// the `SceneClock` API.
     clock: Clock,
+    /// Time-panel clock requests (the selector-key request-flag idiom): the
+    /// Run-toggle/speed-slider callbacks set these two disjoint fields, and
+    /// `advance()` folds them into the clock through the `SceneClock` API.
+    request_toggle_run: bool,
+    request_multiplier: Option<f32>,
     selector: TargetSelector,
     /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
     /// animations), seeded on the day-side framing.
@@ -76,6 +83,8 @@ impl SolarEclipseScene {
 
         Self {
             clock,
+            request_toggle_run: false,
+            request_multiplier: None,
             // Default to orbiting Terra (the day-side framing above).
             selector: TargetSelector::new(false),
             camera,
@@ -84,16 +93,26 @@ impl SolarEclipseScene {
     }
 }
 
+impl SceneClock for SolarEclipseScene {
+    fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
+    }
+}
+
 impl Scene for SolarEclipseScene {
     fn advance(&mut self) -> bool {
         // Fold in any pending target-selector key press before the camera target
-        // is read this frame.
+        // is read this frame, and the Time panel's clock requests before the
+        // tick (both fired during the previous egui pass).
         self.selector.apply_requests();
+        let toggle_run = std::mem::take(&mut self.request_toggle_run);
+        let multiplier = self.request_multiplier.take();
+        self.apply_clock_requests(toggle_run, multiplier);
         // Advance the clock. Returns whether it is running - an "animating"
         // source that keeps frames coming; when paused nothing advances and
         // the app can go idle. Nothing else to update: `frame_state`
         // re-derives the celestial sphere at the frame's clock instant.
-        self.clock.tick()
+        self.tick_clock()
     }
 }
 
@@ -129,7 +148,7 @@ impl CameraControl for SolarEclipseScene {
 
 impl CameraView for SolarEclipseScene {
     fn frame_state(&mut self) -> RenderState {
-        let now = self.clock.now();
+        let now = self.clock_now();
         // This frame's celestial sphere, evaluated on the spot: `at` is a
         // pure function of time, so it needs no stashing between frames (the
         // renderer re-derives the same sphere from `RenderState.time`).
@@ -166,27 +185,28 @@ impl CameraView for SolarEclipseScene {
 impl UIDrawable for SolarEclipseScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<'_>> {
         // The Time panel (datetime + run/speed) plus the Terra / Luna
-        // camera-target selector. The panels borrow disjoint fields (`clock`
-        // vs `selector`), so both can be live at once. The panel builder is
-        // deliberately kept per-scene - scenes may diverge in what they
-        // expose.
+        // camera-target selector. The panels borrow disjoint fields (the
+        // clock request flags vs `selector`), so both can be live at once.
+        // The panel builder is deliberately kept per-scene - scenes may
+        // diverge in what they expose.
         //
         // Snapshot the displayed values up front (owned `String`/`f32`/`bool`),
         // so no shared borrow of the clock outlives into the mutable callback
-        // captures below. The two control callbacks capture disjoint clock
-        // fields (`paused` vs `multiplier`) via direct field assignment - a
-        // `Clock` method would borrow the whole clock and collide.
-        let datetime = self.clock.datetime_label();
+        // captures below. The two control callbacks set the disjoint
+        // `request_*` fields by direct assignment (a `SceneClock` method call
+        // would borrow the whole scene and collide); `advance()` folds them
+        // into the clock next frame.
+        let datetime = self.clock_datetime_label();
         // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
         // font is monospace, so a fixed-width value keeps the digit window
         // from resizing as the speed changes.
-        let speed = format!("{:>5.1}", self.clock.multiplier);
-        let running = !self.clock.paused;
+        let speed = format!("{:>5.1}", self.clock_multiplier());
+        let running = !self.clock_paused();
 
         // Exponential (base e) speed: the slider edits the exponent, so
         // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
         // right, 10x at the midpoint. The mapping lives here, not in the panel.
-        let speed_exp = self.clock.multiplier.ln();
+        let speed_exp = self.clock_multiplier().ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
         // The producer groups instruments into rows + picks content only; all
@@ -212,7 +232,7 @@ impl UIDrawable for SolarEclipseScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    on_toggle: Box::new(|| self.clock.paused = !self.clock.paused),
+                    on_toggle: Box::new(|| self.request_toggle_run = true),
                 }),
             ],
             vec![Box::new(InteractiveSlider {
@@ -220,7 +240,7 @@ impl UIDrawable for SolarEclipseScene {
                     value: speed_exp,
                     range: exp_range,
                 },
-                on_change: Box::new(|exp| self.clock.multiplier = exp.exp()),
+                on_change: Box::new(|exp| self.request_multiplier = Some(exp.exp())),
             })],
         ];
         let mut panels = vec![UIDrawablePanel {
