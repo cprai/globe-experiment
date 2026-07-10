@@ -34,8 +34,8 @@
   with `PYO3_PYTHON` if needed.
 - **No `assets/` dir, with ONE deliberate exception**: the `*_py` scenes read
   a Python scene script at **runtime** (edit + relaunch, no rebuild — the
-  point of the Python scenes). The path is the scene's required CLI
-  positional (no resolution logic); the repo ships the reference scripts in
+  point of the Python scenes). The path is the scene's required `--script`
+  argument (no resolution logic); the repo ships the reference scripts in
   the repo-root `scenes/`.
 - **WSLg flakiness**: transient libEGL/MESA errors on app launch — retry,
   not a code bug.

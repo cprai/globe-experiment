@@ -6,8 +6,10 @@
 //! all the per-scene assembly (which tracked objects, in which order, so the
 //! clock starts at the right epoch) lives here, not in `main`.
 //!
-//! Add a scene by adding a module here and wiring a CLI value to its `run`
-//! in `main.rs`. Keep each scene's time window inside the bundled EOP range
+//! Add a scene by adding a module here (with its own `clap::Args` struct -
+//! each scene subcommand declares exactly its own arguments) and wiring a
+//! `SceneCommand` variant to its `run` in `main.rs`. Keep each scene's time
+//! window inside the bundled EOP range
 //! (1962-01-01 .. build date) so the astronomical-accuracy goal holds - see the
 //! "Scenes & valid time range" rules in `CLAUDE.md`.
 

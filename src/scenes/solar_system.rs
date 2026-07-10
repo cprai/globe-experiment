@@ -208,10 +208,16 @@ impl UIDrawable for SolarSystemScene {
     }
 }
 
+/// The `scene solar_system` CLI arguments - none today. Each scene
+/// subcommand declares its own arguments, so a future flag for this scene is
+/// added here, not in `main` (which only dispatches).
+#[derive(clap::Args)]
+pub struct Args {}
+
 /// Builds the solar-system scene and hands off to the winit event loop. Starts
 /// on the default whole-Terra view; the body-selector keys then tour the
 /// system.
-pub fn run() {
+pub fn run(_args: Args) {
     scene::init();
     application::run(ApplicationState::new(SolarSystemScene::new()));
 }

@@ -1,8 +1,9 @@
 //! Embedded Python for scene scripting.
 //!
 //! The `*_py` scenes delegate their `UIDrawable::get_drawables` to a Python
-//! script whose path is a required CLI argument (the repo ships reference
-//! scripts under the repo-root `scenes/`), loaded once at scene startup and
+//! script whose path is the scene's required `--script` argument (the repo
+//! ships reference scripts under the repo-root `scenes/`), loaded once at
+//! scene startup and
 //! re-read on every launch (edit the script, relaunch, no rebuild). The script
 //! imports the engine's Python surface from the embedded `globe` module
 //! registered here, and receives the live scene pyclass each frame.
@@ -71,8 +72,9 @@ pub fn init() {
 /// Loads the scene script at `path` and returns its module-level
 /// `get_drawables` function.
 ///
-/// The path is caller-chosen (the `*_py` scenes take it as a required CLI
-/// argument; their tests pass the repo's `scenes/*.py` explicitly) - no
+/// The path is caller-chosen (the `*_py` scenes take it as their required
+/// `--script` argument; their tests pass the repo's `scenes/*.py`
+/// explicitly) - no
 /// resolution happens here. Failures - missing file, compile error, missing
 /// function - panic with the Python traceback printed: the script is loaded
 /// once at startup, so fail-fast beats limping into a per-frame error loop.

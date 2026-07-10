@@ -284,9 +284,15 @@ impl UIDrawable for IssAndHubbleScene {
     }
 }
 
+/// The `scene iss_and_hubble` CLI arguments - none today. Each scene
+/// subcommand declares its own arguments, so a future flag for this scene is
+/// added here, not in `main` (which only dispatches).
+#[derive(clap::Args)]
+pub struct Args {}
+
 /// Builds the ISS + Hubble simulation and hands off to the winit event loop.
 /// Blocks until the window closes.
-pub fn run() {
+pub fn run(_args: Args) {
     // Seed satkit's global state (embedded ephemeris + EOP table) before
     // anything else: the satellite propagation and the per-frame
     // CelestialSphere evaluation read satkit globals. Doing it here keeps

@@ -232,10 +232,16 @@ impl UIDrawable for SolarEclipseScene {
     }
 }
 
+/// The `scene solar_eclipse` CLI arguments - none today. Each scene
+/// subcommand declares its own arguments, so a future flag for this scene is
+/// added here, not in `main` (which only dispatches).
+#[derive(clap::Args)]
+pub struct Args {}
+
 /// Builds the solar-eclipse scene (framed on the daylit face so Luna's
 /// shadow spot is in view - the camera is seeded in `new`) and hands off to
 /// the winit event loop.
-pub fn run() {
+pub fn run(_args: Args) {
     // Seed satkit's globals (embedded ephemeris + EOP) before the celestial
     // sphere is built in `new` below.
     scene::init();

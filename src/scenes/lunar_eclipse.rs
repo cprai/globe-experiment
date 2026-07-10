@@ -232,10 +232,16 @@ impl UIDrawable for LunarEclipseScene {
     }
 }
 
+/// The `scene lunar_eclipse` CLI arguments - none today. Each scene
+/// subcommand declares its own arguments, so a future flag for this scene is
+/// added here, not in `main` (which only dispatches).
+#[derive(clap::Args)]
+pub struct Args {}
+
 /// Builds the lunar-eclipse scene already orbiting Luna (the eclipsed
 /// near-side disc centered - the camera is seeded in `new`) and hands off to
 /// the winit event loop.
-pub fn run() {
+pub fn run(_args: Args) {
     scene::init();
 
     application::run(ApplicationState::new(LunarEclipseScene::new()));

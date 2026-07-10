@@ -47,10 +47,12 @@ time window) and wires it into the clap CLI.
      take `satellites.first().expect(...).epoch()` as the clock start, then
      `let clock = Clock::new(epoch);` and `celestial_sphere:
      CelestialSphere::at(&clock.now())`.
-2. **Wire the CLI** in `src/main.rs`: add a `SceneName` `ValueEnum`
-   variant (use `#[value(name = "<token>")]` to keep the token snake_case)
-   and dispatch to the new `run`. `list_scenes` iterates
-   `SceneName::value_variants`, so it can't drift.
+2. **Wire the CLI**: give the scene module its own `#[derive(clap::Args)]
+   pub struct Args {}` (empty until the scene needs flags; `run` takes it)
+   and add a `SceneCommand` variant in `src/main.rs` wrapping it (use
+   `#[command(name = "<token>")]` to keep the token snake_case) plus a
+   dispatch arm to the new `run`. Bare `scene` lists the subcommands via
+   clap's help, so the listing can't drift.
 3. **Format + lint:** run the `format-rust` and `clippy-lint` skills.
 4. **Run it:** `cargo run --release -- scene <token>`.
 

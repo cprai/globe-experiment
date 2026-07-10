@@ -11,7 +11,9 @@ paths:
 - One module per past scene under `src/scenes/`, each defining a
   `<Name>Scene` struct that implements the **four traits** `Scene`
   + `camera::CameraControl` + `camera::CameraView` + `ui::UIDrawable`, plus a
-  `run()`. Add a module and a `SceneName` variant in `src/main.rs`.
+  `run(args)`. Add a module (with its own `#[derive(clap::Args)] Args`
+  struct - empty until the scene needs flags) and a `SceneCommand` variant
+  wrapping it in `src/main.rs`.
 - Each scene struct holds `clock: Clock` + `camera: PtzCamera` +
   `camera_target: CameraTarget` as direct fields (there is no shared core
   struct), plus its own `Vec<Satellite>`. **No scene stores a
@@ -172,8 +174,9 @@ The pattern:
   callbacks; pyclass method calls can't overlap by construction, so the
   disjoint-field capture gymnastics of the Rust panels aren't needed on the
   Python side (the per-key flags are kept anyway for identical semantics).
-- **run() order**: `run(script: PathBuf)` takes the CLI-given script path
-  (the `*_py` scenes' required positional; the repo ships the reference
+- **run() order**: `run(args: Args)` carries the script path (the `*_py`
+  scenes' required `--script` flag, declared on their own `Args` struct so
+  clap rejects it on every other scene; the repo ships the reference
   scripts under the repo-root `scenes/`), then `scene::init()` then
   `engine::py::init()` (inittab before interpreter init, Once-guarded) then
   construct the scene — construction loads the script at **runtime** (no

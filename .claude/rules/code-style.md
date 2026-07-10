@@ -72,11 +72,12 @@ The top-level (non-engine) modules:
   tree only.
 - **`scenes`** — one `<Name>Scene` struct per past scene
   implementing `Scene` + `CameraControl` + `CameraView` + `UIDrawable`,
-  each with a `run()`. (The `*_py` scenes split this into an Inner
-  `#[pyclass]` + a thin trait-impl wrapper, take the script path as `run`'s
-  argument (the CLI's required positional; the repo ships reference scripts
-  under the repo-root `scenes/`), and load their panels from it — see the
-  "Python-paneled scenes" section in `scenes.md`.)
+  each with its own `#[derive(clap::Args)] Args` struct (its subcommand's
+  arguments; empty for most scenes) and a `run(args)`. (The `*_py` scenes
+  split the struct into an Inner `#[pyclass]` + a thin trait-impl wrapper,
+  carry the script path as their `Args`' required `--script` flag (the repo
+  ships reference scripts under the repo-root `scenes/`), and load their
+  panels from it — see the "Python-paneled scenes" section in `scenes.md`.)
   Each struct holds its `Clock` + `camera: PtzCamera` +
   `camera_target: CameraTarget` directly (no stored `CelestialSphere`;
   `frame_state` evaluates one at the frame's clock instant) and builds its

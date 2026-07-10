@@ -141,7 +141,8 @@ accuracy, so use a past, in-range datetime for a faithful frame.
 - Python-scripted UI panels: the `manual_control_py` and `solar_system_py`
   scenes are clones of their Rust siblings whose control panels are produced
   by a Python script, passed on the command line (e.g. `cargo run --release
-  -- scene manual_control_py scenes/manual_control_py.py`; the repo ships
+  -- scene manual_control_py --script scenes/manual_control_py.py`; the repo
+  ships
   the reference scripts `scenes/manual_control_py.py` /
   `scenes/solar_system_py.py`). The script is read at launch - edit it and
   relaunch, no rebuild. The scripts drive the live scene through an embedded

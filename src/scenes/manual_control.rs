@@ -435,9 +435,15 @@ impl UIDrawable for ManualControlScene {
     }
 }
 
+/// The `scene manual_control` CLI arguments - none today. Each scene
+/// subcommand declares its own arguments, so a future flag for this scene is
+/// added here, not in `main` (which only dispatches).
+#[derive(clap::Args)]
+pub struct Args {}
+
 /// Builds the manual-control simulation and hands off to the winit event
 /// loop. Blocks until the window closes.
-pub fn run() {
+pub fn run(_args: Args) {
     // Seed satkit's global state (embedded ephemeris + EOP + IERS tables +
     // EGM96 gravity) before anything else: `new` parses a TLE, and every
     // frame numerically propagates the orbit and evaluates the

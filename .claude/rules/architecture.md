@@ -22,12 +22,16 @@ build.rs                 downloads 13 textures (JPEG/TIFF verbatim) + JPL
                          Contains mod atmosphere.
 (no .cargo/config.toml)  deleted - was only for intel_tex_2's ISPC linkage
 src/main.rs              bin root of `globe-experiment` (the windowed app;
-                         default-run): clap CLI with only the `scene <name>
-                         [script]` subcommand (the script positional is
-                         required by, and only valid for, the *_py scenes -
-                         clap can't tie a positional to ValueEnum variants,
-                         so main enforces the pairing with clap-styled
-                         errors); declares `mod engine;` + `mod scenes;`
+                         default-run): clap CLI with only the `scene`
+                         subcommand, itself a SceneCommand subcommand enum -
+                         one subcommand per scene, each wrapping that scene
+                         module's own #[derive(clap::Args)] Args struct, so
+                         each scene declares exactly its own arguments (only
+                         the *_py scenes have --script; clap itself requires
+                         it there and rejects it elsewhere - no hand-enforced
+                         pairing). Bare `scene` prints the subcommand list
+                         via arg_required_else_help (no hand-rolled
+                         list_scenes). Declares `mod engine;` + `mod scenes;`
                          (NO offscreen/headless code)
 src/headless.rs          bin root of `headless` (single-frame render to PNG; no
                          EOP range check): flat clap flags --scene --output
@@ -54,14 +58,15 @@ src/engine/py.rs         embedded Python: Once-guarded init() (append_to_inittab
                          src/scenes, which engine must not reference, and reach
                          Python as instances), and load_get_drawables (reads
                          the caller-given script path at RUNTIME - the *_py
-                         scenes' required CLI argument, no resolution here -
+                         scenes' required --script argument, no resolution
+                         here -
                          and returns the script's get_drawables; load/compile
                          failure = traceback + panic). Compiled dead by the
                          headless tree (links libpython, never initializes it)
 scenes/*.py              the repo-root scene-script directory (NOT src/scenes):
                          manual_control_py.py + solar_system_py.py, the
                          reference panel producers a *_py scene is pointed at
-                         via its required CLI script path (also what the two
+                         via its required --script path (also what the two
                          scene tests load explicitly). Read at runtime - edit +
                          relaunch, no rebuild (the one deliberate exception to
                          everything-embedded). Contract: module-level
@@ -409,7 +414,9 @@ planet      -> scene::body (CelestialBody), (glam)   # satkit-free; hangs
                                        # + Luna) off the CelestialBody variants
                                        # (mutual ref with scene::body)
 scenes      -> scene, ui, application, camera (CameraControl/CameraView
-                                       # traits + PtzCamera); the *_py scenes
+                                       # traits + PtzCamera), (clap - each
+                                       # scene module owns its CLI Args
+                                       # struct); the *_py scenes
                                        # also -> py (init + script loader) and
                                        # ui::py (panel conversion), (pyo3)
 ```

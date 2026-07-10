@@ -1,10 +1,10 @@
 //! The solar-system scene with its UI panels produced by **Python**: a clone
 //! of `solar_system` (same nine-body selector, camera, and clock) whose
-//! `UIDrawable::get_drawables` delegates to a Python script whose path is a
-//! required CLI argument (the repo ships `scenes/solar_system_py.py`). The
-//! two scenes live side by side so the Rust and Python panel APIs can be
-//! compared (CLI: `globe-experiment scene solar_system_py
-//! scenes/solar_system_py.py`).
+//! `UIDrawable::get_drawables` delegates to a Python script whose path is
+//! the scene's required `--script` argument (the repo ships
+//! `scenes/solar_system_py.py`). The two scenes live side by side so the
+//! Rust and Python panel APIs can be compared (CLI: `globe-experiment scene
+//! solar_system_py --script scenes/solar_system_py.py`).
 //!
 //! Same structure as `manual_control_py`: the scene state is a `#[pyclass]`
 //! ([`SolarSystemSceneInner`]) handed live to the script, wrapped by
@@ -197,17 +197,30 @@ impl UIDrawable for SolarSystemPyScene {
     }
 }
 
-/// Builds the Python-paneled solar-system scene around the CLI-given panel
+/// The `scene solar_system_py` CLI arguments. Only the Python-paneled
+/// scenes have a script: declaring it here (not on a shared scene arg set)
+/// is what lets clap itself require it for this scene and reject it for the
+/// others.
+#[derive(clap::Args)]
+pub struct Args {
+    /// Path to the scene's Python panel script, e.g.
+    /// `scenes/solar_system_py.py` (read at runtime: edit + relaunch, no
+    /// rebuild).
+    #[arg(long)]
+    pub script: PathBuf,
+}
+
+/// Builds the Python-paneled solar-system scene around the `--script` panel
 /// script and hands off to the winit event loop. Starts on the default
 /// whole-Terra view.
-pub fn run(script: PathBuf) {
+pub fn run(args: Args) {
     // satkit globals first, then the embedded interpreter (inittab before
     // init - see `engine::py`), then the scene, whose construction loads the
     // script.
     scene::init();
     py::init();
 
-    application::run(ApplicationState::new(SolarSystemPyScene::new(script)));
+    application::run(ApplicationState::new(SolarSystemPyScene::new(args.script)));
 }
 
 #[cfg(test)]

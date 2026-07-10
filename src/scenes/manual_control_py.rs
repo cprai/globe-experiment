@@ -1,9 +1,10 @@
 //! The manual-control scene with its UI panels produced by **Python**: a
 //! clone of `manual_control` (same physics, camera, and burn semantics) whose
-//! `UIDrawable::get_drawables` delegates to a Python script whose path is a
-//! required CLI argument (the repo ships `scenes/manual_control_py.py`).
-//! The two scenes live side by side so the Rust and Python panel APIs can be
-//! compared line for line (CLI: `globe-experiment scene manual_control_py
+//! `UIDrawable::get_drawables` delegates to a Python script whose path is
+//! the scene's required `--script` argument (the repo ships
+//! `scenes/manual_control_py.py`). The two scenes live side by side so the
+//! Rust and Python panel APIs can be compared line for line (CLI:
+//! `globe-experiment scene manual_control_py --script
 //! scenes/manual_control_py.py`).
 //!
 //! Structure: the scene state lives in [`ManualControlSceneInner`], itself a
@@ -371,17 +372,32 @@ impl UIDrawable for ManualControlPyScene {
     }
 }
 
-/// Builds the Python-paneled manual-control scene around the CLI-given panel
-/// script and hands off to the winit event loop. Blocks until the window
-/// closes.
-pub fn run(script: PathBuf) {
+/// The `scene manual_control_py` CLI arguments. Only the Python-paneled
+/// scenes have a script: declaring it here (not on a shared scene arg set)
+/// is what lets clap itself require it for this scene and reject it for the
+/// others.
+#[derive(clap::Args)]
+pub struct Args {
+    /// Path to the scene's Python panel script, e.g.
+    /// `scenes/manual_control_py.py` (read at runtime: edit + relaunch, no
+    /// rebuild).
+    #[arg(long)]
+    pub script: PathBuf,
+}
+
+/// Builds the Python-paneled manual-control scene around the `--script`
+/// panel script and hands off to the winit event loop. Blocks until the
+/// window closes.
+pub fn run(args: Args) {
     // satkit globals first (TLE parse + propagation), then the embedded
     // interpreter (inittab before init - see `engine::py`), then the scene,
     // whose construction loads the script.
     scene::init();
     py::init();
 
-    application::run(ApplicationState::new(ManualControlPyScene::new(script)));
+    application::run(ApplicationState::new(ManualControlPyScene::new(
+        args.script,
+    )));
 }
 
 #[cfg(test)]
