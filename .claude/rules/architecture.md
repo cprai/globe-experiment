@@ -108,9 +108,15 @@ src/scenes/manual_control_py.rs  the manual_control clone whose get_drawables
                          telemetry()/orbit_shape()/speed_m_s readout
                          methods; six request_* burn methods - the script's
                          hold-key callbacks) wrapped by ManualControlPyScene
-                         (Py<Inner> + the stashed script fn), whose four trait
-                         impls each attach + borrow the cell for their own
-                         duration only (no borrow ever spans a call into
+                         (Py<Inner> + the stashed script fn + camera/
+                         camera_target as plain wrapper fields OUTSIDE the
+                         pyclass - no script camera surface - so the wrapper
+                         implements ScenePtzCamera like every Rust scene and
+                         its CameraView::frame_state rigs the wrapper camera
+                         while borrowing the Inner for clock/orbit); the
+                         pyclass-touching trait impls each attach + borrow
+                         the cell for their own duration only (no borrow
+                         ever spans a call into
                          Python). Script errors: traceback + panic. Own
                          duplicated ISS_TLE. Holds the round-trip unit test
 src/scenes/solar_system.rs  SolarSystemScene: empty (NO satellites);
@@ -122,7 +128,9 @@ src/scenes/solar_system_py.rs  the solar_system clone whose get_drawables
                          scenes/solar_system_py.py); same
                          Inner-pyclass + wrapper pattern as manual_control_py
                          (plain clock behind SceneClock + the same clock
-                         properties), with selector: Py<BodySelector> shared
+                         properties; camera/camera_target on the wrapper,
+                         whose frame_state resolves the selector cell), with
+                         selector: Py<BodySelector> shared
                          live with the script (the script rebuilds the
                          9-key selector panel via selector.selected /
                          BodySelector.body_names() / selector.request(i))
@@ -496,13 +504,15 @@ CameraTarget`) and implements **`ScenePtzCamera`** (also in `ptz.rs`) - three
 accessors, `camera()`/`camera_mut()`/`camera_target()`, the `SceneClock`
 pattern - and the blanket `impl<S: ScenePtzCamera> CameraControl for S`
 forwards every input event into the embedded camera, passing the
-scene-owned target into the calls that depend on the orbited body. A scene
-that must diverge implements `CameraControl` directly instead of
-`ScenePtzCamera` (the `*_py` wrappers do: no `&mut PtzCamera` escapes their
-pyclass cell's borrow guard, so `ScenePtzCamera` sits on their Inner and
-each wrapper method attach+borrows and delegates to the Inner's blanket
-impl) - or flies a future scripted/fixed camera type by implementing only
-`CameraView` and leaving `CameraControl`'s defaults.
+scene-owned target into the calls that depend on the orbited body. Every
+scene implements it, the `*_py` wrappers included: their camera + target are
+plain wrapper fields, deliberately outside the scene pyclass (a script has
+no camera surface, and a pyclass cell's borrow guard could never hand out
+the `&mut PtzCamera` the trait requires), so their `frame_state` lives on
+the wrapper too, borrowing the Inner for the simulation state. A scene that
+must diverge implements `CameraControl` directly instead of
+`ScenePtzCamera` - or flies a future scripted/fixed camera type by
+implementing only `CameraView` and leaving `CameraControl`'s defaults.
 
 ```
 CameraControl:

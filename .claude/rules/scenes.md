@@ -59,10 +59,11 @@ paths:
   target live; the `SceneClock` pattern) and the blanket
   `impl<S: ScenePtzCamera> CameraControl for S` in `camera/ptz.rs` forwards
   every input event into the `PtzCamera`, passing `camera_target()` into the
-  calls that scale by the orbited body. A scene that must diverge (gate
-  input, fly a different camera type) skips `ScenePtzCamera` and implements
-  `CameraControl` directly - the `*_py` wrappers do (below), because no
-  `&mut PtzCamera` can escape their pyclass cell's borrow guard.
+  calls that scale by the orbited body. **Every** scene implements it, the
+  `*_py` wrappers included (their camera is a plain wrapper field, outside
+  the pyclass - see below); a scene that must diverge (gate input, fly a
+  different camera type) skips `ScenePtzCamera` and implements
+  `CameraControl` directly.
   The `impl CameraView` block is `frame_state`, the frame
   recipe: evaluate this frame's sphere
   (`let sphere = CelestialSphere::at(&now)`), derive
@@ -184,20 +185,25 @@ The pattern:
   each pymethod delegating to the trait API), so a script callback like
   `scene.paused = ...` drives the same clock Rust ticks. Only
   non-clock shared state stays a `Py<..>` field with `#[pyo3(get)]`
-  (solar_system_py's `selector: Py<BodySelector>`). Rust-private state
-  (orbit, camera, camera_target) stays in plain fields. The Rust side of the
-  Inner mirrors the sibling's `new`/`advance`/`frame_state` body for body
-  (`py: Python` only where a shared cell is borrowed, e.g. solar_system_py's
-  `self.selector.borrow(py)` in `frame_state`; the clock ticks via
-  `self.tick_clock()` — the script's setters apply directly, exactly like
-  the Rust siblings' scene-receiving callbacks).
+  (solar_system_py's `selector: Py<BodySelector>`). Rust-private simulation
+  state (orbit) stays in plain Inner fields. The Rust side of the
+  Inner mirrors the sibling's `new`/`advance` body for body (the clock
+  ticks via `self.tick_clock()` — the script's setters apply directly,
+  exactly like the Rust siblings' scene-receiving callbacks).
 - **Thin wrapper**: `<Name>PyScene { inner: Py<Inner>, get_drawables_fn:
-  Py<PyAny> }` implements the four engine traits; every method is
-  `Python::attach` + `inner.borrow_mut(py)` + delegate. `ScenePtzCamera`
-  (like `SceneClock`) is implemented on the **Inner** - the wrapper cannot
-  hand out a `&mut PtzCamera` past the pyclass cell's borrow guard, so its
-  hand-written `CameraControl` delegates each call to the Inner's blanket
-  impl. **The one borrow
+  Py<PyAny>, camera: PtzCamera, camera_target: CameraTarget }` implements
+  the four engine traits. The camera + target are **plain wrapper fields,
+  deliberately outside the pyclass** — a script has no camera surface (its
+  only camera influence is the target choice requested through the
+  selector), and only a plain field can hand out the `&mut PtzCamera` that
+  `ScenePtzCamera` requires (a pyclass cell's borrow guard cannot) — so the
+  wrapper implements `ScenePtzCamera` and takes the blanket `CameraControl`
+  exactly like the Rust scenes. Consequently `frame_state` lives on the
+  **wrapper** (`CameraView`): it borrows the Inner for the clock/orbit (and
+  borrows the shared selector cell to resolve the target, reframing on a
+  genuine switch) and rigs the wrapper's own camera; the sibling's recipe,
+  split across the boundary. The remaining pyclass-touching methods are
+  `Python::attach` + `inner.borrow_mut(py)` + delegate. **The one borrow
   rule: never hold a pyclass borrow across a call into Python.** The trait
   bodies call no Python; `get_drawables` holds NO Rust borrow at all — it
   passes `self.inner.bind(py)` into the script, whose property/method

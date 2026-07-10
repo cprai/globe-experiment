@@ -23,9 +23,7 @@ use pyo3::prelude::*;
 use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{
-    CameraControl, CameraView, CursorHint, PointerButton, PtzCamera, ScenePtzCamera, ScrollDelta,
-};
+use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
 use crate::engine::py;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{
@@ -33,10 +31,12 @@ use crate::engine::scene::{
 };
 use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
 
-/// The live scene state, as a pyclass: the script reads/drives the clock
-/// properties (the `SceneClock` API's pymethod face below) and the shared
-/// `selector`; the clock object itself, the camera, and its target stay
-/// Rust-private.
+/// The live simulation state, as a pyclass: the script reads/drives the
+/// clock properties (the `SceneClock` API's pymethod face below) and the
+/// shared `selector`; the clock object itself stays Rust-private. The
+/// camera is not even in here: it lives on the wrapper, outside the
+/// pyclass, so a script's only camera influence is the orbit-target choice
+/// it requests through the selector.
 #[pyclass(name = "SolarSystemScene", module = "globe")]
 pub struct SolarSystemSceneInner {
     /// Simulation clock (datetime + play/paused + speed), reached only via
@@ -46,12 +46,6 @@ pub struct SolarSystemSceneInner {
     /// rebuilds its panel in Python and requests switches through it).
     #[pyo3(get)]
     selector: Py<BodySelector>,
-    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
-    /// animations); starts on the default whole-Terra view.
-    camera: PtzCamera,
-    /// The body the camera orbits this frame - refreshed from the selector
-    /// each frame; a genuine switch reframes the camera.
-    camera_target: CameraTarget,
 }
 
 /// The script-facing clock surface: the `SceneClock` API re-exposed as
@@ -93,11 +87,79 @@ impl SceneClock for SolarSystemSceneInner {
     }
 }
 
-impl ScenePtzCamera for SolarSystemSceneInner {
-    // On the Inner, not the wrapper (the same split as `SceneClock`): the
-    // wrapper cannot hand out a `&mut PtzCamera` past the pyclass cell's
-    // borrow guard, so it delegates each `CameraControl` call to the blanket
-    // impl these accessors unlock.
+/// The Rust-only half: construction and the per-frame simulation work,
+/// mirroring the Rust sibling body for body (only the selector accesses
+/// differ - `borrow` through the shared pyclass cell). The frame recipe
+/// (`frame_state`) lives on the wrapper, beside the camera it rigs.
+impl SolarSystemSceneInner {
+    fn new(py: Python<'_>) -> Self {
+        // A fixed recent past date, well inside the bundled EOP range (see
+        // the Rust sibling).
+        let epoch =
+            Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
+        Self {
+            clock: Clock::new(epoch),
+            selector: Py::new(py, BodySelector::default()).expect("selector pyclass"),
+        }
+    }
+
+    fn advance(&mut self) -> bool {
+        // Tick through the SceneClock API. Any body-key press already landed
+        // directly (the script's key callbacks called `selector.request(i)`
+        // during the previous egui pass, a direct `selected` write), as did
+        // any pause/speed change via the pymethod setters; this frame's
+        // `frame_state` resolves the selection.
+        self.tick_clock()
+    }
+}
+
+/// What the application owns: the `Py` handle to the scene pyclass, the
+/// script's `get_drawables` function (loaded once at startup), and the
+/// camera. The pyclass-touching trait methods open their own interpreter
+/// attach + pyclass borrow; the camera path never attaches at all.
+pub struct SolarSystemPyScene {
+    inner: Py<SolarSystemSceneInner>,
+    get_drawables_fn: Py<PyAny>,
+    /// The script's CLI-given path, kept only so per-frame failures name the
+    /// file that raised (the function itself is already loaded).
+    script: PathBuf,
+    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
+    /// animations); starts on the default whole-Terra view. A plain wrapper
+    /// field, deliberately OUTSIDE the pyclass: the script has no camera
+    /// surface (only the selector), and keeping it here lets the wrapper
+    /// hand out the real borrows `ScenePtzCamera` needs (a pyclass cell's
+    /// borrow guard could not), taking the same blanket `CameraControl`
+    /// impl as every Rust scene.
+    camera: PtzCamera,
+    /// The body the camera orbits this frame - refreshed from the shared
+    /// selector each frame; a genuine switch reframes the camera.
+    camera_target: CameraTarget,
+}
+
+impl SolarSystemPyScene {
+    fn new(script: PathBuf) -> Self {
+        Python::attach(|py| Self {
+            inner: Py::new(py, SolarSystemSceneInner::new(py)).expect("scene pyclass"),
+            get_drawables_fn: py::load_get_drawables(py, &script),
+            script,
+            camera: PtzCamera::default(),
+            // Matches the selector default (Terra) and the whole-Terra
+            // camera above, so the first frame does not reframe.
+            camera_target: CameraTarget::terra(),
+        })
+    }
+}
+
+impl Scene for SolarSystemPyScene {
+    fn advance(&mut self) -> bool {
+        Python::attach(|py| self.inner.borrow_mut(py).advance())
+    }
+}
+
+impl ScenePtzCamera for SolarSystemPyScene {
+    // The accessors behind the blanket `CameraControl` impl, same as every
+    // Rust scene - possible because the camera lives on the wrapper, not
+    // behind the pyclass cell's borrow guard.
     fn camera(&self) -> &PtzCamera {
         &self.camera
     }
@@ -111,124 +173,41 @@ impl ScenePtzCamera for SolarSystemSceneInner {
     }
 }
 
-/// The Rust-only half: construction and the per-frame work, mirroring the
-/// Rust sibling body for body (only the selector accesses differ - `borrow`
-/// through the shared pyclass cell).
-impl SolarSystemSceneInner {
-    fn new(py: Python<'_>) -> Self {
-        // A fixed recent past date, well inside the bundled EOP range (see
-        // the Rust sibling).
-        let epoch =
-            Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
-        Self {
-            clock: Clock::new(epoch),
-            selector: Py::new(py, BodySelector::default()).expect("selector pyclass"),
-            camera: PtzCamera::default(),
-            // Matches the selector default (Terra) and the whole-Terra camera
-            // above, so the first frame does not reframe.
-            camera_target: CameraTarget::terra(),
-        }
-    }
-
-    fn advance(&mut self) -> bool {
-        // Tick through the SceneClock API. Any body-key press already landed
-        // directly (the script's key callbacks called `selector.request(i)`
-        // during the previous egui pass, a direct `selected` write), as did
-        // any pause/speed change via the pymethod setters; this frame's
-        // `frame_state` resolves the selection.
-        self.tick_clock()
-    }
-
-    fn frame_state(&mut self, py: Python<'_>) -> RenderState {
-        let now = self.clock_now();
-        // This frame's celestial sphere, evaluated on the spot (pure
-        // function of time, same as the Rust sibling).
-        let sphere = CelestialSphere::at(&now);
-
-        // Refresh the scene-owned camera target from the selector; a genuine
-        // body switch reframes the camera.
-        let celestial_to_world = sphere.star_rot_inv.transpose();
-        let target = self.selector.borrow(py).resolve();
-        if !self.camera_target.same_kind(&target) {
-            self.camera.reframe(&target, &sphere, celestial_to_world);
-        }
-        self.camera_target = target;
-        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
-
-        // No satellites: an empty marker list (see the Rust sibling).
-        RenderState {
-            time: now,
-            camera_target: target,
-            camera_pos: eye,
-            camera_look_at: look_at,
-            camera_up: up,
-            markers: Vec::new(),
-        }
-    }
-}
-
-/// What the application owns: the `Py` handle to the scene pyclass plus the
-/// script's `get_drawables` function (loaded once at startup).
-pub struct SolarSystemPyScene {
-    inner: Py<SolarSystemSceneInner>,
-    get_drawables_fn: Py<PyAny>,
-    /// The script's CLI-given path, kept only so per-frame failures name the
-    /// file that raised (the function itself is already loaded).
-    script: PathBuf,
-}
-
-impl SolarSystemPyScene {
-    fn new(script: PathBuf) -> Self {
-        Python::attach(|py| Self {
-            inner: Py::new(py, SolarSystemSceneInner::new(py)).expect("scene pyclass"),
-            get_drawables_fn: py::load_get_drawables(py, &script),
-            script,
-        })
-    }
-}
-
-impl Scene for SolarSystemPyScene {
-    fn advance(&mut self) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).advance())
-    }
-}
-
-impl CameraControl for SolarSystemPyScene {
-    // Hand-written (the wrapper cannot implement `ScenePtzCamera` - see the
-    // Inner's impl): each method attaches + borrows the pyclass cell for its
-    // own duration and delegates to the Inner's blanket `CameraControl`.
-    fn pointer_press(&mut self, button: PointerButton) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).pointer_press(button))
-    }
-
-    fn pointer_release(&mut self, button: PointerButton) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).pointer_release(button))
-    }
-
-    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
-        Python::attach(|py| {
-            self.inner
-                .borrow_mut(py)
-                .pointer_move(position, viewport_height)
-        })
-    }
-
-    fn scroll(&mut self, delta: ScrollDelta) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).scroll(delta))
-    }
-
-    fn tick(&mut self, viewport_height: f64) -> bool {
-        Python::attach(|py| self.inner.borrow_mut(py).tick(viewport_height))
-    }
-
-    fn cursor_hint(&self) -> CursorHint {
-        Python::attach(|py| self.inner.borrow(py).cursor_hint())
-    }
-}
-
 impl CameraView for SolarSystemPyScene {
     fn frame_state(&mut self) -> RenderState {
-        Python::attach(|py| self.inner.borrow_mut(py).frame_state(py))
+        // The Rust sibling's frame recipe, split across the wrapper/pyclass
+        // boundary: the simulation state (clock, shared selector) is read
+        // through its own borrows for the whole body - safe, nothing here
+        // calls into Python - while the camera rig lives on the wrapper.
+        Python::attach(|py| {
+            let mut inner = self.inner.borrow_mut(py);
+            let now = inner.clock_now();
+            // This frame's celestial sphere, evaluated on the spot (pure
+            // function of time, same as the Rust sibling).
+            let sphere = CelestialSphere::at(&now);
+
+            // Refresh the wrapper-owned camera target from the shared
+            // selector (any script-requested switch already landed via
+            // `selector.request(i)` during the previous egui pass); a
+            // genuine body switch reframes the camera.
+            let celestial_to_world = sphere.star_rot_inv.transpose();
+            let target = inner.selector.borrow(py).resolve();
+            if !self.camera_target.same_kind(&target) {
+                self.camera.reframe(&target, &sphere, celestial_to_world);
+            }
+            self.camera_target = target;
+            let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
+
+            // No satellites: an empty marker list (see the Rust sibling).
+            RenderState {
+                time: now,
+                camera_target: target,
+                camera_pos: eye,
+                camera_look_at: look_at,
+                camera_up: up,
+                markers: Vec::new(),
+            }
+        })
     }
 }
 

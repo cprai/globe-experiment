@@ -14,9 +14,11 @@ the interactive pan/tilt/zoom implementation scenes embed, plus
 **`ScenePtzCamera`** — the three-accessor hookup trait (`camera()`/
 `camera_mut()`/`camera_target()`, the `SceneClock` pattern) whose blanket
 `impl<S: ScenePtzCamera> CameraControl for S` forwards every input event
-into the embedded camera, so a scene writes no forwarding block (a scene
-that must diverge — or the `*_py` wrappers, whose camera sits behind a
-pyclass cell — implements `CameraControl` directly instead).
+into the embedded camera, so a scene writes no forwarding block. Every
+scene implements it — the `*_py` wrappers keep their camera as a plain
+wrapper field outside the scene pyclass (a script has no camera surface)
+precisely so they can; a scene that must diverge implements
+`CameraControl` directly instead.
 The rig rules below are about `PtzCamera`; input rules live in `input.md`.
 
 ## Inertial (star-fixed) frame

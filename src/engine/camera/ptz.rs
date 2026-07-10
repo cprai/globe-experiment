@@ -673,13 +673,13 @@ impl PtzCamera {
 /// stays scene-owned (see the module doc), so the blanket impl fetches it
 /// per call and the rig can never drift from the orbit subject.
 ///
-/// A scene that cannot hand out these borrows implements [`CameraControl`]
-/// directly instead - the `*_py` wrappers do: their camera lives behind a
-/// pyclass cell whose borrow guard no `&mut PtzCamera` can escape, so each
-/// of their methods attaches + borrows the inner scene (which implements
-/// this trait) and delegates to its blanket impl. Likewise a future
-/// non-interactive scene simply implements neither and keeps
-/// `CameraControl`'s no-op defaults.
+/// Every scene implements this, the `*_py` wrappers included: they keep
+/// their camera as a plain wrapper field OUTSIDE their scene pyclass
+/// (a script has no camera surface, and a pyclass cell's borrow guard
+/// could never hand out the `&mut PtzCamera` this trait requires). A scene
+/// that must diverge (gate input, fly a different camera kind) implements
+/// [`CameraControl`] directly instead; a future non-interactive scene
+/// simply implements neither and keeps `CameraControl`'s no-op defaults.
 pub trait ScenePtzCamera {
     /// Where the camera lives in the scene struct (shared view).
     fn camera(&self) -> &PtzCamera;
