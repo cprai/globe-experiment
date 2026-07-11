@@ -1527,7 +1527,9 @@ impl SceneRenderer {
         // (analytic SGP4 or numerical orbitprop, per object) one full period
         // ahead and turn the sample
         // points into per-segment instances with a fading tail. Recomputed
-        // every frame - a paused app renders zero frames, so idle stays free.
+        // every frame, no caching - cheap enough (~65 us SGP4 / ~0.4 ms
+        // numerical) that the app renders it unconditionally at the vsync
+        // rate.
         // Gated like the markers (Terra-system only); the `terra_center -
         // origin` bridge is a bit-exact no-op there (origin == terra_center)
         // but keeps the render-frame convention that the GPU never sees

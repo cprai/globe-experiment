@@ -371,11 +371,10 @@ impl PtzCamera {
         (eye, look_at, up)
     }
 
-    /// A pointer button went down at the last known cursor position. Returns
-    /// whether the camera changed and a redraw is needed.
-    pub fn pointer_press(&mut self, button: PointerButton) -> bool {
+    /// A pointer button went down at the last known cursor position.
+    pub fn pointer_press(&mut self, button: PointerButton) {
         let Some(position) = self.cursor else {
-            return false;
+            return;
         };
         // Grabbing the body stops any coasting.
         self.inertia = None;
@@ -385,20 +384,18 @@ impl PtzCamera {
             velocity: (0.0, 0.0),
             moved_at: Instant::now(),
         });
-
-        false
     }
 
     /// A pointer button was released; a fast left release becomes a flick.
-    pub fn pointer_release(&mut self, button: PointerButton) -> bool {
+    pub fn pointer_release(&mut self, button: PointerButton) {
         let releases_drag = self.drag.as_ref().is_some_and(|drag| drag.button == button);
 
         if !releases_drag {
-            return false;
+            return;
         }
 
         let Some(drag) = self.drag.take() else {
-            return false;
+            return;
         };
 
         if drag.button == PointerButton::Left {
@@ -413,12 +410,8 @@ impl PtzCamera {
                     velocity: drag.velocity,
                     tick: Instant::now(),
                 });
-
-                return true;
             }
         }
-
-        false
     }
 
     /// The pointer moved: track it, and while a drag is active pan (left) or
@@ -428,14 +421,14 @@ impl PtzCamera {
         target: &CameraTarget,
         position: (f64, f64),
         viewport_height: f64,
-    ) -> bool {
+    ) {
         self.cursor = Some(position);
 
         // Taken out and put back (not held as `&mut`): the drag borrow cannot
         // live across the `self.pan`/`self.tilt_by` calls below now that the
         // rig and the input state share one struct.
         let Some(mut drag) = self.drag.take() else {
-            return false;
+            return;
         };
 
         let dx = position.0 - drag.last.0;
@@ -468,12 +461,11 @@ impl PtzCamera {
         }
 
         self.drag = Some(drag);
-        true
     }
 
     /// A scroll event: move the zoom glide's target (see the `Zoom` docs; the
     /// per-frame motion happens in `tick`).
-    pub fn scroll(&mut self, target: &CameraTarget, delta: ScrollDelta) -> bool {
+    pub fn scroll(&mut self, target: &CameraTarget, delta: ScrollDelta) {
         let ticks = match delta {
             ScrollDelta::Lines(y) => y,
             ScrollDelta::Pixels(y) => y / 60.0,
@@ -550,27 +542,22 @@ impl PtzCamera {
                 });
             }
         }
-
-        true
     }
 
     /// Advances one frame of camera animation: flick coasting and the
-    /// zoom glide. Called from the redraw handler; returns true while
-    /// another frame is needed.
-    pub fn tick(&mut self, target: &CameraTarget, viewport_height: f64) -> bool {
-        let coasting = self.tick_coast(target, viewport_height);
-        let zooming = self.tick_zoom(target);
-
-        coasting || zooming
+    /// zoom glide. Called from the redraw handler.
+    pub fn tick(&mut self, target: &CameraTarget, viewport_height: f64) {
+        self.tick_coast(target, viewport_height);
+        self.tick_zoom(target);
     }
 
     /// Integrates one frame of flick coasting.
-    fn tick_coast(&mut self, target: &CameraTarget, viewport_height: f64) -> bool {
+    fn tick_coast(&mut self, target: &CameraTarget, viewport_height: f64) {
         // Taken out and put back unless it stopped: the inertia borrow cannot
         // live across the `self.pan` call now that the rig and the input
         // state share one struct.
         let Some(mut inertia) = self.inertia.take() else {
-            return false;
+            return;
         };
 
         let now = Instant::now();
@@ -590,17 +577,15 @@ impl PtzCamera {
         if vx.hypot(vy) * decay >= STOP_SPEED {
             self.inertia = Some(inertia);
         }
-
-        true
     }
 
     /// Moves the camera one frame closer to the zoom target.
-    fn tick_zoom(&mut self, target: &CameraTarget) -> bool {
+    fn tick_zoom(&mut self, target: &CameraTarget) {
         // Taken out and put back unless it settled: the zoom borrow cannot
         // live across the `self.clamp_distance` call now that the rig and
         // the input state share one struct.
         let Some(mut zoom) = self.zoom.take() else {
-            return false;
+            return;
         };
 
         let now = Instant::now();
@@ -636,8 +621,6 @@ impl PtzCamera {
         } else {
             self.zoom = Some(zoom);
         }
-
-        true
     }
 
     /// Drops any in-flight flick inertia and zoom glide. Called on an orbit
@@ -692,15 +675,15 @@ pub trait ScenePtzCamera {
 }
 
 impl<S: ScenePtzCamera> CameraControl for S {
-    fn pointer_press(&mut self, button: PointerButton) -> bool {
+    fn pointer_press(&mut self, button: PointerButton) {
         self.camera_mut().pointer_press(button)
     }
 
-    fn pointer_release(&mut self, button: PointerButton) -> bool {
+    fn pointer_release(&mut self, button: PointerButton) {
         self.camera_mut().pointer_release(button)
     }
 
-    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) -> bool {
+    fn pointer_move(&mut self, position: (f64, f64), viewport_height: f64) {
         // Copied out (`CameraTarget` is a small Copy identity) so the target
         // read does not hold `self` borrowed against `camera_mut`.
         let target = *self.camera_target();
@@ -708,12 +691,12 @@ impl<S: ScenePtzCamera> CameraControl for S {
             .pointer_move(&target, position, viewport_height)
     }
 
-    fn scroll(&mut self, delta: ScrollDelta) -> bool {
+    fn scroll(&mut self, delta: ScrollDelta) {
         let target = *self.camera_target();
         self.camera_mut().scroll(&target, delta)
     }
 
-    fn tick(&mut self, viewport_height: f64) -> bool {
+    fn tick(&mut self, viewport_height: f64) {
         let target = *self.camera_target();
         self.camera_mut().tick(&target, viewport_height)
     }

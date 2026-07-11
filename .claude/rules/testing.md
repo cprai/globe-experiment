@@ -49,8 +49,10 @@
   actual run. Naga is authoritative.
 - **Manual pass after risky changes**: pan, flick (inertia), zoom to
   min/max, tilt to clamp, play/pause + speed slider (watch Sol, stars, and
-  satellite advance together), window resize, minimize/restore. Confirm idle
-  (paused) renders **zero** frames.
+  satellite advance together), window resize, minimize/restore. Confirm a
+  paused scene stays frozen (frames keep rendering — the loop is
+  unconditional — but nothing on screen moves), and that a minimized
+  (occluded) window stops rendering without pinning a CPU core.
 - **After atmosphere-constant or mapping changes**, verify **both** the bake
   and shader sides and re-run — bit-identical output is the goal for neutral
   changes.

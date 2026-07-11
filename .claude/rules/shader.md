@@ -115,9 +115,10 @@ paths:
   computed from the true Sol distance. A future moon system self-shadows by
   adding its enum arm to `same_system` - no renderer/shader change. No shadow
   maps.
-- **Idle = zero GPU work.** Never add an unconditional vsync loop.
-  `ControlFlow::Wait` + targeted `request_redraw`. The clock starts playing,
-  so the app is non-idle from launch until paused.
+- **The app renders continuously at the vsync rate** (owner-approved
+  2026-07-11; see `renderer.md`, Render loop policy) — a paused clock still
+  renders, just a frozen instant, so shader cost is paid every displayed
+  frame regardless of pause state.
 - **Terminator / night-side darkening must use the GEOMETRIC normal**
   (`dot(n_geo, sol)`), never the bump-mapped normal `n`. Bump detail on the
   day/night edge speckles it.

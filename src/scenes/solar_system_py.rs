@@ -238,7 +238,7 @@ impl SceneClock for SolarSystemPyScene {
 }
 
 impl Scene for SolarSystemPyScene {
-    fn tick_scene(&mut self) -> bool {
+    fn tick_scene(&mut self) {
         // Fold the script's requested clock edits (recorded by the pymethod
         // setters during the previous egui pass) into the wrapper clock
         // BEFORE ticking - the same frame timing as the Rust sibling, whose
@@ -260,9 +260,8 @@ impl Scene for SolarSystemPyScene {
         }
 
         // The trait default's body: tick, then the scene-specific advance.
-        let running = self.tick_clock();
+        self.tick_clock();
         self.advance();
-        running
     }
 
     fn advance(&mut self) {

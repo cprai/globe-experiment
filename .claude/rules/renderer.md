@@ -35,13 +35,19 @@ yet." `update_texture` needs only the device/queue, not the swapchain frame,
 so hoisting it above the acquire is free. A dropped `free` delta is benign
 (delays cleanup only).
 
-## Idle policy
+## Render loop policy (continuous, owner-approved 2026-07-11)
 
-**Idle = zero GPU work.** `ControlFlow::Wait` + targeted `request_redraw()`.
-Never add an unconditional vsync loop. Redraws are requested on: camera
-change, active flick inertia or zoom glide, simulation clock running (each
-frame requests the next while playing), egui zero repaint delay, resize,
-surface lost/timeout recovery.
+**The app renders unconditionally at the vsync rate.** `ControlFlow::Wait` +
+each presented frame requesting the next (`AutoVsync` paces the loop) —
+paused clock and settled camera included; a paused frame just depicts a
+frozen instant. This replaced the old idle-zero-GPU optimization (see
+`rejected.md`): pausing is a rare state in practice, and dropping the
+is-anything-animating bookkeeping (the `tick`/`tick_scene`/input bool
+returns and the egui repaint-delay check) keeps the frame loop simple. The
+**one brake is occlusion**: the `FrameOutcome::Occluded` arm returns without
+requesting a redraw, so a hidden/minimized window renders nothing until an
+expose event restarts the loop — do not request a redraw there (an occluded
+acquire returns immediately, unpaced by vsync, so it would busy-spin).
 
 ## `SceneRenderer::new` parallelization
 
@@ -193,8 +199,9 @@ lifted by `sec(pi/PATH_SEGMENTS)` in `prepare` so chord midpoints sit ON the
 true arc — inscribed chords dip ~0.5 km inside it and render as depth-test
 dashes where the path grazes Terra's limb. The fade tail (`path_fade`,
 CPU-side per-endpoint alpha) holds full opacity until `PATH_FADE_START` of the
-period, then smoothsteps to zero at one full period. Recomputed every frame
-(a paused app renders zero frames, so idle stays free). Empty markers
+period, then smoothsteps to zero at one full period. Recomputed every frame,
+no caching (cheap enough to run unconditionally at the vsync rate: ~65 us
+SGP4 / ~0.4 ms numerical per object). Empty markers
 (eclipse/solar_system scenes, the headless binary) mean `path_count == 0`
 and the draw is skipped; the paths/markers also gate on
 `draw_satellite_overlays` (render origin at Terra).

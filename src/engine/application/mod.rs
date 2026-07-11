@@ -29,9 +29,11 @@ use crate::engine::scene::{Scene, SceneClock};
 use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
 
-/// Runs the winit event loop to completion, driving `app`. Frames are driven by
-/// explicit redraw requests (input, inertia, egui repaints); idle means zero
-/// GPU work.
+/// Runs the winit event loop to completion, driving `app`. Frames render
+/// continuously: each presented frame requests the next (vsync-paced), so
+/// the loop carries no is-anything-animating bookkeeping. Only an occluded
+/// (hidden/minimized) window stops rendering, until an expose event restarts
+/// the loop.
 pub fn run<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable>(
     mut app: ApplicationState<S>,
 ) {
@@ -182,17 +184,15 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             return;
         };
 
+        // No redraw requests here: the render loop is self-sustaining (each
+        // presented frame requests the next), so input only mutates state the
+        // next frame will pick up.
         let response = egui_state.on_window_event(&window, &event);
-        if response.repaint {
-            window.request_redraw();
-        }
         if response.consumed {
             return;
         }
 
-        if translate_camera_event(&mut self.simulation, &event, gfx.viewport().1) {
-            window.request_redraw();
-        }
+        translate_camera_event(&mut self.simulation, &event, gfx.viewport().1);
     }
 
     fn redraw(&mut self) {
@@ -207,17 +207,15 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
         };
 
         // Step camera animation (flick inertia, zoom glide) with real frame
-        // time; while something is coasting, each frame requests the next one.
-        let mut animating = self.simulation.tick(gfx.viewport().1);
+        // time.
+        self.simulation.tick(gfx.viewport().1);
 
         // Advance the simulation: tick_scene steps the clock, then runs the
         // scene's own advance (the shared tick lives in the Scene trait's
         // default, so scenes handle only what is unique to them).
         // (This frame's play/pause and speed edits come from the previous
         // frame's UI, applied here - a one-frame, ~16 ms delay, imperceptible.)
-        // A running clock is another "animating" source - it keeps requesting
-        // frames; when paused nothing advances and the app can go idle.
-        animating |= self.simulation.tick_scene();
+        self.simulation.tick_scene();
 
         // Produce this frame's RenderState. The scene's CameraView impl
         // resolves its own view - it re-aims at the frame's target and
@@ -262,11 +260,6 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             pixels_per_point: full_output.pixels_per_point,
         };
 
-        let egui_repaint = full_output
-            .viewport_output
-            .get(&egui::ViewportId::ROOT)
-            .is_some_and(|output| output.repaint_delay.is_zero());
-
         match gfx.update(&window, &render_state, ui_frame) {
             FrameOutcome::Presented => {
                 // First frame is on the surface - reveal the window.
@@ -295,9 +288,14 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             }
         }
 
-        if animating || egui_repaint {
-            window.request_redraw();
-        }
+        // Continuous render loop: every presented frame requests the next,
+        // paced by vsync (AutoVsync). Rendering unconditionally - paused
+        // clock and settled camera included - trades idle power for a frame
+        // loop with no is-anything-animating bookkeeping. The Occluded arm
+        // above is the one brake: it returns without a request, so a hidden/
+        // minimized window renders nothing until an expose event restarts
+        // the loop.
+        window.request_redraw();
     }
 }
 
@@ -305,12 +303,12 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
 /// `CameraControl`-trait call, statelessly - raw positions/deltas pass
 /// straight through and nothing is remembered here (cursor tracking lives in
 /// the camera, which is why presses carry no position: winit gives them
-/// none). Returns whether the camera changed and a redraw is needed.
+/// none).
 fn translate_camera_event<C: CameraControl>(
     camera: &mut C,
     event: &WindowEvent,
     viewport_height: f64,
-) -> bool {
+) {
     match event {
         WindowEvent::MouseInput { state, button, .. } => {
             // Only the buttons the camera vocabulary names; middle/back/
@@ -318,7 +316,7 @@ fn translate_camera_event<C: CameraControl>(
             let button = match button {
                 MouseButton::Left => PointerButton::Left,
                 MouseButton::Right => PointerButton::Right,
-                _ => return false,
+                _ => return,
             };
             match state {
                 ElementState::Pressed => camera.pointer_press(button),
@@ -338,7 +336,7 @@ fn translate_camera_event<C: CameraControl>(
             };
             camera.scroll(delta)
         }
-        _ => false,
+        _ => {}
     }
 }
 

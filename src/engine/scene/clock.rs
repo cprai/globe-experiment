@@ -2,10 +2,9 @@
 //!
 //! Time starts at the TLE epoch and advances by the wall-clock delta between
 //! redraws, scaled by an adjustable multiplier (1x real time .. 100x, set on
-//! an exponential base-e slider in the UI). It can
-//! be paused. While running it acts like the camera's inertia/zoom - an
-//! "animating" source that keeps requesting frames; while paused it advances
-//! nothing, so the app returns to the idle = zero-GPU state.
+//! an exponential base-e slider in the UI). It can be paused: frames keep
+//! rendering (the app renders unconditionally), but they depict a frozen
+//! instant - a paused tick advances nothing and yields dt = 0.
 //!
 //! [`Clock`] itself is plain data - a constructor and private fields, no
 //! behavior. All the clock logic lives in [`SceneClock`]'s default methods,
@@ -90,15 +89,14 @@ pub trait SceneClock {
     fn clock_mut(&mut self) -> &mut Clock;
 
     /// Advance simulation time by the wall-clock delta since the previous
-    /// call, scaled by the multiplier; returns whether the clock is running
-    /// (= keep requesting frames and refresh the satellites).
-    fn tick_clock(&mut self) -> bool {
+    /// call, scaled by the multiplier. Paused, it advances nothing.
+    fn tick_clock(&mut self) {
         let clock = self.clock_mut();
         let now = WallClock::now();
         if clock.paused {
             // Forget the reference point so the next resume starts fresh.
             clock.last = None;
-            return false;
+            return;
         }
 
         let dt = clock
@@ -106,7 +104,6 @@ pub trait SceneClock {
             .map_or(0.0, |last| now.duration_since(last).as_secs_f64());
         clock.last = Some(now);
         clock.elapsed_seconds += dt * clock.multiplier as f64;
-        true
     }
 
     /// The current simulation time.

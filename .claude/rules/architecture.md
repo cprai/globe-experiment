@@ -344,8 +344,8 @@ src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
 src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic;
                          advance() - scene-specific work only - plus
                          the provided tick_scene (for Self: SceneClock =
-                         every scene): tick_clock then advance, returning
-                         the running flag - the application's per-frame
+                         every scene): tick_clock then advance - the
+                         application's per-frame
                          entry point; the clock lives directly in each scene
                          struct - the celestial sphere is NOT stored anywhere:
                          CelestialSphere::at is a pure function of time,
@@ -509,10 +509,9 @@ advance(&mut self)
     which is what pause-sensitive work keys on). The celestial sphere is not
     touched here - frame_state re-derives it at the frame's clock instant.
 
-tick_scene(&mut self) -> bool      [provided where Self: SceneClock]
+tick_scene(&mut self)      [provided where Self: SceneClock]
     The application's per-frame entry point: tick_clock(), then
-    advance(), returning whether the clock is running (keeps frames
-    coming; paused = app goes idle). Provided by the trait for every scene
+    advance(). Provided by the trait for every scene
     (all implement SceneClock), so no scene hand-writes the clock tick; the
     *_py wrappers override it to first fold their script's requested clock
     edits into the wrapper clock.
@@ -545,23 +544,23 @@ implementing only `CameraView` and leaving `CameraControl`'s defaults.
 ```
 CameraControl:
 
-pointer_press(&mut self, button) -> bool      [default: no-op, false]
-pointer_release(&mut self, button) -> bool    [default: no-op, false]
-pointer_move(&mut self, position, viewport_height) -> bool   [default no-op]
-scroll(&mut self, delta) -> bool              [default: no-op, false]
+pointer_press(&mut self, button)              [default: no-op]
+pointer_release(&mut self, button)            [default: no-op]
+pointer_move(&mut self, position, viewport_height)   [default: no-op]
+scroll(&mut self, delta)                      [default: no-op]
     Device-neutral input, called by the application's stateless
     translate_camera_event (one winit event -> one call; raw pixel
     positions/deltas pass through). Presses carry NO position (winit gives
     none) - the camera uses the position last given to pointer_move; ALL
-    input state, cursor tracking included, lives in the camera. Return =
-    "camera changed, request a redraw". A future gamepad/touch scheme = new
-    defaulted methods here + translation arms in application.
+    input state, cursor tracking included, lives in the camera. No return
+    value: the app renders every frame regardless, so there is no
+    "camera changed, request a redraw" signal. A future gamepad/touch
+    scheme = new defaulted methods here + translation arms in application.
 
-tick(&mut self, viewport_height) -> bool      [default: no-op, false]
+tick(&mut self, viewport_height)              [default: no-op]
     Advance one frame of camera animation (flick coast, zoom glide) with
     real frame time. Called at the top of every redraw, BEFORE
-    Scene::tick_scene. Returns true while another frame is needed; with a
-    paused clock this reaching false is what lets the app go idle.
+    Scene::tick_scene.
 
 cursor_hint(&self) -> CursorHint              [default: CursorHint::Default]
     The scene cursor while the pointer is not over an egui panel; the
@@ -588,8 +587,9 @@ frame_state(&mut self) -> RenderState
 ```
 
 Per-frame application order: `tick` -> `Scene::tick_scene` (= `tick_clock` +
-`advance`) -> `frame_state` (idle invariant: redraw is re-requested only
-while `tick() || tick_scene()` reports motion, or egui asks for a repaint).
+`advance`) -> `frame_state`. The loop is unconditional: every presented
+frame requests the next (vsync-paced), paused or not; only an occluded
+window stops rendering (see `renderer.md`, Render loop policy).
 
 ## `UIDrawable` trait + `UIDrawablePanel` + `Instrument`
 

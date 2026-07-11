@@ -182,17 +182,15 @@ pub trait Scene {
     fn advance(&mut self);
 
     /// The per-frame entry point the application calls: tick the clock, then
-    /// run the scene's own [`Scene::advance`]. Returns whether the clock is
-    /// running, i.e. the app should keep requesting frames (paused = the app
-    /// can go idle). Provided for every scene that implements [`SceneClock`]
-    /// (all of them), so no scene hand-writes the clock tick.
-    fn tick_scene(&mut self) -> bool
+    /// run the scene's own [`Scene::advance`]. Provided for every scene that
+    /// implements [`SceneClock`] (all of them), so no scene hand-writes the
+    /// clock tick.
+    fn tick_scene(&mut self)
     where
         Self: SceneClock,
     {
-        let running = self.tick_clock();
+        self.tick_clock();
         self.advance();
-        running
     }
 }
 

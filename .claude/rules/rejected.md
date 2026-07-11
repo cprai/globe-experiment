@@ -1,7 +1,7 @@
 # Deliberately rejected — do not re-add
 
 - **Animated/time-varying ocean wave noise** — static by design (temporal
-  stability + idle-is-free).
+  stability).
 - **Day-side albedo saturation boost** and **`OCEAN_TINT`** water-darkening
   tint — both reverted; albedo is used as sampled.
 - **Sol-attached celestial sphere** (the slider-era model) — replaced by
@@ -27,3 +27,10 @@
   positioning.
 - **Fixed-half-life always-glide zoom** — failed (laggy during active scroll).
 - **Fixed burst-gap split zoom** — failed (momentum tail crosses threshold).
+- **The idle-zero-GPU optimization** (animation-gated `request_redraw`: the
+  `tick`/`tick_scene`/input-method bool returns + the egui repaint-delay
+  check deciding whether to request the next frame) — removed 2026-07-11 by
+  owner choice: pausing is rare in practice, and the unconditional
+  vsync-paced render loop is simpler (see `renderer.md`, Render loop
+  policy). Do not reintroduce the gating. The occlusion brake (no redraw
+  request from the `Occluded` arm) is NOT part of this and must stay.

@@ -64,42 +64,32 @@ pub enum CursorHint {
 /// The interactive-input half of the camera interface: responding to
 /// (already-translated) window input, advancing the animation those gestures
 /// spawn (flick coasting, the zoom glide), and reporting the cursor
-/// affordance that reflects the drag state. The methods return whether the
-/// camera changed (or an animation started/continues) so the application
-/// knows a redraw is needed; every method defaults to a no-op, so a scene
-/// with a non-interactive camera implements only [`CameraView`].
+/// affordance that reflects the drag state. Every method defaults to a
+/// no-op, so a scene with a non-interactive camera implements only
+/// [`CameraView`]. The methods return nothing: the application renders
+/// every frame regardless, so there is no "camera changed, redraw" signal
+/// to carry.
 pub trait CameraControl {
     /// A pointer button went down. Carries no position: winit press events
     /// have none, so a camera uses the position last given to
     /// [`pointer_move`](Self::pointer_move) (the cursor tracking state lives
     /// in the camera, not the application).
-    fn pointer_press(&mut self, _button: PointerButton) -> bool {
-        false
-    }
+    fn pointer_press(&mut self, _button: PointerButton) {}
 
     /// A pointer button was released.
-    fn pointer_release(&mut self, _button: PointerButton) -> bool {
-        false
-    }
+    fn pointer_release(&mut self, _button: PointerButton) {}
 
     /// The pointer moved to `position` (physical pixels, window-relative).
     /// `viewport_height` (pixels) scales drag gestures to the view.
-    fn pointer_move(&mut self, _position: (f64, f64), _viewport_height: f64) -> bool {
-        false
-    }
+    fn pointer_move(&mut self, _position: (f64, f64), _viewport_height: f64) {}
 
     /// A scroll wheel / trackpad event.
-    fn scroll(&mut self, _delta: ScrollDelta) -> bool {
-        false
-    }
+    fn scroll(&mut self, _delta: ScrollDelta) {}
 
     /// Advances one frame of camera animation (e.g. flick coasting, the zoom
     /// glide) with real frame time. Called at the top of every redraw, before
-    /// `Scene::advance`; returns true while another frame is needed, so
-    /// a settled camera lets the app go idle.
-    fn tick(&mut self, _viewport_height: f64) -> bool {
-        false
-    }
+    /// `Scene::advance`.
+    fn tick(&mut self, _viewport_height: f64) {}
 
     /// The scene cursor to show while the pointer is not over an egui panel.
     fn cursor_hint(&self) -> CursorHint {
