@@ -38,8 +38,9 @@ RUN git config --global --add safe.directory "*"
 RUN rustup toolchain install stable
 RUN rustup component add --toolchain nightly rustfmt
 
-RUN cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgslfmt
-RUN cargo install --git https://github.com/gfx-rs/wgpu naga-cli
+RUN cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgsl-analyzer wgslfmt
+RUN cargo install naga-cli
+RUN cargo install shader_language_server
 
 RUN uv tool install serena-agent
 RUN serena init
