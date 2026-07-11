@@ -147,7 +147,7 @@ impl SceneClock for ManualControlScene {
 }
 
 impl Scene for ManualControlScene {
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // The clock already ticked in `tick_scene` (any Time-panel
         // pause/speed edit already landed via the SceneClock setters during
         // the previous egui pass); only the scene-specific work remains. The

@@ -176,8 +176,10 @@ impl CameraTarget {
 pub trait Scene {
     /// Scene-specific per-frame work (e.g. `manual_control`'s orbit
     /// re-anchor; most scenes have none). Called by [`Scene::tick_scene`]
-    /// AFTER the clock has ticked; `running` says whether it advanced.
-    fn advance(&mut self, running: bool);
+    /// AFTER the clock has ticked; a scene that cares whether it advanced
+    /// reads `clock_paused()` through its own [`SceneClock`] impl (a paused
+    /// clock also yields dt = 0, which is what pause-sensitive work keys on).
+    fn advance(&mut self);
 
     /// The per-frame entry point the application calls: tick the clock, then
     /// run the scene's own [`Scene::advance`]. Returns whether the clock is
@@ -189,7 +191,7 @@ pub trait Scene {
         Self: SceneClock,
     {
         let running = self.tick_clock();
-        self.advance(running);
+        self.advance();
         running
     }
 }

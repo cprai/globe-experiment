@@ -261,11 +261,11 @@ impl Scene for SolarSystemPyScene {
 
         // The trait default's body: tick, then the scene-specific advance.
         let running = self.tick_clock();
-        self.advance(running);
+        self.advance();
         running
     }
 
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // Nothing scene-specific beyond refreshing the Inner's script-facing
         // clock snapshots for the coming get_drawables (any body-key press
         // already landed directly via `request_body(i)`; this frame's

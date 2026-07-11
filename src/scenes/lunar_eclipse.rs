@@ -107,7 +107,7 @@ impl SceneClock for LunarEclipseScene {
 }
 
 impl Scene for LunarEclipseScene {
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // Nothing scene-specific: the clock tick lives in `tick_scene` (any
         // Camera Target key press or Time-panel edit already landed directly
         // during the previous egui pass), and `frame_state` re-derives the

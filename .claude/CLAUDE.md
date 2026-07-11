@@ -121,7 +121,7 @@ the wrapper-owned clock behind the `SceneClock` trait API
 clock logic as trait default methods; `Clock` itself is plain data;
 implementing `SceneClock` is also what grants every scene the `Scene`
 trait's provided `tick_scene` — clock tick + scene-specific
-`advance(running)` — that the application calls each frame) — are
+`advance()` — that the application calls each frame) — are
 how a script reads and drives the clock (no `Clock` instance crosses into
 Python).
 Both scene pairs live side by side so the two APIs can be compared.

@@ -31,8 +31,8 @@ paths:
   first frame does not reframe). **The clock tick is NOT the scene's job**:
   the application calls `Scene::tick_scene` (a default method provided
   `where Self: SceneClock`, i.e. for every scene), which ticks the clock and
-  then calls `advance(running)`; the scene's `advance(&mut self, running:
-  bool)` holds only scene-specific per-frame work (empty for most scenes;
+  then calls `advance()`; the scene's `advance(&mut self)` holds only
+  scene-specific per-frame work (empty for most scenes;
   `manual_control`'s orbit re-anchor is the exception) - any Time-panel
   pause/speed edit already landed directly during the previous egui pass.
   **All clock access goes through the `SceneClock` trait** in
@@ -209,7 +209,7 @@ The pattern:
   Rust scenes. The wrapper **overrides `tick_scene`** to first drain the
   Inner's `requested_*` clock edits into the wrapper clock (the clock twin
   of the `selected_body` fold), then run the default's body (tick +
-  `advance(running)`); its `advance` does the sibling's scene-specific work
+  `advance()`); its `advance` does the sibling's scene-specific work
   through the Inner (passing the ticked `clock_now()` in) and pushes fresh
   clock snapshots for the coming `get_drawables`. `frame_state` also lives
   on the **wrapper** (`CameraView`): it reads the frame instant off the

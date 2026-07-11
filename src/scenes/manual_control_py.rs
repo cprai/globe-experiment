@@ -391,11 +391,11 @@ impl Scene for ManualControlPyScene {
 
         // The trait default's body: tick, then the scene-specific advance.
         let running = self.tick_clock();
-        self.advance(running);
+        self.advance();
         running
     }
 
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // Re-anchor the orbit to the already-ticked clock (the Rust
         // sibling's advance, split across the wrapper/pyclass boundary),
         // then refresh the Inner's script-facing clock snapshots for the

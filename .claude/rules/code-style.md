@@ -41,7 +41,7 @@ module (no lib crate) plus their own top-level extra (`scenes` for main,
   shared core struct); the celestial sphere is **not stored anywhere** —
   `CelestialSphere::at` is a pure function of time, evaluated on the spot
   where needed. **No winit/wgpu dependency. No
-  camera type** (the trait is `advance(running)` - scene-specific work
+  camera type** (the trait is `advance()` - scene-specific work
   only - plus the provided `tick_scene` clock-tick entry point the
   application calls; the frame's `RenderState` -
   plain data defined here - is produced by the scene's `camera::CameraView`

@@ -342,7 +342,7 @@ src/engine/scene/body.rs   the celestial-body hierarchy: CelestialBody identity
                          celestial sphere, CameraTarget, and the scenes'
                          camera-target panels
 src/engine/scene/mod.rs    Scene trait (UI- and camera-agnostic;
-                         advance(running) - scene-specific work only - plus
+                         advance() - scene-specific work only - plus
                          the provided tick_scene (for Self: SceneClock =
                          every scene): tick_clock then advance, returning
                          the running flag - the application's per-frame
@@ -501,15 +501,17 @@ impl. (The `Scene` trait itself takes no UI or camera types, and the
 builders that needed it are gone.)
 
 ```
-advance(&mut self, running: bool)
+advance(&mut self)
     Scene-specific per-frame work only (e.g. manual_control's orbit
     re-anchor; empty for most scenes). Called by tick_scene AFTER the clock
-    ticked; `running` says whether it advanced. The celestial sphere is not
+    ticked; a scene that cares whether it advanced reads clock_paused()
+    through its own SceneClock impl (a paused clock also yields dt = 0,
+    which is what pause-sensitive work keys on). The celestial sphere is not
     touched here - frame_state re-derives it at the frame's clock instant.
 
 tick_scene(&mut self) -> bool      [provided where Self: SceneClock]
     The application's per-frame entry point: tick_clock(), then
-    advance(running), returning whether the clock is running (keeps frames
+    advance(), returning whether the clock is running (keeps frames
     coming; paused = app goes idle). Provided by the trait for every scene
     (all implement SceneClock), so no scene hand-writes the clock tick; the
     *_py wrappers override it to first fold their script's requested clock

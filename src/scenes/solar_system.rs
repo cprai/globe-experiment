@@ -88,7 +88,7 @@ impl SceneClock for SolarSystemScene {
 }
 
 impl Scene for SolarSystemScene {
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // Nothing scene-specific: the clock tick lives in `tick_scene` (any
         // body-key press or Time-panel edit already landed directly during
         // the previous egui pass), and `frame_state` re-derives the celestial

@@ -73,7 +73,7 @@ impl SceneClock for IssScene {
 }
 
 impl Scene for IssScene {
-    fn advance(&mut self, _running: bool) {
+    fn advance(&mut self) {
         // Nothing scene-specific: the clock tick lives in `tick_scene` (any
         // Time-panel pause/speed edit already landed via the SceneClock
         // setters during the previous egui pass), and `frame_state`
