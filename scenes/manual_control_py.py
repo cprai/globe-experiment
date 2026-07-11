@@ -84,8 +84,12 @@ def telemetry_panel(scene):
         [Header(scene.name)],
         [
             DualReadout(
-                "Lat", "%7.2f" % telemetry.latitude_deg, "deg",
-                "Lon", "%7.2f" % telemetry.longitude_deg, "deg",
+                "Lat",
+                "%7.2f" % telemetry.latitude_deg,
+                "deg",
+                "Lon",
+                "%7.2f" % telemetry.longitude_deg,
+                "deg",
             )
         ],
         [
@@ -108,9 +112,18 @@ def burns_panel(scene):
 
     rows = [
         [Header("Burns")],
-        [key("Prograde", scene.request_prograde), key("Retrograde", scene.request_retrograde)],
-        [key("Normal", scene.request_normal), key("Anti-Normal", scene.request_anti_normal)],
-        [key("Radial Out", scene.request_radial_out), key("Radial In", scene.request_radial_in)],
+        [
+            key("Prograde", scene.request_prograde),
+            key("Retrograde", scene.request_retrograde),
+        ],
+        [
+            key("Normal", scene.request_normal),
+            key("Anti-Normal", scene.request_anti_normal),
+        ],
+        [
+            key("Radial Out", scene.request_radial_out),
+            key("Radial In", scene.request_radial_in),
+        ],
     ]
     return Panel(PanelAnchor.BottomCenter, rows)
 
