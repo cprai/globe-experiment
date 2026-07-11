@@ -33,6 +33,13 @@
   binary's test harness (both bin roots compile the shared `engine`); each
   harness is its own process, so the `Once` seeding still holds.
 - **`cargo clippy`** — run heavily, aim warning-free. Does not validate WGSL.
+- **After every `scenes/*.py` edit**: format with `ruff format`
+  (`format-python` skill), then type-check with `ty check scenes/`
+  (`check-python-ty` skill). **`ty` currently fails on the embedded `globe`
+  pyo3 module** ("unresolved import" — no type stubs exist for it yet); that
+  failure is **expected and ignored for now**, but read past it and fix any
+  *other* diagnostic ty reports. (serena's `get_diagnostics_for_file` surfaces
+  the same pyright view live if you prefer it in-session.)
 - **After every shader edit**: `naga --compact --capabilities none
   shaders/scene.wgsl`. This is the same naga the app links through wgpu —
   authoritative. No output file = validate only. `Validation successful` +

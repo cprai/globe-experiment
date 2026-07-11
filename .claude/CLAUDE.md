@@ -11,16 +11,31 @@ Look-tuning constants in `scene.wgsl` in particular drift between sessions.
 **After completing all changes, print a one-line commit message describing the
 currently uncommitted changes — as an example only. Do NOT make any commits.**
 
-## Code search: use the codebase-memory MCP (see the `codebase-search` skill)
+## Code search: prefer serena, then the codebase-memory MCP (see the `codebase-search` skill)
 
 Whenever code needs to be searched, or before planning/making major code
-changes, **prefer the `codebase-memory-mcp` knowledge graph over grep/glob/
-whole-file reads** — it returns exact symbols, callers, and precise source
-ranges, saving agent token cost. **Re-index the project before searching, and
-re-index again after any code change** (indexing is fast at this project's
-size, so do it liberally). The `codebase-search` skill has the tool cheat
-sheet and the re-index commands. Plain Grep/Read remain right for non-Rust
-files (`scene.wgsl`, configs, docs), and always `Read` a file before editing.
+changes, **prefer symbol search over grep/glob/whole-file reads** — it
+returns exact symbols and precise source ranges, saving agent token cost. Two
+MCP tools cover this, in order:
+
+1. **serena** (LSP-backed) is the **primary** searcher for every language it
+   is configured for in `.serena/project.yml` — currently **Rust**, **WGSL**
+   (`shaders/scene.wgsl`, via the hlsl/shader-language-server), and **Python**
+   (`scenes/*.py`). It is **live** — it reads the working tree through the
+   language servers, so there is **no index to refresh** — and gives
+   LSP-accurate structure, definitions, references, and implementations
+   (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`,
+   `find_implementations`).
+2. **codebase-memory-mcp** (the Rust knowledge graph) is kept for what serena
+   cannot do: **call-graph tracing** (`trace_path`), **Cypher/aggregation
+   queries** (`query_graph`), **complexity hotspots**, and **indexing
+   dependency-crate source** (satkit/wgpu/egui). It is a snapshot — re-index
+   before/after use.
+
+The `codebase-search` skill has the routing table, serena notes, and the
+codebase-memory cheat sheet + re-index commands. Plain Grep/Read remain right
+for genuinely non-code files (`Cargo.toml`, `.claude/` docs, `OUT_DIR`), and
+always `Read` a file before editing.
 
 ---
 
@@ -184,3 +199,11 @@ after every shader edit:
 ```sh
 naga --compact --capabilities none shaders/scene.wgsl
 ```
+
+**Python scene scripts** (`scenes/*.py`) are formatted with `ruff format` and
+type-checked with `ty check` after edits (see the `format-python` /
+`check-python-ty` skills). `ty` currently reports the embedded `globe` module
+as unresolved (no stubs exist for the pyo3 module yet) — ignore those
+diagnostics for now, but fix anything else it flags. naga stays the
+authoritative WGSL error check; serena is for *querying* the shader, not
+linting it.
