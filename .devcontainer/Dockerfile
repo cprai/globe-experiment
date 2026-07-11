@@ -6,7 +6,7 @@ ARG GIT_AUTHOR_EMAIL
 
 ENV LIBGL_ALWAYS_SOFTWARE=1
 
-RUN pacman -Syu --noconfirm --needed \
+RUN pacman -Sy --noconfirm --needed \
         git \
         curl \
         rustup \
