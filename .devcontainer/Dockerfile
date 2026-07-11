@@ -28,3 +28,8 @@ RUN mkdir -p /home/vscode/.claude
 RUN chown -R vscode:vscode /home/vscode/.claude
 
 RUN curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
+RUN curl -fsSL https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin bash
+
+RUN UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools uv tool install serena-agent
+RUN serena init
+RUN serena setup claude-code
