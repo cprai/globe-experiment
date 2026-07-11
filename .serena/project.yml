@@ -34,6 +34,7 @@ project_name: "globe-experiment"
 languages:
 - rust
 - hlsl
+- python
 
 # list of mode names that are to be activated by default, overriding the setting in the global configuration.
 # The full set of modes to be activated is base_modes (from global config) + default_modes + added_modes.

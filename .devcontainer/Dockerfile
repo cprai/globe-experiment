@@ -42,6 +42,9 @@ RUN cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgsl-anal
 RUN cargo install naga-cli
 RUN cargo install shader_language_server
 
+RUN uv tool install ty
+RUN uv tool install ruff
+
 RUN uv tool install serena-agent
 RUN serena init
 RUN serena setup claude-code
