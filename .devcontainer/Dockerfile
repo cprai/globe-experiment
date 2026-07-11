@@ -14,6 +14,7 @@ RUN apt-get update
 RUN apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools libgl1-mesa-dri libglx-mesa0 mesa-utils
 RUN apt-get install -y nodejs npm
 
+RUN rustup component add rust-analyzer
 RUN rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 RUN cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgslfmt
 RUN cargo install --git https://github.com/gfx-rs/wgpu naga-cli
