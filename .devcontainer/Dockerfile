@@ -5,7 +5,6 @@ ARG GIT_AUTHOR_NAME
 ARG GIT_AUTHOR_EMAIL
 
 ENV LIBGL_ALWAYS_SOFTWARE=1
-ENV VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json:/usr/share/vulkan/icd.d/lvp_icd.aarch64.json
 
 RUN pacman -Syu --noconfirm --needed \
         git \
