@@ -1,18 +1,8 @@
 //! The application layer: windowing, the winit event loop, per-frame redraw
-//! orchestration, and the windowed presenter. It is generic over any
-//! `S: Scene + CameraControl + CameraView + UIDrawable`, owns the
-//! windowed `Gfx` renderer (the `gfx` submodule), advances the simulation,
-//! and drives each render.
-//!
-//! The application keeps NO camera or input state: each winit input event is
-//! translated **statelessly** into one device-neutral `CameraControl`-trait
-//! call (see `translate_camera_event`), so all camera state - the rig, drag/
-//! flick/zoom animation, even cursor tracking - lives behind the scene's
-//! `CameraControl`/`CameraView` impls (usually a `PtzCamera`). Swapping or
-//! extending the input scheme (gamepad, touch) means a new trait method plus
-//! a translation arm here, nothing more. The simulation and renderer only
-//! ever consume the resolved `RenderState`; the application never touches
-//! the `CelestialSphere`.
+//! orchestration, and the windowed presenter (`gfx`). Generic over any
+//! `S: Scene + CameraControl + CameraView + UIDrawable`. It keeps NO camera
+//! or input state: each winit input event is translated statelessly into one
+//! device-neutral `CameraControl` call (`translate_camera_event`).
 
 mod gfx;
 
@@ -30,10 +20,8 @@ use crate::engine::ui::{self, UIDrawable};
 use gfx::{FrameOutcome, Gfx};
 
 /// Runs the winit event loop to completion, driving `app`. Frames render
-/// continuously: each presented frame requests the next (vsync-paced), so
-/// the loop carries no is-anything-animating bookkeeping. Only an occluded
-/// (hidden/minimized) window stops rendering, until an expose event restarts
-/// the loop.
+/// continuously (each presented frame requests the next, vsync-paced); only
+/// an occluded window stops rendering until an expose event.
 pub fn run<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable>(
     mut app: ApplicationState<S>,
 ) {
@@ -42,13 +30,9 @@ pub fn run<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable>(
     event_loop.run_app(&mut app).expect("run event loop");
 }
 
-/// Creates the winit event loop, forcing X11 on WSL.
-///
-/// WSLg's native Wayland compositor drops EGL connections under GPU load,
-/// causing broken-pipe crashes. Checking `WSL_DISTRO_NAME` (set by WSL2 for
-/// every distro) lets us steer winit toward the XCB/X11 backend before the
-/// compositor can break the connection. On all other platforms the default
-/// backend selection is unchanged.
+/// Creates the winit event loop, forcing X11 on WSL: WSLg's Wayland
+/// compositor drops EGL connections under GPU load (broken-pipe crash), so
+/// `WSL_DISTRO_NAME` steers winit to the XCB/X11 backend.
 fn build_event_loop() -> EventLoop<()> {
     #[cfg(target_os = "linux")]
     if std::env::var_os("WSL_DISTRO_NAME").is_some() {
@@ -61,12 +45,9 @@ fn build_event_loop() -> EventLoop<()> {
     EventLoop::new().expect("create event loop")
 }
 
-/// The application: owns the window, the egui logic side (`Context` +
-/// `egui_winit::State`), the simulation (which carries its own camera behind
-/// the `CameraControl`/`CameraView` traits), and the renderer. The
-/// window/egui_state/gfx are created on `resumed`. Generic over
-/// `S: Scene + CameraControl + CameraView + UIDrawable` so any scene
-/// can be plugged in without changing the application layer.
+/// The application: owns the window, the egui logic side, the simulation
+/// (which carries its own camera), and the renderer. The window/egui_state/
+/// gfx are created on `resumed`.
 pub struct ApplicationState<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> {
     simulation: S,
     /// The window, created on `resumed`. Shared with the renderer's surface.
@@ -81,14 +62,11 @@ pub struct ApplicationState<S: Scene + SceneClock + CameraControl + CameraView +
 }
 
 impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
-    /// Builds the application around an already-constructed simulation (which
-    /// carries its own camera - a scene that frames a specific event on
-    /// launch seeds its `PtzCamera` in its `new()`). The window, egui platform
-    /// state, and renderer are created later, on the first `resumed`.
+    /// Builds the application around an already-constructed simulation; the
+    /// window, egui platform state, and renderer come on the first `resumed`.
     pub fn new(simulation: S) -> Self {
         let egui_ctx = egui::Context::default();
-        // Stamp the Apollo-panel theme onto the context once; the live UI and a
-        // headless mock share the same `install_theme`, so they look identical.
+        // The theme must be stamped onto each egui Context exactly once.
         ui::install_theme(&egui_ctx);
         Self {
             simulation,
@@ -109,10 +87,8 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             return;
         }
 
-        // The window stays hidden through device setup, texture upload,
-        // and pipeline creation; it's shown after the first frame is
-        // presented, so it appears with the scene already rendered
-        // instead of sitting blank while loading.
+        // Created hidden and revealed after the first presented frame, so
+        // the window appears with the scene already rendered.
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -126,8 +102,6 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
         let gfx = Gfx::init(window.clone(), event_loop.owned_display_handle());
         window.set_cursor(cursor_icon(self.simulation.cursor_hint()));
 
-        // egui's platform side needs the window; the GPU side already went
-        // into Gfx. The context is shared with the input/redraw paths.
         let egui_state = egui_winit::State::new(
             self.egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -141,11 +115,9 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
         self.egui_state = Some(egui_state);
         self.gfx = Some(gfx);
 
-        // The first frame is rendered directly rather than via
-        // request_redraw(): a hidden window receives no RedrawRequested
-        // on Windows (paint events are only generated for visible
-        // windows), so waiting for one would deadlock with the window
-        // never shown. redraw() reveals the window after presenting.
+        // Direct call, not request_redraw(): Windows delivers no
+        // RedrawRequested to a hidden window, so waiting for one would
+        // deadlock with the window never shown (redraw() does the reveal).
         self.redraw();
     }
 
@@ -170,9 +142,8 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
 }
 
 impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> ApplicationState<S> {
-    /// Routes an input event: egui gets first claim (sliders, panel
-    /// hover); whatever it doesn't consume is translated into the
-    /// scene's `CameraControl` impl.
+    /// Routes an input event: egui gets first claim; whatever it doesn't
+    /// consume goes to the scene's `CameraControl` impl.
     fn handle_input(&mut self, event: WindowEvent) {
         let Some(window) = self.window.clone() else {
             return;
@@ -184,9 +155,6 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             return;
         };
 
-        // No redraw requests here: the render loop is self-sustaining (each
-        // presented frame requests the next), so input only mutates state the
-        // next frame will pick up.
         let response = egui_state.on_window_event(&window, &event);
         if response.consumed {
             return;
@@ -206,37 +174,19 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             return;
         };
 
-        // Step camera animation (flick inertia, zoom glide) with real frame
-        // time.
+        // Camera animation, then clock + scene advance. (This frame's
+        // play/pause and speed edits come from the previous frame's UI - a
+        // one-frame, ~16 ms delay, imperceptible.)
         self.simulation.tick(gfx.viewport().1);
-
-        // Advance the simulation: tick_scene steps the clock, then runs the
-        // scene's own advance (the shared tick lives in the Scene trait's
-        // default, so scenes handle only what is unique to them).
-        // (This frame's play/pause and speed edits come from the previous
-        // frame's UI, applied here - a one-frame, ~16 ms delay, imperceptible.)
         self.simulation.tick_scene();
 
-        // Produce this frame's RenderState. The scene's CameraView impl
-        // resolves its own view - it re-aims at the frame's target and
-        // builds the rig against its own celestial sphere - so the
-        // application never touches the ephemeris; the renderer rebuilds the
-        // projection from the rig in the returned state.
         let render_state = self.simulation.frame_state();
 
-        // Run the egui UI: pull the scene's drawable panels ONCE per frame
-        // (readouts re-derived at the same clock instant as the frame_state
-        // above, so they match the rendered markers), then render them inside
-        // run_ui, firing the elements' callbacks - each receives
-        // `&mut simulation` at fire time - for any interaction. Building the
-        // panels outside run_ui is load-bearing: egui's discard pass
-        // (max_passes = 2) re-runs the closure, and only fixed build-time
-        // callback snapshots keep a twice-fired callback idempotent (see
-        // ui::control_panel). The logic and tessellation live here (the
-        // renderer only draws the primitives). The panels are owned (they
-        // never borrow the scene), so `&mut panels` and `&mut simulation`
-        // coexist in the closure, and both are disjoint from the `run_ui`
-        // receiver borrow of `self.egui_ctx`.
+        // Panels are pulled ONCE per frame, outside run_ui - load-bearing:
+        // egui's discard pass (max_passes = 2) re-runs the closure, and only
+        // fixed build-time callback snapshots keep a twice-fired callback
+        // idempotent. The panels are owned (they never borrow the scene), so
+        // `&mut panels` and `&mut simulation` coexist in the closure.
         let raw_input = egui_state.take_egui_input(&window);
         let mut panels = self.simulation.get_drawables();
         let simulation = &mut self.simulation;
@@ -251,7 +201,6 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
             window.set_cursor(cursor_icon(self.simulation.cursor_hint()));
         }
 
-        // Tessellate egui into render-ready primitives for the renderer.
         let ui_frame = UiFrame {
             primitives: self
                 .egui_ctx
@@ -268,10 +217,10 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
                     window.set_visible(true);
                 }
             }
-            // Hidden/minimized: skip the frame; the next expose event requests
-            // a redraw. If the first frame lands here (some backends report the
-            // still-hidden window as occluded), show the window and retry
-            // rather than deadlocking invisible.
+            // Hidden/minimized: skip the frame; the next expose event
+            // requests a redraw. If the first frame lands here (macOS can
+            // report a still-hidden window as occluded), show the window
+            // and retry rather than deadlocking invisible.
             FrameOutcome::Occluded => {
                 if !self.shown {
                     self.shown = true;
@@ -280,8 +229,8 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
                 }
                 return;
             }
-            // Surface acquire failed (lost/outdated/timeout); the renderer
-            // reconfigured where needed - retry next frame.
+            // Surface acquire failed; the renderer reconfigured where
+            // needed - retry next frame.
             FrameOutcome::Reconfigured => {
                 window.request_redraw();
                 return;
@@ -289,21 +238,13 @@ impl<S: Scene + SceneClock + CameraControl + CameraView + UIDrawable> Applicatio
         }
 
         // Continuous render loop: every presented frame requests the next,
-        // paced by vsync (AutoVsync). Rendering unconditionally - paused
-        // clock and settled camera included - trades idle power for a frame
-        // loop with no is-anything-animating bookkeeping. The Occluded arm
-        // above is the one brake: it returns without a request, so a hidden/
-        // minimized window renders nothing until an expose event restarts
-        // the loop.
+        // vsync-paced. The Occluded arm above is the one brake.
         window.request_redraw();
     }
 }
 
 /// Translates one winit window event into the matching device-neutral
-/// `CameraControl`-trait call, statelessly - raw positions/deltas pass
-/// straight through and nothing is remembered here (cursor tracking lives in
-/// the camera, which is why presses carry no position: winit gives them
-/// none).
+/// `CameraControl` call, statelessly (cursor tracking lives in the camera).
 fn translate_camera_event<C: CameraControl>(
     camera: &mut C,
     event: &WindowEvent,
@@ -311,8 +252,8 @@ fn translate_camera_event<C: CameraControl>(
 ) {
     match event {
         WindowEvent::MouseInput { state, button, .. } => {
-            // Only the buttons the camera vocabulary names; middle/back/
-            // forward are dropped here (no camera has a gesture for them).
+            // Only the buttons the camera vocabulary names; the rest are
+            // dropped here.
             let button = match button {
                 MouseButton::Left => PointerButton::Left,
                 MouseButton::Right => PointerButton::Right,
@@ -328,8 +269,7 @@ fn translate_camera_event<C: CameraControl>(
         }
         WindowEvent::MouseWheel { delta, .. } => {
             // Both variants are load-bearing (Windows/X11 wheels deliver
-            // lines, macOS precision trackpads pixels); the per-variant zoom
-            // feel lives with the camera.
+            // lines, macOS precision trackpads pixels).
             let delta = match delta {
                 MouseScrollDelta::LineDelta(_, y) => ScrollDelta::Lines(f64::from(*y)),
                 MouseScrollDelta::PixelDelta(position) => ScrollDelta::Pixels(position.y),

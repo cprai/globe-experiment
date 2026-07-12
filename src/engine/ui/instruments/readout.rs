@@ -10,14 +10,7 @@ use crate::engine::ui::theme::{
 
 /// A labelled value: a dim caption above a large cream value in a recessed
 /// digit window, with an optional unit stamped as an inverted block at the
-/// window's end - the DSKY-style readout from the game-UI reference (e.g.
-/// `007.8|KM|`), sized so a value reads at a glance over the scene.
-///
-/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
-/// `unit` defaults empty, so pre-unit JSON still parses); `Clone` so
-/// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables` (and the Python bridge out of its pyclass cell); `pyclass`
-/// for the dual Rust/Python UI API - the Python constructor's `unit` defaults
+/// window's end (e.g. `007.8|KM|`). The Python constructor's `unit` defaults
 /// empty to mirror the serde default.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,18 +36,16 @@ impl Readout {
 
 impl<S> Instrument<S> for Readout {
     fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
-        // Content-sized: the digit window hugs its (fixed-width, monospace)
-        // value, so the panel width comes from the widest readout row.
+        // Content-sized: the window hugs its fixed-width monospace value, so
+        // the panel width comes from the widest readout row.
         leaf(tui, taffy::Style::default(), |ui| {
             readout_block(ui, &self.label, &self.value, &self.unit);
         });
     }
 }
 
-/// Renders one digit-window readout: the dim engraved caption above, then the
-/// recessed window holding the large cream value and, when `unit` is
-/// non-empty, the inverted unit block flush at the window's end. Shared with
-/// [`super::DualReadout`], which lays out two side by side.
+/// One digit-window readout (caption, recessed window, optional unit block);
+/// shared with [`super::DualReadout`].
 pub(super) fn readout_block(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = SPACE_XS;
@@ -66,12 +57,12 @@ pub(super) fn readout_block(ui: &mut egui::Ui, label: &str, value: &str, unit: &
         egui::Frame::new()
             .fill(RECESS_FILL)
             // The panel body and the recessed fill composite to nearly the
-            // same on-screen value, so the window outline - not the fill - is
-            // what makes the digit window read as a cut-in field.
+            // same on-screen value, so the outline - not the fill - is what
+            // makes the window read as a cut-in field.
             .stroke(Stroke::new(HAIRLINE, BEVEL_LIGHT))
             .corner_radius(CornerRadius::same(RADIUS_WINDOW))
-            // A slimmer right margin when a unit block caps the window, so the
-            // block sits flush at the end like a stamped suffix.
+            // Slimmer right margin when a unit block caps the window, so it
+            // sits flush at the end like a stamped suffix.
             .inner_margin(Margin {
                 left: (SPACE_MD + HAIRLINE) as i8,
                 right: if unit.is_empty() {

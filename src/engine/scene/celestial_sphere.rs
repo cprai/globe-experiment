@@ -1,37 +1,24 @@
-//! Ephemeris-driven celestial sphere: Sol, Luna, and seven planets'
-//! positions and orientations, plus the star-map orientation, for a given
-//! simulation time, from satkit's JPL Development Ephemerides (DE440) and
-//! Earth-orientation transforms.
+//! Ephemeris-driven celestial sphere: Sol, Luna, and the seven planets'
+//! placements plus the star-map orientation for one instant, from satkit's
+//! JPL DE440 ephemeris and the full IERS-2010 Earth-orientation transforms
+//! (embedded EOP + IERS tables, seeded in `init_satkit` - no runtime data
+//! file).
 //!
-//! Frame origin: HELIOCENTRIC. Positions come from the ephemeris (GCRF,
-//! inertial, geocentric) and Terra's orientation (the GCRF<->ITRF rotation)
-//! maps them into the Earth-fixed axes and rotates the star backdrop; then
-//! every body position is shifted by `- sol_geo` so Sol sits at the origin
-//! (Terra lands at `-sol_geo`). The AXES stay Earth-fixed - this is an
-//! origin-only translation, so orientations and the rendered output are
-//! unchanged (the renderer/camera consume every position as `X -
-//! render_origin`, and `render_origin` tracks Terra's heliocentric center, so
-//! the Terra-local render frame is identical). Satellites and WGS84 surface
-//! positions remain GEOCENTRIC (Terra-relative); the renderer bridges them
-//! into the render frame with Terra's center. We use the full
-//! IERS-2010 transforms (sub-arcsec, matching the satellite path), which read
-//! the embedded EOP table plus the embedded IERS nutation/CIO tables (seeded
-//! in `init_satkit`) - no runtime data file is needed.
+//! Origin: HELIOCENTRIC. Ephemeris positions (GCRF, geocentric) are rotated
+//! into Earth-fixed axes, then every body is shifted by `-sol_geo` so Sol
+//! sits at the origin (Terra at `-sol_geo`). Origin-only translation: the
+//! axes stay Earth-fixed, so orientations and the Terra-local render frame
+//! are unchanged. Satellites and WGS84 surface positions stay geocentric.
 //!
-//! Frame note: satkit uses standard ECEF/GCRF (Z = pole); this project's
-//! world frame is permuted (Y = north, Z = prime meridian, X = 90 deg E). The
-//! permutation `p` maps (x,y,z) -> (y,z,x) - the same permutation the
-//! satellite path expresses via `planet::surface_position`/`geodetic_normal`.
+//! Frame note: satkit uses standard ECEF/GCRF (Z = pole); the world frame is
+//! permuted (Y = north, Z = prime meridian, X = 90 deg E) via P: (x,y,z) ->
+//! (y,z,x).
 //!
-//! Star-map frame note: the embedded star texture
-//! (`8k_stars_milky_way.jpg`) is drawn in *galactic* coordinates - the Milky
-//! Way runs as a horizontal band through the image center, the galactic bulge
-//! near mid-image. The equirectangular lookup in `fs_stars` is equatorial
-//! (its pole = the celestial pole), so the texture must be re-oriented by the
-//! fixed galactic->equatorial rotation before sampling. `GALACTIC_OFFSET`
-//! carries that constant; it is folded into `star_tex_rot_inv` only (the
-//! shader-facing matrix), leaving `star_rot_inv` as the equatorial frame the
-//! inertial camera rig is built from.
+//! Star-map note: the embedded star texture is drawn in *galactic*
+//! coordinates, but `fs_stars` does an equatorial equirectangular lookup, so
+//! the fixed galactic->equatorial rotation is folded into the shader-facing
+//! `star_tex_rot_inv` only, leaving `star_rot_inv` as the equatorial frame
+//! the inertial camera rig is built from.
 
 use glam::{DMat3, DVec3};
 use satkit::frametransform::{IersTableId, init_iers_table_from_bytes, qgcrf2itrf, qitrf2gcrf};
@@ -42,58 +29,40 @@ use crate::engine::planet::{self, Rotation};
 use crate::engine::scene::body::{BodyState, CelestialBody, Placement};
 
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
-/// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s straight
-/// out of these bytes with an unaligned-unsafe `copy_nonoverlapping`. In debug
-/// builds the `ub_checks` precondition aborts when the source is not 8-aligned,
-/// and where the linker places an `include_bytes!` static is not controllable
-/// (any code change can shift it from coincidentally aligned to not). The JPL
-/// record layout is `f64`-aligned from the file start, so an 8-aligned base
-/// makes every read aligned. Release builds skip the check, but the read is
-/// still UB if misaligned - so align it for both.
+/// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s with
+/// an unaligned-unsafe `copy_nonoverlapping` (debug `ub_checks` abort; still
+/// UB in release, and linker placement is not controllable). The JPL record
+/// layout is f64-aligned from file start, so an 8-aligned base makes every
+/// read aligned.
 #[repr(C, align(8))]
 struct Align8<T: ?Sized>(T);
 
-/// The JPL DE440 ephemeris, embedded in the binary (8-aligned, see [`Align8`]).
-/// build.rs downloads it straight into `OUT_DIR` so this `include_bytes!` can
-/// pick it up - no runtime data file.
+/// The JPL DE440 ephemeris, embedded (8-aligned, see [`Align8`]).
 static EPHEMERIS_ALIGNED: &Align8<[u8]> = &Align8(*include_bytes!(concat!(
     env!("OUT_DIR"),
     "/linux_p1550p2650.440"
 )));
 const EPHEMERIS: &[u8] = &EPHEMERIS_ALIGNED.0;
 
-/// CelesTrak's Earth-orientation parameters (`EOP-All.csv`), embedded the same
-/// way as the ephemeris (build.rs downloads it straight into `OUT_DIR`).
-/// Provides polar motion + UT1-UTC for accurate ITRF<->GCRF/TEME
-/// transforms. Measured data starts 1962-01-01; the file also carries a few
-/// months of predictions past the build date. Since this is a past-only
-/// simulation tool, the snapshot stays valid for every in-range date.
+/// CelesTrak `EOP-All.csv` (polar motion + UT1-UTC). Measured data starts
+/// 1962-01-01 plus a few months of predictions past the build date - valid
+/// for every in-range date of this past-only tool.
 const EOP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EOP-All.csv"));
 
-/// The IERS Conventions 2010 nutation/CIO series, embedded the same way as the
-/// ephemeris and EOP (build.rs downloads them straight into `OUT_DIR`). The
-/// full (non-approx) GCRF<->ITRF transforms read these for the CIP X/Y
-/// coordinates (`TAB5A`/`TAB5B`) and the CIO locator s (`TAB5D`); the approx
-/// transforms did not need them. Seeded in `init_satkit`.
+/// IERS Conventions 2010 series: CIP X/Y (`TAB5A`/`TAB5B`) and the CIO
+/// locator s (`TAB5D`), read by the full GCRF<->ITRF transforms.
 const TAB5A: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2a.txt"));
 const TAB5B: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2b.txt"));
 const TAB5D: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2d.txt"));
 
-/// The ICGEM EGM96 gravity coefficients, embedded the same way. The numerical
-/// orbit propagator (`satkit::orbitprop`, behind the predicted satellite path)
-/// evaluates the EGM96 spherical harmonics on every force call. Seeded in
-/// `init_satkit`.
+/// ICGEM EGM96 gravity coefficients, for the numerical orbit propagator.
 const EGM96: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EGM96.gfc"));
 
-/// Standard J2000 equatorial(ICRS)->galactic rotation `g = R * e`, in standard
-/// (non-permuted) axes, from the IAU galactic-pole definition: north galactic
-/// pole at RA 192.85948 deg / Dec +27.12825 deg, galactic center (l=0, b=0) at
-/// RA 266.40500 deg / Dec -28.93617 deg, longitude of the north celestial pole
-/// l = 122.93192 deg. `R^T` is the galactic->equatorial inverse. Used to
-/// re-orient the galactic-drawn star texture into the shader's equatorial
-/// equirectangular lookup (see the module's star-map frame note). glam stores
-/// matrices column-major, so this lists the *columns* (images of the standard
-/// basis), i.e. the transpose of how the matrix is usually printed by row.
+/// Standard J2000 equatorial(ICRS)->galactic rotation `g = R * e`, standard
+/// axes, from the IAU galactic-pole definition: NGP at RA 192.85948 / Dec
+/// +27.12825 deg, galactic center at RA 266.40500 / Dec -28.93617 deg, node
+/// longitude l = 122.93192 deg. `R^T` is the inverse. glam is column-major,
+/// so this lists the *columns* (transpose of the usual row-printed form).
 const R_EQU2GAL: DMat3 = DMat3::from_cols_array(&[
     -0.0548755604,
     0.4941094279,
@@ -106,47 +75,15 @@ const R_EQU2GAL: DMat3 = DMat3::from_cols_array(&[
     0.4559837762,
 ]);
 
-/// Initializes satkit's global state for fully offline, data-dir-free use.
-/// Must be called once at startup, before any ephemeris/frame-transform use.
-///
-/// Four kinds of satkit global state are seeded here, all from embedded bytes:
-///
-/// 1. The JPL ephemeris singleton (`EPHEMERIS`). satkit lazily loads it from
-///    disk on the first position query otherwise, after which this would fail
-///    with `AlreadyInitialized`.
-///
-/// 2. The Earth-orientation-parameter (EOP) table (`EOP`). Seeding it here is
-///    needed for two reasons. (a) *Accuracy*: real EOP (polar motion, UT1-UTC)
-///    is what lets the ITRF<->GCRF/TEME transforms reach sub-arcsec - the
-///    satellite path (`qteme2itrf`) consumes polar motion + UT1-UTC directly,
-///    and `gmst`'s UT1 conversion picks up UT1-UTC everywhere. (b) *No stray
-///    dir*: every frame transform reads satkit's global EOP table on first use,
-///    and satkit's default loader *resolves a data directory and creates an
-///    empty `satkit-data` dir next to the binary* as a side effect. Seeding the
-///    table up front consumes satkit's one-shot lazy load, so that dir is never
-///    created. `disable_eop_time_warning()` silences the once-per-run stderr
-///    warning satkit prints for lookups outside the table's date range (e.g. a
-///    pre-1962 time), which then fall back to zeros.
-///
-/// 3. The IERS 2010 nutation/CIO tables (`TAB5A`/`TAB5B`/`TAB5D`). The full
-///    GCRF<->ITRF transforms the celestial sphere uses read these for the CIP
-///    X/Y series and the CIO locator s. They have the *same* stray-dir failure
-///    mode as the EOP table: satkit's lazy resolver would `from_file(..)` each
-///    one, recreating `satkit-data` (and panicking if absent). Seeding them up
-///    front consumes that one-shot load, and must happen before the first
-///    transform - which it does, since this runs at the top of each scene.
-///
-/// 4. The EGM96 gravity-model singleton (`EGM96`). The numerical orbit
-///    propagator (`satkit::orbitprop`, the `Propagation::Numerical` arm of the
-///    predicted satellite path) resolves the model via
-///    `settings.gravity_model.get()` on every propagation, and satkit's lazy
-///    default loader has the same stray-dir failure mode as the ephemeris:
-///    `Gravity::from_file(..)` out of `satkit-data` (creating the dir,
-///    panicking if the file is absent), after which a seed here would fail with
-///    `AlreadyInitialized`. Seeded unconditionally - whether a scene contains
-///    numerically-propagated satellites is not knowable at init.
-///
-/// Panics if any embedded blob fails to parse (a broken build).
+/// Seeds ALL FOUR satkit global stores from embedded bytes: DE440 ephemeris,
+/// EOP table (+ out-of-range warning disabled; such lookups fall back to
+/// zeros), the three IERS-2010 tables, and the EGM96 gravity model. Every
+/// seed is load-bearing: it feeds the full transforms real data AND consumes
+/// satkit's one-shot lazy loaders, which would otherwise create a stray
+/// `satkit-data` dir (after which a seed fails `AlreadyInitialized`). EGM96
+/// is seeded unconditionally - whether a scene numerically propagates is
+/// unknowable at init. Do not drop any seed. Panics on parse failure (a
+/// broken build).
 pub fn init_satkit() {
     satkit::jplephem::init_from_bytes(EPHEMERIS).expect("init JPL ephemeris from embedded bytes");
 
@@ -161,12 +98,10 @@ pub fn init_satkit() {
         .expect("init EGM96 gravity from embedded bytes");
 }
 
-/// Test-only idempotent twin of [`init_satkit`]: the ephemeris seed is a
-/// set-once (`AlreadyInitialized` on a second call), and the test binary runs
-/// every `#[test]` in one process, so any two tests that both need satkit
-/// globals must share one guarded seeding. Production keeps the bare
-/// [`init_satkit`] (one scene per process; a double init there is a bug
-/// worth the panic).
+/// Test-only idempotent twin of [`init_satkit`]: the seeds are set-once per
+/// process and the test binary runs every `#[test]` in one process, so all
+/// satkit-needing tests must share this guard. Production keeps the bare
+/// panic-on-double init.
 #[cfg(test)]
 pub(crate) fn init_satkit_for_tests() {
     use std::sync::Once;
@@ -174,46 +109,30 @@ pub(crate) fn init_satkit_for_tests() {
     ONCE.call_once(init_satkit);
 }
 
-/// Sol direction and star-map orientation for one instant, in the renderer's
-/// world frame.
+/// Per-instant body placements, Sol position, and star-map orientation, in
+/// the renderer's world frame.
 pub struct CelestialSphere {
-    /// Sol position in the world frame, km. The frame is now HELIOCENTRIC (Sol
-    /// at the origin, Earth-fixed axes), so this is exactly `DVec3::ZERO`. It
-    /// is kept as a field because the renderer uploads it (shifted into the
-    /// render frame) as `sol_pos` via `sol_pos - render_origin` and every
-    /// lit pass derives its Sol direction from that - `normalize(sol_pos -
-    /// surface)` for surfaces, `normalize(sol_pos)` for the backdrop disc -
-    /// so a far planet is lit by the Sol direction *at the planet*, which
-    /// differs from Terra's. For a Terra-relative Sol direction, subtract
-    /// Terra's center: `sol_pos_world - center_world(TERRA)`. f64 to match
-    /// the body positions (heliocentric magnitudes overflow f32; see
-    /// [`crate::engine::scene::body::Placement::pos_world`]).
+    /// Sol position in the world frame, km - exactly `DVec3::ZERO` in the
+    /// heliocentric frame. Kept as a field because the renderer uploads
+    /// `sol_pos - render_origin` and lights every pass from Sol *position*
+    /// (a far planet's Sol direction differs from Terra's). For a
+    /// Terra-relative Sol direction, subtract `center_world(TERRA)`. f64 to
+    /// match the body positions.
     pub sol_pos_world: DVec3,
-    /// Rotation taking world (ECEF) view directions into the *equatorial*
-    /// celestial (GCRF) frame. This is the inertial frame the camera rig is
-    /// built from (`celestial_to_world` = its transpose) - NOT the matrix the
-    /// shader samples the star texture with (that is `star_tex_rot_inv`).
-    /// f64, like every derived quantity here; consumers cast down only at
-    /// the GPU boundary.
+    /// World (ECEF) view dirs -> the *equatorial* celestial (GCRF) frame:
+    /// the inertial frame the camera rig is built from - NOT the shader's
+    /// star-texture matrix (that is `star_tex_rot_inv`). f64; cast down only
+    /// at the GPU boundary.
     pub star_rot_inv: DMat3,
-    /// Rotation taking world (ECEF) view directions into the star *texture's*
-    /// galactic frame: `GALACTIC_OFFSET * star_rot_inv`. Uploaded to the shader
-    /// as `star_rot_inv` (the equirectangular lookup matrix; cast to f32 at
-    /// upload). Kept separate from the camera-rig frame above so the static
-    /// galactic->equatorial re-orientation does not move existing scenes'
-    /// camera framing.
+    /// World view dirs -> the star *texture's* galactic frame
+    /// (`GALACTIC_OFFSET * star_rot_inv`), the shader's equirectangular
+    /// lookup matrix. Separate from the camera-rig frame so the static
+    /// galactic re-orientation does not move existing camera framing.
     pub star_tex_rot_inv: DMat3,
-    /// Every renderable body's world-frame placement this frame, as a flat list
-    /// (identity + center + orientation), all HELIOCENTRIC (Sol at the origin,
-    /// Earth-fixed axes): **Terra** (at `-sol_geo`, identity orientation - its
-    /// body frame *is* the Earth-fixed axes), **Luna** (true scale/distance
-    /// ~384,400 km from Terra, IAU lunar orientation), then the **seven
-    /// planets** in `planet::ALL` order (true DE440 positions + IAU
-    /// orientation). Luna's
-    /// placement also drives the analytic eclipse shadows; its radius comes
-    /// from the identity (`mean_radius_km`), not stored here. A
-    /// scene takes the subset it draws - the Terra system
-    /// (Terra + Luna), or all of them.
+    /// Every renderable body's placement this frame, all HELIOCENTRIC in
+    /// Earth-fixed axes: Terra (at `-sol_geo`, identity orientation - its
+    /// body frame IS the Earth-fixed axes), Luna (true scale/distance, IAU
+    /// lunar orientation), then the seven planets in `planet::ALL` order.
     pub bodies: Vec<BodyState>,
 }
 
@@ -223,17 +142,14 @@ impl CelestialSphere {
         self.bodies.iter().find(|state| state.body == body)
     }
 
-    /// Luna's placement this frame (always present). Convenience for the
-    /// eclipse scenes and the rotation test.
+    /// Luna's placement this frame (always present).
     pub fn luna(&self) -> &BodyState {
         self.body(CelestialBody::LUNA)
             .expect("Luna present in the celestial sphere")
     }
 
-    /// The world-frame center (km) of one body this frame. Heliocentric, so
-    /// Terra sits at `-sol_geo` (not the origin). f64, like the underlying
-    /// placement. Used by the scenes' camera retargeting and by
-    /// `render_origin`.
+    /// One body's world-frame center (km), heliocentric (Terra at
+    /// `-sol_geo`, not the origin). f64, like the placement.
     pub fn center_world(&self, body: CelestialBody) -> DVec3 {
         self.body(body)
             .map(|state| state.placement.pos_world)
@@ -252,23 +168,17 @@ impl CelestialSphere {
             DVec3::new(0.0, 1.0, 0.0),
         );
 
-        // Sol position relative to Terra in GCRF (inertial), meters; rotate to
-        // ITRF (Earth-fixed) and permute into the world frame. This geocentric
-        // Sol position is the HELIOCENTRIC ORIGIN: every body's `pos_world`
-        // below is expressed relative to Sol by subtracting `sol_geo` (so Sol
-        // itself lands at the origin and `sol_pos_world` is ZERO), while the
-        // axes stay Earth-fixed. The subtraction is a pure origin translation -
-        // orientations and the render output are unaffected because the
-        // renderer/camera consume every position as `X - render_origin`, and
-        // `render_origin` tracks Terra's (now heliocentric) center.
+        // Geocentric Sol: GCRF (m) -> ITRF -> world km. `sol_geo` is the
+        // heliocentric origin: every body's `pos_world` below subtracts it -
+        // a pure origin translation (axes stay Earth-fixed), so orientations
+        // and the render output are unaffected.
         let sol_gcrf = geocentric_pos(SolarSystem::Sun, time).expect("sol ephemeris lookup");
         let sol_itrf = qgcrf2itrf(time) * sol_gcrf;
         let sol_geo = p * (nvec(sol_itrf) / 1000.0);
 
-        // Star map: a world(ECEF) view dir -> standard ECEF -> GCRF -> permuted
-        // back to Y-up, so the equirectangular lookup's pole tracks the
-        // celestial pole. As time advances this rotates the star map at the
-        // sidereal rate, consistent with Sol's motion above.
+        // Star map: world(ECEF) view dir -> standard ECEF -> GCRF ->
+        // permuted back to Y-up, so the equirectangular pole tracks the
+        // celestial pole; rotates at the sidereal rate, consistent with Sol.
         let q = qitrf2gcrf(time);
         let r_itrf2gcrf = DMat3::from_cols(
             nvec(q * unit(1.0, 0.0, 0.0)),
@@ -277,27 +187,23 @@ impl CelestialSphere {
         );
         let star_rot_inv = p * r_itrf2gcrf * p.transpose();
 
-        // The star texture is drawn in galactic coordinates, but `fs_stars`
-        // does an equatorial equirectangular lookup. Re-express the equatorial
-        // direction in the texture's galactic frame: bring R_EQU2GAL into the
-        // permuted world axes (P R P^T) and compose with the equatorial
-        // orientation. Constant in time, so the camera stays inertial.
+        // Bring R_EQU2GAL into the permuted world axes (P R P^T) and compose
+        // with the equatorial orientation. Constant in time, so the camera
+        // stays inertial.
         let galactic_offset = p * R_EQU2GAL * p.transpose();
         let star_tex_rot_inv = galactic_offset * star_rot_inv;
 
-        // Luna: position from the same DE440 ephemeris as Sol (GCRF,
-        // inertial, meters), rotated into the Earth-fixed world frame. Rendered
-        // at true scale, so it sits ~384,400 km out and shows its real angular
-        // size.
+        // Luna: DE440 GCRF position (m) rotated into the Earth-fixed world
+        // frame; rendered at true scale/distance (~384,400 km).
         let q_gcrf2itrf = qgcrf2itrf(time);
         let luna_gcrf = geocentric_pos(SolarSystem::Moon, time).expect("luna ephemeris lookup");
         let luna_pos_geo = p * (nvec(q_gcrf2itrf * luna_gcrf) / 1000.0);
 
-        // Luna's body frame uses the project body convention (+Y north,
-        // +Z sub-Terra); compose its body->world rotation as
-        // P * R_gcrf2itrf * M_body2gcrf * P^T, where M_body2gcrf (standard
-        // Z=pole convention) is the IAU lunar rotation and the P^T un-permutes
-        // the project-convention axes into the standard ones M expects.
+        // Luna's body frame uses the project convention (+Y north, +Z
+        // sub-Terra): body->world = P * R_gcrf2itrf * M_body2gcrf * P^T,
+        // where M (standard Z=pole) is the IAU lunar rotation and P^T
+        // un-permutes the project-convention axes into the standard frame M
+        // expects.
         let r_gcrf2itrf = DMat3::from_cols(
             nvec(q_gcrf2itrf * unit(1.0, 0.0, 0.0)),
             nvec(q_gcrf2itrf * unit(0.0, 1.0, 0.0)),
@@ -305,15 +211,11 @@ impl CelestialSphere {
         );
         let luna_rot = p * r_gcrf2itrf * lunar_body_to_gcrf(time) * p.transpose();
 
-        // The render list, in a fixed order: Terra, then Luna, then the seven
-        // planets. Positions are HELIOCENTRIC (relative to Sol, i.e. minus
-        // `sol_geo`) in Earth-fixed axes, so Terra - the world origin - sits at
-        // `-sol_geo`, not at zero. Everything stays f64 end to end (the
-        // ephemeris is f64 meters): the heliocentric shift is a pure f64
-        // subtraction, so the renderer recovers the geocentric-scale offset
-        // exactly (`pos_world - render_origin` cancels the ~1.5e8 km Sol
-        // offset with no f32 cancellation). Orientations (rot) are
-        // frame-invariant and unchanged.
+        // Render list, fixed order: Terra, Luna, then the seven planets.
+        // Positions heliocentric (- sol_geo) in Earth-fixed axes, f64 end to
+        // end: the shift is a pure f64 subtraction, so downstream
+        // `pos_world - render_origin` cancels the ~1.5e8 km Sol offset with
+        // no f32 cancellation.
         let mut bodies = Vec::with_capacity(2 + planet::ALL.len());
         bodies.push(BodyState {
             body: CelestialBody::TERRA,
@@ -330,12 +232,9 @@ impl CelestialSphere {
             },
         });
 
-        // The planets: true geocentric position from the same DE440 ephemeris
-        // (then shifted to heliocentric by `- sol_geo`, like Terra/Luna above),
-        // and a body->world rotation built like Luna's but from the IAU
-        // planet rotation (axial tilt + spin, no libration series). Same `P^T`
-        // un-permute of the mesh's project-convention axes into the standard
-        // (Z=pole) frame the IAU elements are defined in.
+        // Planets: DE440 position (shifted heliocentric like Terra/Luna) +
+        // body->world rotation built like Luna's but from the IAU planet
+        // elements (no libration series); same P^T un-permute.
         for &planet in &planet::ALL {
             let body_gcrf =
                 geocentric_pos(planet_body(planet), time).expect("planet ephemeris lookup");
@@ -358,10 +257,8 @@ impl CelestialSphere {
     }
 }
 
-/// The satkit ephemeris body for one of our planets. Kept here (not in
-/// `planet`) so that module stays free of any satkit dependency, exactly like
-/// `terra`. Called only on the planet variants (from the `planet::ALL`
-/// loop); the Terra/Luna are positioned separately.
+/// The satkit ephemeris body for a planet variant. Lives here (not in
+/// `planet`) so that module stays satkit-free.
 fn planet_body(planet: CelestialBody) -> SolarSystem {
     match planet {
         CelestialBody::Mercury => SolarSystem::Mercury,
@@ -377,21 +274,16 @@ fn planet_body(planet: CelestialBody) -> SolarSystem {
     }
 }
 
-/// Rotation from Luna's body-fixed (mean-Terra/polar-axis, standard Z=pole)
-/// frame to GCRF, from the IAU lunar rotation model.
+/// Luna body-fixed (mean-Terra/polar-axis, standard Z=pole) -> GCRF, from
+/// the IAU/IAG WG lunar rotation model (2009 report, Archinal et al. 2011,
+/// Tables 2 and 3): pole `alpha0`/`delta0` and prime-meridian angle `W`,
+/// each a polynomial in time plus physical-libration series in the 13 lunar
+/// arguments `E1..E13` - the true near-side orientation with libration, not
+/// a fixed tidal-lock approximation.
 ///
-/// Implements the lunar rotational elements of the IAU/IAG Working Group on
-/// Cartographic Coordinates and Rotational Elements (2009 report, Archinal et
-/// al. 2011, Tables 2 and 3): the pole right ascension `alpha0` / declination
-/// `delta0` and the prime-meridian angle `W`, each a polynomial in time plus
-/// physical-libration series in the 13 lunar arguments `E1..E13`. The series
-/// resolve the near side's true orientation (and its libration) rather than a
-/// fixed tidal-lock approximation.
-///
-/// The IAU formulas take `d` = days and `T` = Julian centuries of *Barycentric
-/// Dynamical Time* since J2000; TT is used here (the TT-TDB difference is below
-/// a millisecond, far under the model's relevance), and the TT-UTC offset
-/// matters at the ~0.01 deg level in `W` - itself well below a rendered pixel.
+/// The IAU formulas take `d` days / `T` centuries of TDB since J2000; TT is
+/// used here (TT-TDB < 1 ms, far under the model's relevance; the TT-UTC
+/// offset matters ~0.01 deg in `W` - well below a rendered pixel).
 fn lunar_body_to_gcrf(time: &Instant) -> DMat3 {
     // Days and centuries of TT since the J2000 epoch (JD 2451545.0 TT).
     let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
@@ -449,12 +341,11 @@ fn lunar_body_to_gcrf(time: &Instant) -> DMat3 {
     body_basis(alpha0.to_radians(), delta0.to_radians(), w.to_radians())
 }
 
-/// Rotation from a planet's body-fixed (Z=pole) frame to GCRF, from its IAU
-/// rotational elements (`crate::engine::planet::Rotation`). The planet twin of
-/// [`lunar_body_to_gcrf`] without the libration series: the pole `alpha0` /
-/// `delta0` carry a linear rate in Julian centuries `T`, and the prime meridian
-/// `W` advances at the (possibly retrograde) sidereal spin rate in days `d`.
-/// Both `T` and `d` are TT since J2000, matching the lunar model.
+/// Planet body-fixed (Z=pole) -> GCRF from its IAU rotational elements
+/// (`planet::Rotation`): the lunar model minus the libration series - linear
+/// pole rates in centuries `T`, prime meridian at the (possibly retrograde)
+/// sidereal spin rate in days `d`. Both TT since J2000, matching the lunar
+/// model.
 fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> DMat3 {
     let d = time.as_jd_with_scale(TimeScale::TT) - 2_451_545.0;
     let t = d / 36_525.0;
@@ -466,12 +357,11 @@ fn iau_body_to_gcrf(rot: Rotation, time: &Instant) -> DMat3 {
     body_basis(alpha0, delta0, w)
 }
 
-/// Builds a body->GCRF rotation from the standard IAU pole + prime-meridian
-/// angles (radians): the pole z at (alpha0, delta0); the ascending node Q of
-/// the body equator on the ICRF equator at RA = alpha0 + 90 deg; the prime
-/// meridian x = Q rotated east by W about z; y completes the right-handed triad
-/// (90 deg east). Shared by Luna (libration folded into the angles) and the
-/// planets. Columns are the GCRF images of the body x/y/z axes.
+/// Body->GCRF rotation from the standard IAU angles (radians): pole z at
+/// (alpha0, delta0); ascending node Q of the body equator on the ICRF
+/// equator at RA = alpha0 + 90 deg; prime meridian x = Q rotated east by W
+/// about z; y completes the right-handed triad. Columns are the GCRF images
+/// of the body axes.
 fn body_basis(alpha0: f64, delta0: f64, w: f64) -> DMat3 {
     let (sa, ca) = alpha0.sin_cos();
     let (sd, cd) = delta0.sin_cos();
@@ -484,7 +374,7 @@ fn body_basis(alpha0: f64, delta0: f64, w: f64) -> DMat3 {
     DMat3::from_cols(x, y, z)
 }
 
-/// satkit column vector -> glam DVec3 (both are f64; no precision is lost).
+/// satkit column vector -> glam DVec3 (both f64; no precision lost).
 fn nvec(v: Vector3) -> DVec3 {
     DVec3::new(v[(0, 0)], v[(1, 0)], v[(2, 0)])
 }
@@ -499,10 +389,8 @@ mod tests {
     use super::*;
 
     /// `R_EQU2GAL` must agree with the IAU galactic-pole definition: its
-    /// inverse (galactic->equatorial) maps the galactic center (1,0,0) and
-    /// the north galactic pole (0,0,1) back to their catalogued equatorial
-    /// RA/Dec. This validates the embedded matrix independently of any
-    /// render or time.
+    /// inverse maps the galactic center (1,0,0) and the NGP (0,0,1) back to
+    /// their catalogued equatorial RA/Dec, independent of any render or time.
     // The full catalogued digits are kept verbatim for provenance, same as
     // `R_EQU2GAL` above (the trailing zero of 266.40500 trips the lint).
     #[allow(clippy::excessive_precision)]
@@ -532,7 +420,7 @@ mod tests {
 
     /// In the permuted texture frame the galactic center must land at the
     /// equirectangular center (+Z, `u=0.5`) and the NGP at the pole (+Y,
-    /// `v=0`) - the convention `fs_stars` assumes. Checks the `P R P^T` bring.
+    /// `v=0`) - the convention `fs_stars` assumes. Checks the `P R P^T`.
     #[test]
     fn texture_frame_places_galactic_center_and_pole() {
         let p = DMat3::from_cols(
@@ -555,17 +443,14 @@ mod tests {
     }
 
     /// The IAU lunar rotation must keep Luna's near side facing Terra: the
-    /// mean sub-Terra point (selenographic lat 0 / lon 0, which is +Z in the
-    /// project body convention) should point from Luna back toward Terra,
-    /// i.e. opposite the Terra->Luna direction. The residual is the optical
-    /// libration (up to ~8 deg), so a 10 deg tolerance both confirms the near
-    /// side faces Terra and that libration is present (not a rigid lock).
-    /// Validates the rotation model independent of any render.
+    /// mean sub-Terra point (+Z in the project body convention) points back
+    /// toward Terra. The residual is the optical libration (up to ~8 deg),
+    /// so a 10 deg tolerance confirms both the near side and that libration
+    /// is present (not a rigid lock).
     #[test]
     fn luna_near_side_faces_terra() {
-        // The celestial sphere reads satkit globals (ephemeris + EOP + IERS),
-        // so seed them once for this test (shared guard: the satellite tests
-        // seed the same process-wide globals).
+        // Satkit globals are read here; seed once via the shared test guard
+        // (the satellite tests seed the same process-wide globals).
         super::init_satkit_for_tests();
 
         let time = Instant::from_datetime(2024, 6, 15, 0, 0, 0.0).expect("valid datetime");
@@ -574,8 +459,8 @@ mod tests {
         // Outward normal at the sub-Terra point in world space.
         let luna = sphere.luna().placement;
         let sub_terra = luna.rot * DVec3::Z;
-        // Direction from Luna back toward Terra. The frame is heliocentric, so
-        // Terra is at `center_world(TERRA)` (not the origin), not zero.
+        // Direction from Luna back toward Terra. Heliocentric frame, so
+        // Terra is at `center_world(TERRA)`, not zero.
         let terra = sphere.center_world(CelestialBody::TERRA);
         let toward_terra = (terra - luna.pos_world).normalize();
 

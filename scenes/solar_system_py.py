@@ -1,13 +1,6 @@
-# UI-panel producer for the `solar_system_py` scene - the Python twin of the
-# panel builder in `src/scenes/solar_system.rs` (kept side by side so the two
-# APIs can be compared). Passed to the scene as its required CLI script path
-# (`scene solar_system_py scenes/solar_system_py.py`), loaded at startup and
-# re-read on every launch: edit this file and relaunch, no rebuild.
-#
-# Contract: define `get_drawables(scene) -> list[Panel]`. It runs every
-# frame with the live scene object (`globe.SolarSystemScene`); panel
-# callbacks fire later in the same frame, when egui's hit test triggers
-# them - never call them yourself from here.
+# UI-panel producer for the `solar_system_py` scene (its required --script
+# path; edit + relaunch, no rebuild). Contract: get_drawables(scene) ->
+# list[Panel], run every frame; panel callbacks fire later in the same frame.
 
 import math
 
@@ -25,29 +18,24 @@ from globe import (
 
 
 def time_panel(scene):
-    """The top-left Time panel: UTC + speed readouts, Run key, speed slider.
-    Identical to manual_control_py's - deliberately duplicated, like the
-    Rust scenes' per-scene Time panels, so each script can diverge.
-
-    The clock is driven through the scene's own properties (paused /
-    multiplier / datetime_label() - the Python face of the Rust SceneClock
-    API); only the MIN/MAX_MULTIPLIER slider bounds still come from the
-    Clock class."""
+    """Top-left Time panel: UTC + speed readouts, Run key, speed slider.
+    Deliberately duplicated from manual_control_py so each script can
+    diverge."""
 
     def toggle_run():
         scene.paused = not scene.paused
 
     def set_speed(exponent):
-        # Exponential (base e) speed: the slider edits the exponent, so
-        # multiplier = e^exp - real time at the left, 100x at the right.
+        # The slider edits the exponent (multiplier = e^exp): real time at
+        # the left, 100x at the right.
         scene.multiplier = math.exp(exponent)
 
     rows = [
         [Header("Time")],
         [Readout("UTC", scene.datetime_label())],
         [
-            # Padded to the widest value ("100.0" = 5 chars, monospace) so
-            # the digit window keeps its size as the speed changes.
+            # Padded to the widest value ("100.0", monospace) so the digit
+            # window keeps its size as the speed changes.
             Readout("Speed", "%5.1f" % scene.multiplier, "x"),
             InteractiveToggle(Toggle("Run", not scene.paused), toggle_run),
         ],
@@ -65,13 +53,9 @@ def time_panel(scene):
 
 
 def target_panel(scene):
-    """The top-right Camera Target panel: one latching key per body (the
-    orbited one lit), a single column ordered by distance from Sol.
-
-    The camera target is driven through the scene's own properties
-    (selected_body / body_names() / request_body(i) - the Python face of
-    the Rust sibling's direct camera-target write; the scene folds a
-    requested body into its camera target next frame)."""
+    """Top-right Camera Target panel: one latching key per body (the orbited
+    one lit); the scene folds a requested body into its camera target next
+    frame."""
     selected = scene.selected_body
     rows = [[Header("Camera Target")]]
     for i, name in enumerate(scene.body_names()):

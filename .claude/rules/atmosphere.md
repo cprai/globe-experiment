@@ -6,67 +6,51 @@ paths:
 
 # Atmosphere model — constants & sync rules
 
-## Constants that MUST stay in sync
+## Constants that MUST stay in sync (no compile/runtime check)
 
-**Atmosphere medium + geometry constants exist in THREE places:**
-1. `build.rs mod atmosphere` (LUT bake, CPU side)
-2. `shaders/scene.wgsl` (geometric twins + `MIE_G`)
-3. `src/engine/renderer/mod.rs` (`ATMOSPHERE_TOP_KM` only — sizes the
-   atmosphere quad's silhouette in `prepare`)
+Atmosphere medium + geometry constants exist in THREE places: `build.rs mod
+atmosphere` (LUT bake), `shaders/scene.wgsl` (geometric twins + `MIE_G`), and
+`renderer::ATMOSPHERE_TOP_KM` (sizes the atmosphere quad). The inscatter LUT
+parameterization (split row mapping, reference-point choice, Bruneton
+transmittance mapping) is independently implemented in both `build.rs` and
+`scene.wgsl`. Any mismatch silently corrupts the atmosphere — change one,
+change the others, and verify bake + shader stay bit-identical for neutral
+changes.
 
-Change one, change the others. A mismatch silently corrupts the atmosphere —
-there is no compile-time or runtime check.
+The LUT bake runs unconditionally (sub-second), so the CPU-side tables never
+go stale; the WGSL twins still need manual sync.
 
-**Inscatter LUT parameterization** (split row mapping, reference-point choice,
-Bruneton transmittance mapping) is independently implemented in both `build.rs`
-and `scene.wgsl`. A mismatch silently corrupts the atmosphere.
+## Medium constants (per-km coefficients, altitude h in km)
 
-**The LUT bake runs unconditionally** (sub-second), so the CPU-side tables
-can never go stale after a constants tweak. The WGSL twins still need manual
-sync.
-
-## Medium constants (build.rs mod atmosphere — per-km coefficients)
-
-At altitude h (km):
 - **Rayleigh**: sigma_s_R(h) = (5.802, 13.558, 33.1)e-3 * exp(-h/8)
   (scattering = extinction; no absorption)
-- **Mie**: sigma_s_M(h) = 3.996e-3 * exp(-h/1.2),
-  extinction 4.40e-3 * exp(-h/1.2), phase asymmetry g = 0.8
+- **Mie**: sigma_s_M(h) = 3.996e-3 * exp(-h/1.2), extinction 4.40e-3 *
+  exp(-h/1.2), phase asymmetry g = 0.8
 - **Ozone**: absorption (0.650, 1.881, 0.085)e-3 * max(0, 1 - |h-25|/15)
-  (tent peak 25 km, +/- 15 km)
-- **Geometry**: PLANET_RADIUS_KM 6360, ATMOSPHERE_TOP_KM 6460
+- **Geometry**: PLANET_RADIUS_KM 6360, ATMOSPHERE_TOP_KM 6460 (a sphere, not
+  the WGS84 ellipsoid — the parameterization requires spherical symmetry)
 
 ## LUT parameterization
 
-### Transmittance LUT (256x64)
-
-Bruneton (r, mu) parameterization — resolution concentrates near the horizon:
-- y axis: `x_r = sqrt(r^2 - Rp^2) / H_top` where `H_top = sqrt(Ra^2 - Rp^2)`
-- x axis: `x_mu = (d - d_min)/(d_max - d_min)`,
+**Transmittance (256x64)** — Bruneton (r, mu), resolution concentrated near
+the horizon:
+- y: `x_r = sqrt(r^2 - Rp^2) / H_top`, `H_top = sqrt(Ra^2 - Rp^2)`
+- x: `x_mu = (d - d_min)/(d_max - d_min)`,
   `d = -r*mu + sqrt(r^2*(mu^2-1) + Ra^2)`, `d_min = Ra - r`,
   `d_max = rho + H_top`
-- Returns 0 when mu is below the geometric horizon cosine (planet shadow).
-- `fs_planet`'s ATMO_LIT path uses `T(Rp + 0.1, cos_sol)` as the color of
-  sunlight at ground.
+- Returns 0 below the geometric horizon cosine. `fs_planet`'s ATMO_LIT path
+  uses `T(Rp + 0.1, cos_sol)` as the color of sunlight at ground.
 
-### Inscatter LUTs (2 x 256x128)
+**Inscatter (2 x 256x128)** — split row mapping over impact parameter b:
+- Lower half (ground-hitting, b < Rp): `v = 0.5 * clamp(b/Rp)`
+- Upper half (limb): `v = 0.5 + 0.5 * clamp((b-Rp)/(Ra-Rp))`
+- x: `u = mu_ref * 0.5 + 0.5`, mu_ref = Sol cosine at the reference point
+  (ground hit for ground rays, closest approach for limb rays).
+- Phase functions factor out (`dir·sun` is constant along a straight ray):
+  `L = Phi_R * Sigma_R + Phi_M * Sigma_M`; the LUT stores Sigma without
+  phase.
 
-Split row mapping (implemented identically in bake and fs_atmosphere; the
-pass is a CPU-sized screen quad whose fragment shader traces the spherical
-shell analytically from a per-pixel `inv_view_proj` eye ray — geometry-free):
-- Lower half (ground-hitting rays, b < Rp): `v = 0.5 * clamp(b/Rp)`
-- Upper half (limb rays): `v = 0.5 + 0.5 * clamp((b-Rp)/(Ra-Rp))`
-- x axis: `u = mu_ref * 0.5 + 0.5` where mu_ref = Sol cosine at reference
-  point (ground hit for ground rays, closest approach for limb rays).
-- Phase functions factor out: `L = Phi_R * Sigma_R + Phi_M * Sigma_M`;
-  LUT stores Sigma without phase.
+## f16 gotcha
 
-## Gotchas when modifying
-
-- Any change to medium constants, split mapping, reference-point choice, or
-  Bruneton mapping must be made in **both** `build.rs mod atmosphere` and
-  `scene.wgsl`.
-- f16 max is 65504, min normal ~6e-5. Keep large scale factors (e.g.
-  `SOL_INTENSITY`) **in the shader, not the bake**.
-- After any atmosphere change, re-run and verify **both** bake and shader
-  produce bit-identical output for neutral changes.
+f16 max is 65504, min normal ~6e-5. Keep large scale factors (e.g.
+`SOL_INTENSITY`) **in the shader, not the bake**.

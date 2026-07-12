@@ -1,24 +1,14 @@
-//! The headless `--scene` `ui` overlay: the panels deserialized straight from
-//! the scene JSON and run through the exact same
-//! [`crate::engine::ui::control_panel`] path as the live app, so a mock layout
-//! is faithful to real output.
-//!
-//! Because the interactive instruments split their callback into an
-//! `Interactive*` wrapper, the bare instrument structs are pure render data and
-//! derive `Deserialize` themselves - so this module is just a tagged enum over
-//! them ([`UiElement`]) plus a panel ([`UiPanel`]); there is no field-
-//! duplicating mirror type. The deserialized controls are inert (no callback),
-//! which is exactly a mock panel. Like the live model, a panel is `rows` of
-//! elements - taffy computes every position and the panel size, so the JSON
-//! carries no pixel coordinates.
+//! The headless `--scene` `ui` overlay: panels deserialized from the scene
+//! JSON and rendered through the same `control_panel` path as the live app,
+//! so a mock layout is faithful to real output. The bare instrument structs
+//! derive `Deserialize` themselves, so this is just a tagged enum over them -
+//! no field-duplicating mirror type, and every control is inert.
 
 use super::instruments::{Button, DualReadout, Header, Instrument, Lamp, Readout, Slider, Toggle};
 use super::{PanelAnchor, UIDrawable, UIDrawablePanel};
 
-/// One deserialized instrument, tagged by instrument name in snake_case, e.g.
-/// `{"readout": {"label": "ALT", "value": "417", "unit": "km"}}`. Each variant
-/// wraps the real (bare, callback-free) instrument struct, so the JSON shape is
-/// just that struct's fields - no separate mock type to keep in sync.
+/// One deserialized instrument, tagged by snake_case instrument name, e.g.
+/// `{"readout": {"label": "ALT", "value": "417", "unit": "km"}}`.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiElement {
@@ -32,10 +22,8 @@ pub enum UiElement {
 }
 
 impl UiElement {
-    /// Boxes a clone of the wrapped instrument as a trait object (bare
-    /// instruments impl `Instrument<S>` for every scene type, so any `S`
-    /// works). Cloned (not moved) because [`PanelSet::get_drawables`] runs
-    /// every frame off a shared borrow of the owned spec.
+    /// Boxes a clone of the wrapped instrument (cloned, not moved, because
+    /// [`PanelSet::get_drawables`] runs every frame off a shared borrow).
     fn to_instrument<S>(&self) -> Box<dyn Instrument<S>> {
         match self {
             UiElement::Header(header) => Box::new(header.clone()),
@@ -49,10 +37,9 @@ impl UiElement {
     }
 }
 
-/// One deserialized panel from the headless `--scene` `ui` JSON: a corner
-/// `anchor` and `rows` of elements (outer array = top-to-bottom rows, inner =
-/// left-to-right instruments). The owned, callback-free mirror of one
-/// [`UIDrawablePanel`].
+/// One deserialized panel: a corner `anchor` and `rows` of elements (outer =
+/// top-to-bottom rows, inner = left-to-right instruments; no pixel
+/// coordinates).
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UiPanel {
@@ -60,18 +47,12 @@ pub struct UiPanel {
     pub rows: Vec<Vec<UiElement>>,
 }
 
-/// The set of deserialized `ui` panels, rendered through the exact same
-/// [`crate::engine::ui::control_panel`] path as the live UI so a mock layout is
-/// faithful to real output. Every control is inert (no callback) - it renders
-/// but does nothing.
+/// The set of deserialized `ui` panels; every control is inert (no callback).
 pub struct PanelSet {
     pub panels: Vec<UiPanel>,
 }
 
 impl UIDrawable for PanelSet {
-    /// Maps each owned [`UiPanel`] to an owned [`UIDrawablePanel`] of inert
-    /// instruments - the same shape a live `get_drawables` returns, minus
-    /// interactivity.
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         self.panels
             .iter()

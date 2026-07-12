@@ -8,135 +8,69 @@ paths:
 
 ## World frame
 
-- **WGS84 ellipsoid at origin; world space in km; +Y = north pole; lon0/lat0
-  -> +Z; +X = 90 deg E.** This is ITRF/ECEF with axes permuted so north is
-  +Y. This is the **geocentric** world frame (Terra at the origin), used by the
-  WGS84 surface helpers and the satellite pipeline.
-- **The `CelestialSphere` uses the same axes but a HELIOCENTRIC origin** (Sol at
-  the origin; Terra sits at `-sol_geo`). Its body centers are **f64** (`DVec3`)
-  because the heliocentric magnitudes overflow f32 when the renderer recovers a
-  Terra-local offset. The two frames differ only by the translation
-  `center_world(TERRA)`; the renderer/camera subtract `render_origin` (Terra's
-  center for a Terra/Luna target) in f64. See `simulation.md` (Reference
-  frames).
-- **f64 everywhere; f32 only at the GPU/egui boundary.** All CPU-side
-  computation - the celestial sphere (positions AND rotations, `DMat3`), the
-  camera (`PtzCamera` rig + input, `DVec3`/`DQuat`), the satellite/orbit-path
-  pipeline, and the renderer's `prepare` math (view/projection in `DMat4`) -
-  runs in f64 end to end. Values are cast to f32 only when packed into a GPU
-  uniform/instance buffer or handed to egui (telemetry readouts, slider
-  values). Do not introduce intermediate f32 casts into computation paths.
-- Constants and helpers in `src/engine/planet.rs` (Terra is a row of the
-  shared per-body table; there is no terra module) — single source of truth;
-  the impostor renderer, the camera, and the satellite pipeline all call it.
+- **World space in km; +Y = north pole; lat0/lon0 -> +Z; +X = 90 deg E** —
+  ITRF/ECEF with axes permuted so north is +Y. The geocentric variant (Terra
+  at origin) hosts satellites, WGS84 helpers, and the Terra render frame; the
+  `CelestialSphere` uses the same axes with a **heliocentric** origin (Sol at
+  origin, Terra at `-sol_geo`). Full frames table in `simulation.md`.
+- **f64 everywhere; f32 only at the GPU/egui boundary.** Heliocentric
+  magnitudes (1.5e8 to billions of km) overflow f32 when subtracting the
+  render origin back to a local offset — an f32 subtraction cancels
+  catastrophically (Luna would shift ~16 km). Do not introduce intermediate
+  f32 casts into computation paths.
+- Body constants + surface helpers: `src/engine/planet.rs` (single source of
+  truth; Terra is a table row, no terra/luna modules).
 
 ## Axis permutation P (world <-> ECEF)
 
-`P(x,y,z) = (y,z,x)` — maps standard ECEF/GCRF (Z = pole) into the world
-frame (Y = north). As a `glam::Mat3` it is `from_cols((0,0,1),(1,0,0),(0,1,0))`.
-`P^T = P^(-1)` (it is a proper rotation).
-
-Why: for geodetic `(lat, lon)` the standard ECEF unit vector is
-`(cos_lat*cos_lon, cos_lat*sin_lon, sin_lat)`; applying P gives
-`(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` = `planet::geodetic_normal(TERRA, lat, lon)`.
-So P is consistent with every WGS84 helper and with every satkit result.
+`P(x,y,z) = (y,z,x)` maps standard ECEF/GCRF (Z = pole) into the world frame
+(Y = north). `P^T = P^(-1)` (a proper rotation). For geodetic `(lat, lon)`
+the standard ECEF unit vector `(cos_lat*cos_lon, cos_lat*sin_lon, sin_lat)`
+becomes `(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` =
+`geodetic_normal(lat, lon)` — so P is consistent with every WGS84 helper and
+every satkit result.
 
 ## Surface geometry
 
-- **Latitude convention is shape-driven** (`planet::surface_position` /
-  `geodetic_normal`): a spheroid of revolution (rx == rz — Terra and every
-  planet) treats latitude as **geodetic** (the WGS84 prime-vertical
-  formulation; for Terra this is bit-for-bit the old terra-module math, and
-  satellite geodetic coordinates land on the same ellipsoid), while the
-  triaxial body (Luna) uses parametric latitude. The geodetic normal at
-  `(lat, lon)` is `(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` — same
-  direction as a sphere — for spheroids; the ellipsoid gradient for Luna.
-- There is NO mesh anywhere: the impostor fragment shader ray-traces each
-  body's ellipsoid and derives the geodetic normal as the ellipsoid gradient
-  `normalize(p/radii)` in unit-sphere space (identical to the geodetic
-  definition for a spheroid).
-- The atmosphere is a SPHERE (radius `PLANET_RADIUS_KM 6360` /
-  `ATMOSPHERE_TOP_KM 6460`), traced analytically in `fs_atmosphere` — not the
-  WGS84 ellipsoid. Do not try to make the LUT model ellipsoidal. The geometric
-  constants must match across `build.rs mod atmosphere`, `shaders/scene.wgsl`,
-  and `renderer::ATMOSPHERE_TOP_KM` (the quad sizing twin).
+- **Latitude convention is shape-driven**: a spheroid of revolution (rx == rz
+  — Terra and every planet) uses **geodetic** latitude (WGS84 prime-vertical
+  formulation); the genuinely triaxial Luna uses parametric latitude.
+  `geodetic_normal` is the ellipsoid gradient `(x/rx^2, y/ry^2, z/rz^2)`.
+- There is NO mesh: the impostor shader ray-traces each ellipsoid and derives
+  the normal as the gradient `normalize(p/radii)` in unit-sphere space
+  (identical to the geodetic definition for a spheroid).
+- The atmosphere is a SPHERE (not the WGS84 ellipsoid) — the LUT model
+  assumes spherical symmetry; do not try to make it ellipsoidal.
 
-## Luna body frame
+## Body frames
 
-- Luna is an entry in the shared per-body table (`src/engine/planet.rs` -
-  there is no separate luna module): a **triaxial** ellipsoid
-  (semi-axes ~1737.4 / 1735.7 / 1734.5 km) in the **same body convention** as
-  Terra — +Y = north (rotation pole), selenographic lon0/lat0 (the mean
-  sub-Terra point) -> +Z, +X = 90 deg east. The shared `surface_position`
-  scales the
-  sphere direction per axis; `geodetic_normal` is the ellipsoid gradient
-  (`x/rx^2, y/ry^2, z/rz^2`), not radial.
-- Luna has NO mesh: it is drawn as a **shader impostor** like the planets -
-  `fs_planet` ray-traces this triaxial ellipsoid in the body frame and the
-  per-body uniform's `rot` (the lunar placement rotation: ephemeris Earth
-  orientation composed with the IAU lunar rotation; see `simulation.md`)
-  orients the traced point + normal into the world. The `P^T` inside that
-  rotation converts the body's
-  project-convention axes into the standard (Z=pole) frame the IAU model uses.
+Every body shares Terra's convention: +Y = north (rotation pole), prime
+meridian (Luna: mean sub-Terra point) -> +Z, +X = 90 deg east. Each placement
+rotation is `P * R_gcrf2itrf * M_body2gcrf * P^T` — the `P^T` un-permutes the
+project-convention body axes into the standard (Z=pole) frame the IAU models
+expect. Pure rotations; normals need no transpose.
 
-## Planet body frames
+## View & screen handedness (screen-aligned quads)
 
-- In the same `src/engine/planet.rs` table: each of the 7
-  planets is a **triaxial ellipsoid with equal +X/+Z axes** - its familiar
-  oblate spheroid (equatorial radius on +X/+Z,
-  polar radius on +Y), in the same triaxial formulation as Luna
-  (`radii_km() -> DVec3`) - in the **same body convention** — +Y = north (rotation
-  pole), prime meridian lon0/lat0 -> +Z, +X = 90 deg east. `surface_position`
-  scales the sphere direction per axis; `geodetic_normal` is the gradient
-  (`x/rx^2, y/ry^2, z/rz^2`), not radial. Planets are drawn as **shader
-  impostors** (no mesh): `fs_planet` ray-traces this same triaxial ellipsoid
-  (the uniform's `radii` vec3) and derives the geodetic normal + the
-  equirectangular UV analytically, matching the convention above.
-- Oriented into the world per frame by `planet_rot` = `P * R_gcrf2itrf *
-  iau_body_to_gcrf * P^T` (same `P^T` un-permute as Luna; see `simulation.md`);
-  the impostor applies it as `planet.rot` to the traced surface point + normal.
+Everything is right-handed; view space looks down -Z. With `forward =
+normalize(look_at - eye)`:
 
-## View & screen handedness (camera basis, screen-aligned quads)
-
-Everything is **right-handed**: the world frame above, glam's cross products,
-and the view space built by `Mat4::look_at_rh` (camera looks down **-Z** in
-view space). With `forward = normalize(look_at - eye)` and `up` the camera up:
-
-- **screen-right (world direction that maps to NDC +x) = `cross(forward, up)`**
-- **screen-up = `cross(right, forward)`**
-
-`cross(up, forward)` is the **negative** of screen-right — a left-handed basis
-that renders any screen-space-constructed image **horizontally mirrored**.
-This exact bug shipped in `fs_planet`'s orthographic branch (fixed 2026-07-06:
-every distant impostor body drew flipped, terminator on the wrong side, and
-the perspective<->orthographic switch visibly snapped). When building a basis
-that maps quad/screen offsets to world offsets, always use the order above.
-
-- **NDC**: +x right, +y up (wgpu), depth **reversed-Z** (near = 1, far = 0;
-  see `shader.md`).
-- The reversed-Z flip touches only rows 2/3 of `view_proj`, and
-  `perspective_rh` scales rows 0/1 by positive factors, so **row 0 xyz is a
-  positive multiple of the camera's world right, row 1 of its up**. This is
-  how a shader can recover the true camera basis with no extra uniform —
-  `fs_planet`'s orthographic branch takes row 0, re-orthogonalizes it against
-  the body's ray direction, and takes `up = cross(right, dir)`. Do not
-  substitute a world-Y-derived reference basis: it rolls the image whenever
-  the camera up is not north-aligned.
+- **screen-right = `cross(forward, up)`**, **screen-up = `cross(right,
+  forward)`**. `cross(up, forward)` is the NEGATIVE of screen-right — a
+  left-handed basis that renders any screen-constructed image horizontally
+  mirrored (this exact bug shipped in the orthographic impostor branch,
+  fixed 2026-07-06).
+- Reversed-Z touches only rows 2/3 of `view_proj`, and `perspective_rh`
+  scales rows 0/1 positively, so **row 0 xyz is a positive multiple of the
+  camera's world right, row 1 of its up** — how a shader recovers the camera
+  basis with no extra uniform. Do not substitute a world-Y-derived basis: it
+  rolls the image whenever the camera up is not north-aligned.
 
 ## Equirectangular UV mapping
 
-- Inverse-only (there is no meshed forward mapping anymore), computed **per
-  fragment**:
-  - `fs_planet`: `u = atan2(p1.x, p1.z)/(2*pi) + 0.5` from the ray-traced hit
-    point (exact for every body; no seam-interpolation smear), and `v =
-    acos(n_body.y)/pi` from the GEODETIC NORMAL's y — for a spheroid
-    `n_body.y = sin(geodetic lat)`, so the texture latitude is geodetic,
-    matching the CPU-side `surface_position` convention (longitude stays
-    position-derived: a normal-derived longitude would warp on the triaxial
-    Luna).
-  - `fs_stars`: `d = star_tex_rot_inv * view_dir` per fragment, `u/v` from `d`
-    as above but with `v = acos(d.y)/pi` (a direction, not an ellipsoid). The
-    texture is drawn in **galactic** coordinates, so `star_tex_rot_inv`
-    carries a static galactic->equatorial offset on top of the equatorial
-    orientation (see `simulation.md`).
-- Sampler repeats on U (dateline wrap), clamps on V (poles).
+Inverse-only, per fragment: `u = atan2(p.x, p.z)/(2*pi) + 0.5` from the
+ray-traced hit point (no seam smear), `v = acos(n_body.y)/pi` from the
+GEODETIC normal's y (so texture latitude is geodetic, matching
+`surface_position`; longitude stays position-derived — a normal-derived
+longitude would warp on triaxial Luna). Sampler repeats on U (dateline),
+clamps on V (poles).

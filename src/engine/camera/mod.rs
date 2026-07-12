@@ -1,36 +1,20 @@
-//! The camera layer: the [`CameraControl`] + [`CameraView`] trait pair every
-//! scene implements (alongside `Scene` + `UIDrawable`), the winit-free
-//! input vocabulary they speak, and the reusable [`PtzCamera`] pan/tilt/zoom
-//! implementation a scene embeds via [`ScenePtzCamera`] (three accessors;
-//! a blanket impl supplies the whole `CameraControl` surface) - or not: a
-//! future scene may fly a scripted, fixed, or chase camera by implementing
-//! the traits differently (a non-interactive camera implements only
-//! `CameraView` and leaves every `CameraControl` method at its no-op
-//! default).
-//!
-//! Winit-free on purpose: both bin trees build this module (the headless
-//! binary constructs a `PtzCamera` straight from its `--scene` JSON), and the
-//! input types are device-neutral, so a future gamepad or touch scheme is a
-//! new defaulted trait method plus an `application`-side translation, not a
-//! camera rewrite. The application keeps NO input state - it translates each
-//! winit event into one call here statelessly (cursor tracking lives in the
-//! camera).
+//! The [`CameraControl`] + [`CameraView`] trait pair, the winit-free input
+//! vocabulary, and the reusable [`PtzCamera`] (embedded via
+//! [`ScenePtzCamera`]). Winit-free on purpose: both bin trees build this
+//! module, and device-neutral input types keep a future gamepad/touch scheme
+//! a new defaulted method plus one `application` translation arm.
 
 mod ptz;
 
 pub use ptz::PtzCamera;
-// Named only by the main tree's scenes (the headless tree builds its
-// PtzCamera directly, with no input surface), so the headless build sees
-// this re-export unused; its crate-level allow covers dead code, not
-// imports.
+// Named only by the main tree's scenes; the crate-level allow on the
+// headless root covers dead code, not unused imports.
 #[allow(unused_imports)]
 pub use ptz::ScenePtzCamera;
 
 use crate::engine::scene::RenderState;
 
-/// Which pointer button an event names, device-neutral. The application's
-/// winit translation maps the left/right mouse buttons here and drops the
-/// rest, so a camera never sees a button it has no gesture for.
+/// Which pointer button an event names, device-neutral.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PointerButton {
     Left,
@@ -38,42 +22,32 @@ pub enum PointerButton {
 }
 
 /// One scroll event's magnitude. Both variants are load-bearing: discrete
-/// wheels (Windows/X11) deliver lines while precision trackpads (macOS)
-/// deliver pixels, and the zoom feel is tuned per variant - dropping either
-/// kills scroll-zoom on half the platform matrix.
+/// wheels (Windows/X11) deliver lines, precision trackpads (macOS) pixels;
+/// the zoom feel is tuned per variant.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
-    /// Wheel notches (winit `LineDelta`'s vertical component).
+    /// Wheel notches.
     Lines(f64),
-    /// Precision-device pixels (winit `PixelDelta`'s vertical component).
+    /// Precision-device pixels.
     Pixels(f64),
 }
 
-/// What the scene cursor should look like, winit-free (the application maps
-/// it onto the winit icon set).
+/// What the scene cursor should look like, winit-free.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CursorHint {
-    /// No camera interaction affordance (a non-interactive camera).
     Default,
-    /// The scene can be grabbed (dragged).
     Grab,
-    /// A drag is in progress.
     Grabbing,
 }
 
-/// The interactive-input half of the camera interface: responding to
-/// (already-translated) window input, advancing the animation those gestures
-/// spawn (flick coasting, the zoom glide), and reporting the cursor
-/// affordance that reflects the drag state. Every method defaults to a
-/// no-op, so a scene with a non-interactive camera implements only
-/// [`CameraView`]. The methods return nothing: the application renders
-/// every frame regardless, so there is no "camera changed, redraw" signal
-/// to carry.
+/// The interactive-input half of the camera interface. Every method defaults
+/// to a no-op, so a non-interactive camera implements only [`CameraView`].
+/// No return values: the app renders every frame regardless, so there is no
+/// "camera changed, redraw" signal to carry.
 pub trait CameraControl {
-    /// A pointer button went down. Carries no position: winit press events
-    /// have none, so a camera uses the position last given to
-    /// [`pointer_move`](Self::pointer_move) (the cursor tracking state lives
-    /// in the camera, not the application).
+    /// A pointer button went down. Carries no position (winit press events
+    /// have none); a camera uses the position last given to
+    /// [`pointer_move`](Self::pointer_move).
     fn pointer_press(&mut self, _button: PointerButton) {}
 
     /// A pointer button was released.
@@ -86,9 +60,8 @@ pub trait CameraControl {
     /// A scroll wheel / trackpad event.
     fn scroll(&mut self, _delta: ScrollDelta) {}
 
-    /// Advances one frame of camera animation (e.g. flick coasting, the zoom
-    /// glide) with real frame time. Called at the top of every redraw, before
-    /// `Scene::advance`.
+    /// Advances one frame of camera animation (flick coast, zoom glide) with
+    /// real frame time. Called at the top of every redraw.
     fn tick(&mut self, _viewport_height: f64) {}
 
     /// The scene cursor to show while the pointer is not over an egui panel.
@@ -97,20 +70,11 @@ pub trait CameraControl {
     }
 }
 
-/// The frame-production half of the camera interface: turning the scene's
-/// own simulation state into the frame's [`RenderState`]. Split from
-/// [`CameraControl`] so the two concerns stay independent - a scripted or
-/// fixed camera is a `CameraView` with no input surface at all.
+/// The frame-production half of the camera interface, split from
+/// [`CameraControl`] so a scripted or fixed camera needs no input surface.
 pub trait CameraView {
-    /// Produce this frame's [`RenderState`]: resolve the frame's camera
-    /// target (owned by the scene; a genuine body switch reframes the
-    /// camera), resolve the rig against the celestial sphere evaluated at
-    /// the frame's clock instant (`CelestialSphere::at` is a pure function
-    /// of time, so the scene computes it on the spot rather than storing
-    /// one), and pack it with the frame's time and markers. The marker
-    /// propagation happens here; the immediately-following
-    /// `UIDrawable::get_drawables` call (the egui panel) re-derives its
-    /// readouts at the same clock instant, so they match the rendered
-    /// markers.
+    /// Produce this frame's [`RenderState`]: resolve the scene-owned camera
+    /// target and the rig against `CelestialSphere::at` evaluated at the
+    /// frame's clock instant, and pack it with the time and markers.
     fn frame_state(&mut self) -> RenderState;
 }

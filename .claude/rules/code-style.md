@@ -6,121 +6,17 @@ paths:
 
 # Code style & conventions
 
-- Match surrounding code: dense explanatory comments on *why* (the non-obvious
-  GPU/winit/precision reasons), small focused structs, descriptive names.
 - Comments explain the WHY (hidden constraint, subtle invariant, workaround
-  for a specific bug). Do not explain what the code does or reference the
-  caller or task.
-
-## Module conventions
-
-Two bin roots (`main.rs` = the windowed `globe-experiment`, `headless.rs` =
-the single-frame `headless` bin), both declaring the one shared `src/engine/`
-module (no lib crate) plus their own top-level extra (`scenes` for main,
-`offscreen` for headless). The engine modules:
-- **`application`** — window, egui logic, and the windowed presenter. Keeps
-  NO camera or input state: `translate_camera_event` statelessly maps each
-  winit input event onto one `CameraControl`-trait call. Owns `gfx.rs` (`Gfx`:
-  surface/swapchain/present around the shared `renderer::SceneRenderer`). All
-  the winit-touching code lives here; only the main tree calls it (the
-  headless tree compiles it dead).
-- **`camera`** — directory module, winit-free, shared by both trees.
-  `camera/mod.rs`: the `CameraControl` + `CameraView` traits every scene
-  implements (input/tick/cursor_hint vs frame_state) + the
-  device-neutral input types (`PointerButton`/`ScrollDelta`/`CursorHint`).
-  `camera/ptz.rs`: `PtzCamera`, the interactive pan/tilt/zoom rig + ALL its
-  input/animation state (but NO orbit target - the scene owns the
-  `CameraTarget` and passes it by ref into each call that depends on it),
-  plus `ScenePtzCamera` (three accessors a scene implements; a blanket impl
-  supplies the whole `CameraControl` surface - no per-scene forwarding
-  block); scenes embed one, the
-  headless bin constructs one from the `--scene` JSON (`PtzCamera::new`).
-- **`scene`** — the `Scene` trait (UI-agnostic), `RenderState`,
-  `SatelliteTelemetry`, `Clock`, the celestial sphere, and
-  helpers. The clock is held **directly by each scene struct** (there is no
-  shared core struct); the celestial sphere is **not stored anywhere** —
-  `CelestialSphere::at` is a pure function of time, evaluated on the spot
-  where needed. **No winit/wgpu dependency. No
-  camera type** (the trait is `advance()` - scene-specific work
-  only - plus the provided `tick_scene` clock-tick entry point the
-  application calls; the frame's `RenderState` -
-  plain data defined here - is produced by the scene's `camera::CameraView`
-  impl, the UI readout pulled separately via `ui::UIDrawable`). No `ui`
-  (hence no egui) dependency: the camera-target panels are built inline by
-  each scene, whose key callbacks write the scene's `camera_target`
-  directly.
-- **`py`** — embedded Python (`src/engine/py.rs`): the Once-guarded
-  interpreter `init()` (`append_to_inittab!` of the `globe` pymodule strictly
-  before `Python::initialize()`), the `globe` module registration, and the
-  runtime script loader (`load_get_drawables`). Never references
-  `src/scenes`. The headless tree compiles it dead (links libpython, never
-  initializes the interpreter).
-- **`renderer`** — the winit-free shared scene core: `SceneRenderer` + the
-  device/depth helpers + `UiFrame` + projection consts. Camera is NOT here;
-  `Gfx` is NOT here (it is winit-bound, in `application/gfx.rs`).
-- **`ui`** — directory module. `ui/mod.rs` owns the `UIDrawable` trait +
-  `UIDrawablePanel` + `PanelAnchor` (egui-free data) and the egui
-  `control_panel` that frames each panel at its anchored corner and lays out
-  its rows of boxed `Instrument`s with taffy (`egui_taffy`; content-sized, no
-  pixel positions; no `Clock`/scene knowledge). Each scene implements
-  `UIDrawable` itself (its own Time panel + scene panels).
-  `ui/instruments/*.rs` is one `Instrument`-impl struct per file (each bare
-  struct doubling as a `#[pyclass]` — the dual Rust/Python UI API);
-  `ui/py.rs` the Python face (the `Panel` pyclass, the `Interactive*` script
-  twins holding Python callables, and the Python->Rust panel conversion);
-  `ui/theme.rs` the Apollo look + palette + the metric tokens and taffy
-  panel/row styles; `ui/spec.rs` the serde `ui`-overlay spec (deserialized
-  straight into the bare instrument structs).
-
-The top-level (non-engine) modules:
-- **`offscreen`** — `OffscreenRenderer` (`src/offscreen.rs`): the headless
-  bin's surfaceless presenter + readback around `SceneRenderer`. Headless bin
-  tree only.
-- **`scenes`** — one `<Name>Scene` struct per past scene
-  implementing `Scene` + `CameraControl` + `CameraView` + `UIDrawable`,
-  each with its own `#[derive(clap::Args)] Args` struct (its subcommand's
-  arguments; empty for most scenes) and a `run(args)`. (The `*_py` scenes
-  split the struct into an Inner `#[pyclass]` + a thin trait-impl wrapper,
-  carry the script path as their `Args`' required `--script` flag (the repo
-  ships reference scripts under the repo-root `scenes/`), and load their
-  panels from it — see the "Python-paneled scenes" section in `scenes.md`.)
-  Each struct holds its `Clock` + `camera: PtzCamera` +
-  `camera_target: CameraTarget` directly (no stored `CelestialSphere`;
-  `frame_state` evaluates one at the frame's clock instant), implements
-  `ScenePtzCamera` (three accessors; the blanket impl supplies
-  `CameraControl`), and builds its
-  own Time panel (the
-  panel code is deliberately duplicated per scene so
-  scenes can diverge). Satellites live here, not in `scene`.
-- **`headless` bin root** (`src/headless.rs`) — the single-frame render
-  binary: flat `--scene`/`--output` CLI, scene-spec parsing, mock-UI
-  `build_ui_frame`, calls `OffscreenRenderer`. Carries a crate-level
-  `allow(dead_code)` (the engine includes items only the main tree calls,
-  chiefly all of `engine::application`); the main tree keeps full dead-code
-  checking.
-
-## Where things live
-
-- **Shader look knobs**: `shaders/scene.wgsl` top `const` block.
-- **Atmosphere medium constants**: `build.rs mod atmosphere` (bake) AND
-  `shaders/scene.wgsl` (shader twins) — both must stay in sync.
-- **Input feel constants**: `src/engine/camera/ptz.rs` top.
-- **All body physical constants + helpers (Terra included)**:
-  `src/engine/planet.rs` (the per-body table; WGS84 consts live beside
-  Terra's row).
-- **Camera limits**: `PtzCamera` associated consts in `src/engine/camera/ptz.rs`
-  — the distance/default limits are radius *ratios* (`*_RADII`), scaled at use by
-  the orbit target's `mean_radius_km()`. **Projection** consts live in `renderer`
-  (`FOV_Y_DEG`, `NEAR_PLANE_RADII`, `FAR_PLANE_KM`); the far plane is a *floor* —
-  `prepare` grows it to enclose a large orbited body (see `camera.md`).
-- **All build assets**: in `OUT_DIR`, `include_bytes!`-ed. No `assets/` dir.
-- **TLE data**: inline source `const`s in the scene files, not in
-  `satellite.rs`. The `ISS_TLE` literal is **deliberately duplicated** across
-  scenes that need it — do not factor into a shared const.
-
-## Documentation rule
-
-Keep all docs current in the same change: code comments, `.claude/CLAUDE.md`,
-rules files, and `README.md`. Stale docs are bugs. Exception: the live
-constant snapshot in `shader.md` may lag owner tuning — for live values the
-source (`scene.wgsl`) is always authoritative.
+  for a specific bug) — never what the code does, the caller, or the task.
+- Small focused structs, descriptive names; match surrounding code.
+- **TLE data**: inline `const`s in the scene files, never in `satellite.rs`;
+  the `ISS_TLE` literal is deliberately duplicated across scenes — do not
+  factor into a shared const.
+- Look/feel/atmosphere constants have fixed homes: shader look knobs at the
+  top of `scene.wgsl`, input feel at the top of `camera/ptz.rs`, body
+  physical constants in `planet.rs`, projection consts in `renderer`,
+  atmosphere medium constants in `build.rs` + `scene.wgsl` (synced — see
+  `atmosphere.md`).
+- Keep docs current in the same change (code comments, `.claude/` rules,
+  `README.md`) — stale docs are bugs. The source is authoritative for any
+  constant value.

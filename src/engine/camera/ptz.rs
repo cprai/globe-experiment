@@ -1,37 +1,12 @@
-//! [`PtzCamera`]: the pan/tilt/zoom orbital camera - the rig math *and* the
-//! input response that drives it (drag pan with flick inertia, drag tilt,
-//! smoothed wheel zoom). One struct owns both halves so all camera state,
-//! including in-flight animation, lives behind the `CameraControl` +
-//! `CameraView` traits a scene forwards to; the application passes
-//! translated input through and keeps none of it.
-//!
-//! The camera lives in the **inertial (star-fixed) frame** and orbits a
-//! chosen subject (a [`CameraTarget`] - Terra, Luna, a planet, or a free
-//! point). The target is NOT stored here: the scene owns it (alongside its
-//! clock) and passes it into every call that scales by
-//! or centers on the orbited body, so the rig state and the orbit subject
-//! cannot drift apart across the scene/camera boundary.
-//!
-//! The orbital math builds the rig (eye/target/up) around the *target's
-//! center* exactly as a surface-anchored camera would, but that rig is
-//! interpreted in the celestial frame and rotated into the Earth-fixed world
-//! frame (see `world_rig`; the renderer then builds the projection). So the
-//! camera does not rotate with the world: it holds still relative to the
-//! stars while the scene spins beneath it. The longitude/latitude therefore
-//! select an inertial viewing direction, not a fixed geographic point. With a
-//! Luna target the same construction keeps the eye pinned to Luna (look axis
-//! is always `-c2w * radial`, toward Luna center) while it tracks Luna's
-//! moving ephemeris position.
-//!
-//! World space is in kilometers; the `CelestialSphere` frame is heliocentric
-//! (Sol at the origin), but the rig is always built in the target-local
-//! render frame (`world_frame_relative` subtracts `render_origin`), so its
-//! absolute origin choice is invisible here. The surface anchor and the
-//! distance/near/pan limits are scaled by the *target's* mean radius (see
-//! [`CameraTarget::mean_radius_km`]), so the interaction feel is the same
-//! fraction of whichever body is orbited. For a Terra target the render
-//! origin is Terra's center, so the rig is identical to the original
-//! Terra-only camera.
+//! [`PtzCamera`]: the pan/tilt/zoom orbital camera - rig math plus all input
+//! and animation state (drag pan with flick inertia, drag tilt, smoothed
+//! wheel zoom). World space is km; the rig lives in the inertial (star-fixed)
+//! frame, so `longitude`/`latitude` select an inertial viewing direction, not
+//! geography (see `.claude/rules/camera.md`). The orbit target is NOT stored
+//! here: the scene owns it and passes it into every call that scales by or
+//! centers on the orbited body, so rig state and orbit subject cannot drift
+//! apart. Limits scale with the target's mean radius, so the feel is the
+//! same fraction of whichever body is orbited.
 
 use std::time::Instant;
 
@@ -50,12 +25,9 @@ const HALF_LIFE: f64 = 0.3;
 /// A release later than this after the last cursor move is a hold, not a
 /// flick, in seconds.
 const FLICK_TIMEOUT: f64 = 0.1;
-/// Bounds on the zoom glide's half-life, in seconds. The glide adapts to
-/// the wheel-event cadence: its half-life tracks the smoothed gap between
-/// recent events, so dense events (active trackpad scrolling) zoom
-/// near-instantly while sparse ones (a trackpad's synthesized momentum
-/// tail, single mouse-wheel notches) are interpolated across the gap that
-/// would otherwise show as a step.
+/// Bounds on the zoom glide's half-life, in seconds. The half-life tracks
+/// the smoothed wheel-event gap: dense events zoom near-instantly, sparse
+/// ones (momentum tails, single notches) interpolate across the gap.
 const ZOOM_HALF_LIFE_MIN: f64 = 0.01;
 const ZOOM_HALF_LIFE_MAX: f64 = 0.1;
 /// Cap on a wheel-event gap sample, in seconds; longer pauses just mean
@@ -69,8 +41,7 @@ const ZOOM_COAST_HALF_LIFE: f64 = 0.15;
 const ZOOM_STOP_RATE: f64 = 0.1;
 
 /// The interactive pan/tilt/zoom orbital camera: the rig pose plus the input
-/// and animation state that moves it (left-drag pan with flick inertia,
-/// right-drag tilt, wheel zoom glide).
+/// and animation state that moves it.
 pub struct PtzCamera {
     /// Longitude of the inertial viewing direction, in degrees.
     pub longitude: f64,
@@ -107,13 +78,12 @@ struct Inertia {
 struct Zoom {
     /// Camera distance the glide is heading toward, in kilometers.
     target: f64,
-    /// The glide's current half-life, in seconds; follows the wheel
-    /// cadence at the time of the last event.
+    /// The glide's current half-life, in seconds; follows the wheel cadence.
     half_life: f64,
-    /// Smoothed rate at which wheel events move the target, in
-    /// natural-log distance per second. Keeps the target advancing
-    /// between and after events, so the motion never pauses while the
-    /// device (or its momentum tail) is between deliveries.
+    /// Smoothed rate at which wheel events move the target, in natural-log
+    /// distance per second. Keeps the target advancing between and after
+    /// events, so motion never pauses while the device (or its momentum
+    /// tail) is between deliveries.
     velocity: f64,
     /// Log-distance the target has been advanced by `velocity` since the
     /// last wheel event. The next event repays it, so bridged motion is
@@ -141,20 +111,15 @@ impl Default for PtzCamera {
 }
 
 impl PtzCamera {
-    // Distance/default limits as fractions of the *target body's* mean radius
-    // (was a hard-coded Terra radius). ~0.01 radii above the surface up to ~10
-    // radii out; the default view sits ~2 radii above the surface. The FOV, near
-    // plane, and far plane now live with the projection in `renderer` (the
-    // renderer rebuilds view_proj from the rig this camera emits).
+    // Distance limits as fractions of the target body's mean radius.
     const MIN_DISTANCE_RADII: f64 = 0.01;
     const MAX_DISTANCE_RADII: f64 = 10.0;
     const DEFAULT_DISTANCE_RADII: f64 = 2.0;
     const MAX_TILT: f64 = 80.0;
 
     /// A camera with an explicit pose, the distance clamped into `target`'s
-    /// valid range. The headless binary's constructor (it builds the pose from
-    /// its `--scene` JSON; a struct literal no longer works from outside this
-    /// module because the input-state fields are private).
+    /// valid range (the input-state fields are private, so no struct literal
+    /// works from outside this module).
     #[allow(dead_code)] // constructed only by the headless bin's tree
     pub fn new(
         target: &CameraTarget,
@@ -184,8 +149,7 @@ impl PtzCamera {
         Self::MAX_DISTANCE_RADII * target.mean_radius_km()
     }
 
-    /// The full-body framing distance for the target, in km. Used when a body
-    /// switch reframes the camera.
+    /// The full-body framing distance for the target, in km.
     fn default_distance(&self, target: &CameraTarget) -> f64 {
         Self::DEFAULT_DISTANCE_RADII * target.mean_radius_km()
     }
@@ -197,8 +161,7 @@ impl PtzCamera {
         self.latitude = (self.latitude + dlat).clamp(-89.0, 89.0);
     }
 
-    /// Clamps a camera distance to lie between just above the target surface
-    /// and a full-body view; the limits scale with the target's radius.
+    /// Clamps a camera distance into the target's radius-scaled limits.
     fn clamp_distance(&self, target: &CameraTarget, distance: f64) -> f64 {
         distance.clamp(self.min_distance(target), self.max_distance(target))
     }
@@ -219,31 +182,16 @@ impl PtzCamera {
                 .tan()
             / viewport_height.max(1.0);
 
-        // Convert that arc length to an angle on the body: one radian of arc
-        // subtends ~one mean radius of surface distance, so scaling by the
-        // target's radius keeps the pan feel right on Luna as on Terra.
+        // One radian of arc subtends ~one mean radius of surface distance, so
+        // scaling by the target's radius keeps the pan feel right on any body.
         (km_per_pixel / target.mean_radius_km()).to_degrees()
     }
 
-    /// The camera rig for the renderer: the eye, the look-at point, and the up
-    /// vector, all in the floating-origin (render) frame.
-    /// `celestial_to_world` is the rotation from the inertial (star) frame the
-    /// rig lives in to the Earth-fixed world frame the scene is drawn in (the
-    /// inverse of the celestial sphere's world->celestial rotation); applying
-    /// it keeps the camera fixed relative to the stars while the world
-    /// rotates beneath it.
-    ///
-    /// The renderer rebuilds the view-projection matrix from these (see
-    /// `renderer::view_proj_reversed_z`). The look direction is carried as the
-    /// look-at *point* rather than a normalized forward vector so the
-    /// renderer's `look_at_rh` reproduces the old `view_proj` bit-for-bit
-    /// (re-normalizing a forward and re-projecting would drift by sub-ULP
-    /// and speckle every antialiased edge). The eye is kept in the render
-    /// frame - computed WITHOUT ever forming the absolute eye - because a
-    /// far planet's absolute position is billions of km, so `absolute_eye -
-    /// render_origin` in f32 would cancel catastrophically (the view
-    /// translation snaps to ~hundreds of km and the camera jitters). For
-    /// Terra/Luna (render_origin 0) the render frame is the absolute frame.
+    /// The (eye, look-at, up) rig in the floating-origin (render) frame.
+    /// `celestial_to_world` rotates the inertial (star) frame the rig lives
+    /// in into the Earth-fixed world frame. The look direction is carried as
+    /// the look-at *point*, not a normalized forward: re-normalizing and
+    /// re-projecting drifts by sub-ULP and speckles antialiased edges.
     pub fn world_rig(
         &self,
         target: &CameraTarget,
@@ -253,25 +201,19 @@ impl PtzCamera {
         self.world_frame_relative(target, celestial, celestial_to_world)
     }
 
-    /// An inertial camera that orbits `target` and whose look axis points along
-    /// `world_look` - a direction in the Earth-fixed world frame (e.g. toward
-    /// Sol's day side or toward Luna) - viewed from `distance` km with
-    /// no tilt. `star_rot_inv` is the celestial sphere's world->celestial
-    /// (equatorial) rotation, mapping the world direction back into the
-    /// inertial frame the rig is built in. Used by the eclipse scenes to
-    /// frame their event on launch; the camera stays fully interactive
-    /// afterward.
+    /// An inertial camera orbiting `target` whose look axis points along
+    /// `world_look` (an Earth-fixed world-frame direction), viewed from
+    /// `distance` km with no tilt. `star_rot_inv` is the world->celestial
+    /// rotation. Seeds a launch framing; the camera stays interactive after.
     pub fn looking_toward(
         target: &CameraTarget,
         star_rot_inv: DMat3,
         world_look: DVec3,
         distance: f64,
     ) -> Self {
-        // The rig's look axis (toward the target) is `-radial`; resolved into
-        // the world it is `-celestial_to_world * radial = -star_rot_inv^T *
-        // radial`. Setting that equal to `world_look` gives
-        // `radial = -(star_rot_inv * world_look)` - the inertial direction the
-        // eye sits along.
+        // The rig's look axis resolved into the world is
+        // `-star_rot_inv^T * radial`; setting it equal to `world_look` gives
+        // `radial = -(star_rot_inv * world_look)`.
         let radial = -(star_rot_inv * world_look.normalize_or_zero());
         let mut camera = Self {
             longitude: radial.x.atan2(radial.z).to_degrees(),
@@ -284,15 +226,10 @@ impl PtzCamera {
         camera
     }
 
-    /// Reframes the camera onto a just-switched orbit target: resets to the
-    /// body's full-frame distance and zero tilt, re-aims at an off-Terra
-    /// body's center, and drops any in-flight zoom or flick (which still
-    /// targets the old body's scale). The scene owns the [`CameraTarget`]
-    /// and calls this only on a genuine **body switch** (`same_kind`); no
-    /// per-frame call is needed - the target's moving center is resolved
-    /// from the sphere inside every `world_rig` call. Keeping the existing
-    /// longitude/latitude for a Terra switch is fine: any inertial direction
-    /// frames Terra at the origin.
+    /// Reframes the camera onto a just-switched orbit target: full-frame
+    /// distance, zero tilt, re-aimed at an off-Terra body's center, in-flight
+    /// animation dropped (it still targets the old body's scale). Called by
+    /// the scene only on a genuine body switch.
     pub fn reframe(
         &mut self,
         target: &CameraTarget,
@@ -303,13 +240,9 @@ impl PtzCamera {
         self.tilt = 0.0;
         self.reset_animation();
 
-        // Aim at the body: for an off-Terra target (Luna or a planet) look
-        // toward it along the GEOCENTRIC (Terra-relative) direction, the
-        // same mapping `looking_toward` uses. A Terra target keeps the
-        // existing longitude/latitude (any inertial direction frames Terra
-        // at its own center). The direction is Terra-relative, not the raw
-        // heliocentric `center_world`, so it is frame-agnostic: Terra ->
-        // zero (skip), Luna/planets -> the Terra->body direction.
+        // Aim along the GEOCENTRIC (Terra-relative) direction, not the raw
+        // heliocentric center, so it is frame-agnostic: Terra -> zero (skip,
+        // any inertial direction frames Terra), Luna/planets -> Terra->body.
         let terra = celestial.center_world(CelestialBody::TERRA);
         let aim = target.center_world(celestial) - terra;
         if aim != DVec3::ZERO {
@@ -320,16 +253,11 @@ impl PtzCamera {
         }
     }
 
-    /// The rig in the **floating-origin (render) frame**: the inertial offsets
-    /// rotated into the world and shifted by `(center - render_origin)`, so the
-    /// orbited body sits at/near the numerical origin. Computed this way
-    /// (rather than forming the absolute rig and subtracting
-    /// `render_origin`) so a far planet never goes through a billions-of-km
-    /// f32 value: for the orbited body `center == render_origin`, so the
-    /// shift is exactly zero and the rig is just `celestial_to_world *
-    /// offset` (local, precise). For Terra/Luna (render_origin 0) the shift
-    /// is the body center, so this equals the absolute rig - bit-identical
-    /// to the pre-planet renderer.
+    /// The rig in the floating-origin (render) frame: inertial offsets
+    /// rotated into the world, shifted by `(center - render_origin)`.
+    /// Computed this way - never as `absolute_eye - render_origin` - so a far
+    /// planet's billions-of-km absolute position is never formed and cannot
+    /// cancel catastrophically in f32.
     fn world_frame_relative(
         &self,
         target: &CameraTarget,
@@ -337,7 +265,7 @@ impl PtzCamera {
         celestial_to_world: DMat3,
     ) -> (DVec3, DVec3, DVec3) {
         let (eye, look_at, up) = self.frame(target);
-        // The f64 subtraction cancels the ~1.5e8 km heliocentric Sol offset
+        // f64 subtraction cancels the ~1.5e8 km heliocentric Sol offset
         // exactly (zero for the orbited body).
         let shift = target.center_world(celestial) - target.render_origin(celestial);
         (
@@ -347,14 +275,14 @@ impl PtzCamera {
         )
     }
 
-    /// Computes the camera's (eye, target, up) in the inertial (star) frame,
-    /// as offsets from the target body's center.
+    /// The camera's (eye, target, up) in the inertial (star) frame, as
+    /// offsets from the target body's center.
     fn frame(&self, target: &CameraTarget) -> (DVec3, DVec3, DVec3) {
         let lat = self.latitude.clamp(-89.0, 89.0).to_radians();
         let lon = self.longitude.to_radians();
 
-        // Look-at point on the target surface (km) and the local "up" - the
-        // geodetic normal there, which the eye offsets along.
+        // Look-at point on the target surface (km) and the geodetic normal
+        // there, which the eye offsets along.
         let look_at = target.surface_position(lat, lon);
         let radial = target.geodetic_normal(lat, lon);
 
@@ -362,8 +290,8 @@ impl PtzCamera {
         let east = DVec3::Y.cross(radial).normalize();
         let north = radial.cross(east);
 
-        // Tilt swings the camera away from straight-down, around the local
-        // east axis, so increasing tilt reveals the horizon to the north.
+        // Tilt swings the camera off straight-down around the local east
+        // axis, so increasing tilt reveals the horizon to the north.
         let tilt = DQuat::from_axis_angle(east, self.tilt.to_radians());
         let eye = look_at + tilt * radial * self.distance;
         let up = tilt * north;
@@ -425,8 +353,7 @@ impl PtzCamera {
         self.cursor = Some(position);
 
         // Taken out and put back (not held as `&mut`): the drag borrow cannot
-        // live across the `self.pan`/`self.tilt_by` calls below now that the
-        // rig and the input state share one struct.
+        // live across the `self.pan`/`self.tilt_by` calls below.
         let Some(mut drag) = self.drag.take() else {
             return;
         };
@@ -442,9 +369,8 @@ impl PtzCamera {
             .max(1e-4);
         drag.moved_at = now;
 
-        // Exponential moving average of cursor velocity; the blend
-        // weight is time-based so the smoothing is frame-rate
-        // independent.
+        // EMA of cursor velocity; the blend weight is time-based so the
+        // smoothing is frame-rate independent.
         let alpha = 1.0 - (-dt * 20.0).exp();
         let (vx, vy) = drag.velocity;
         drag.velocity = (vx + (dx / dt - vx) * alpha, vy + (dy / dt - vy) * alpha);
@@ -463,7 +389,7 @@ impl PtzCamera {
         self.drag = Some(drag);
     }
 
-    /// A scroll event: move the zoom glide's target (see the `Zoom` docs; the
+    /// A scroll event: move the zoom glide's target (see the `Zoom` docs;
     /// per-frame motion happens in `tick`).
     pub fn scroll(&mut self, target: &CameraTarget, delta: ScrollDelta) {
         let ticks = match delta {
@@ -485,15 +411,13 @@ impl PtzCamera {
 
         let half_life = self.wheel_gap.clamp(ZOOM_HALF_LIFE_MIN, ZOOM_HALF_LIFE_MAX);
 
-        // Events only move the target; `tick` glides the camera
-        // toward it each frame, paced to the event cadence. An
-        // in-flight glide keeps its clock: resetting it per event
-        // would stall the glide between dense events.
+        // Events only move the target; `tick` glides the camera toward it.
+        // An in-flight glide keeps its clock: resetting it per event would
+        // stall the glide between dense events.
         let delta = ticks * 0.9f64.ln();
 
         // Taken out and put back: the zoom borrow cannot live across the
-        // `self.clamp_distance` calls below now that the rig and the input
-        // state share one struct.
+        // `self.clamp_distance` calls below.
         match self.zoom.take() {
             Some(mut zoom) => {
                 // Reversing direction kills the coast outright.
@@ -502,10 +426,9 @@ impl PtzCamera {
                     zoom.bridged = 0.0;
                 }
 
-                // Repay target motion the coast already applied
-                // since the last event; only the remainder moves
-                // the target now. An over-bridged surplus carries
-                // forward against the next event.
+                // Repay target motion the coast already applied since the
+                // last event; only the remainder moves the target now. An
+                // over-bridged surplus carries forward against the next event.
                 let outstanding = if delta * zoom.bridged > 0.0 {
                     let remaining = delta - zoom.bridged;
                     if remaining * delta > 0.0 {
@@ -522,8 +445,8 @@ impl PtzCamera {
                 zoom.target = self.clamp_distance(target, zoom.target * outstanding.exp());
                 zoom.half_life = half_life;
 
-                // Velocity follows the event rate; time-based
-                // blend, like the drag velocity EMA.
+                // Velocity follows the event rate; time-based blend, like
+                // the drag velocity EMA.
                 let alpha = 1.0 - (-gap * 20.0).exp();
                 let rate = delta / gap.max(1e-3);
                 zoom.velocity += (rate - zoom.velocity) * alpha;
@@ -531,8 +454,8 @@ impl PtzCamera {
                 self.zoom = Some(zoom);
             }
             None => {
-                // A first event carries no rate information, so
-                // the glide starts without coast velocity.
+                // A first event carries no rate information, so the glide
+                // starts without coast velocity.
                 self.zoom = Some(Zoom {
                     target: self.clamp_distance(target, self.distance * delta.exp()),
                     half_life,
@@ -545,7 +468,7 @@ impl PtzCamera {
     }
 
     /// Advances one frame of camera animation: flick coasting and the
-    /// zoom glide. Called from the redraw handler.
+    /// zoom glide.
     pub fn tick(&mut self, target: &CameraTarget, viewport_height: f64) {
         self.tick_coast(target, viewport_height);
         self.tick_zoom(target);
@@ -553,9 +476,8 @@ impl PtzCamera {
 
     /// Integrates one frame of flick coasting.
     fn tick_coast(&mut self, target: &CameraTarget, viewport_height: f64) {
-        // Taken out and put back unless it stopped: the inertia borrow cannot
-        // live across the `self.pan` call now that the rig and the input
-        // state share one struct.
+        // Taken out and put back unless it stopped: the inertia borrow
+        // cannot live across the `self.pan` call.
         let Some(mut inertia) = self.inertia.take() else {
             return;
         };
@@ -582,8 +504,7 @@ impl PtzCamera {
     /// Moves the camera one frame closer to the zoom target.
     fn tick_zoom(&mut self, target: &CameraTarget) {
         // Taken out and put back unless it settled: the zoom borrow cannot
-        // live across the `self.clamp_distance` call now that the rig and
-        // the input state share one struct.
+        // live across the `self.clamp_distance` call.
         let Some(mut zoom) = self.zoom.take() else {
             return;
         };
@@ -595,12 +516,11 @@ impl PtzCamera {
             .min(0.1);
         zoom.tick = now;
 
-        // Coast: keep the target moving at the rate the wheel events
-        // established, decaying once they stop. This is what carries the
-        // motion across the silence between a finger lift and the first
-        // momentum-tail event - without it the glide drains its target
-        // and visibly stalls there. The advance is logged in `bridged`
-        // and repaid by the next event, so nothing is counted twice.
+        // Coast: keep the target moving at the wheel-established rate,
+        // decaying once events stop - this carries motion across the silence
+        // between a finger lift and the first momentum-tail event (without
+        // it the glide drains its target and visibly stalls). The advance is
+        // logged in `bridged` and repaid by the next event.
         zoom.velocity *= 0.5f64.powf(dt / ZOOM_COAST_HALF_LIFE);
         if zoom.velocity.abs() > ZOOM_STOP_RATE {
             let step = zoom.velocity * dt;
@@ -623,9 +543,8 @@ impl PtzCamera {
         }
     }
 
-    /// Drops any in-flight flick inertia and zoom glide. Called on an orbit
-    /// target switch (from `reframe`): both animations target the old body's
-    /// distance scale, so left running they would fight the reframe.
+    /// Drops any in-flight flick inertia and zoom glide (they target the old
+    /// body's distance scale, so left running they would fight a reframe).
     fn reset_animation(&mut self) {
         self.inertia = None;
         self.zoom = None;
@@ -641,28 +560,13 @@ impl PtzCamera {
     }
 }
 
-/// The camera hookup for every scene that flies a [`PtzCamera`]: implement
-/// the three accessors saying where the camera and its scene-owned orbit
-/// target live in the struct, and the blanket [`CameraControl`] impl below
-/// supplies the whole input surface, forwarding each event into the embedded
-/// camera - the `SceneClock` pattern (one required hook, shared logic lives
-/// with the type it drives), replacing the forwarding block every scene used
-/// to duplicate.
-///
-/// Three accessors, not one, because the forwarding needs three shapes:
-/// `camera_mut` for the mutating input calls, `camera` for
-/// [`CameraControl::cursor_hint`]'s `&self`, and `camera_target` because
-/// `pointer_move`/`scroll`/`tick` scale by the orbited body - the target
-/// stays scene-owned (see the module doc), so the blanket impl fetches it
-/// per call and the rig can never drift from the orbit subject.
-///
-/// Every scene implements this, the `*_py` wrappers included: they keep
-/// their camera as a plain wrapper field OUTSIDE their scene pyclass
-/// (a script has no camera surface, and a pyclass cell's borrow guard
-/// could never hand out the `&mut PtzCamera` this trait requires). A scene
-/// that must diverge (gate input, fly a different camera kind) implements
-/// [`CameraControl`] directly instead; a future non-interactive scene
-/// simply implements neither and keeps `CameraControl`'s no-op defaults.
+/// The camera hookup for a scene that flies a [`PtzCamera`]: implement the
+/// three accessors and the blanket [`CameraControl`] impl below supplies the
+/// whole input surface. Three, not one, because the forwarding needs three
+/// shapes: `camera_mut` for the mutating calls, `camera` for `cursor_hint`'s
+/// `&self`, and `camera_target` because `pointer_move`/`scroll`/`tick` scale
+/// by the orbited body (the target stays scene-owned). A scene that must
+/// diverge implements [`CameraControl`] directly instead.
 pub trait ScenePtzCamera {
     /// Where the camera lives in the scene struct (shared view).
     fn camera(&self) -> &PtzCamera;

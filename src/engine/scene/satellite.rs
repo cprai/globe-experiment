@@ -1,40 +1,19 @@
-//! Satellite tracking: parse a TLE and propagate it with the satkit SGP4
-//! implementation to a given datetime, exposing the result in the renderer's
-//! world frame (km). Each [`Satellite`] is one tracked object; scene structs
-//! (see `crate::scenes`) own a `Vec<Satellite>` assembled from that
-//! scene's own inline TLE literals (this module is element-set agnostic - it
-//! propagates whatever TLEs a scene hands it). Only the TLE is retained; the
-//! position state is a pure function of (TLE, datetime), so it is recomputed on
-//! demand via `state_at` rather than stored - nothing in the struct goes stale
-//! as the simulation clock advances.
+//! Satellite tracking: TLE parse + satkit SGP4, plus a TLE-free numerical
+//! pipeline, resolved into the renderer's world frame (km). TLE literals
+//! live in the scenes; this module propagates whatever it is handed.
+//! Position is never stored - it is a pure function of (elements, time),
+//! recomputed on demand, so nothing goes stale as the clock advances.
 //!
-//! The flow is: TLE -> SGP4 (TEME, meters) -> rotate to ITRF/ECEF
-//! (`qteme2itrf`) -> geodetic latitude/longitude/altitude (`ITRFCoord`) -> a
-//! world-space point via the project's WGS84 helpers (`planet`), so the marker
-//! lands on exactly the same WGS84 ellipsoid the Terra impostor traces.
+//! Marker chain: SGP4 (TEME, m) -> ITRF via the full `qteme2itrf` (reads the
+//! EOP table pre-seeded in `celestial_sphere::init_satkit`) -> geodetic ->
+//! world via the project WGS84 helpers, so the marker lands on exactly the
+//! ellipsoid the Terra impostor traces.
 //!
-//! Besides the single-time marker state, [`orbit_path_inertial`] propagates
-//! one full period ahead for the renderer's predicted orbit path. It
-//! dispatches on [`Propagation`]: analytic SGP4 from a TLE, or numerical
-//! integration (satkit `orbitprop`) from a GCRF state vector ([`OrbitState`]).
-//! The numerical arm needs no TLE, so a manually-controlled satellite (the
-//! `manual_control` scene) feeds the same path renderer. See the function
-//! docs for the deliberately different (inertial, single-rotation) frame
-//! treatment shared by both arms.
-//!
-//! For manually-controlled objects this module also offers the
-//! TLE-free state pipeline: [`propagate_numerical`] steps an [`OrbitState`]
-//! forward (the scene re-anchors it each frame, then nudges the velocity
-//! for burns), [`resolve_orbit`] turns the state into the same
-//! [`SatelliteState`] the SGP4 pipeline produces (marker + geodetic readout),
-//! and [`orbit_shape`] reads the osculating apsides/speed for the panel.
-//!
-//! `qteme2itrf` is the full (non-`approx`) transform: it reads satkit's global
-//! EOP table (real polar motion + UT1-UTC), which
-//! `celestial_sphere::init_satkit` pre-seeds
-//! from the bundled `EOP-All.csv` at startup. That seeding also suppresses the
-//! stray `satkit-data` dir satkit would otherwise create on first use; see its
-//! docs (the numerical arm's EGM96 gravity model is seeded the same way).
+//! [`orbit_path_inertial`] propagates one period ahead for the predicted
+//! orbit path, dispatching on [`Propagation`] (analytic SGP4 or numerical
+//! `orbitprop`); see its doc for the deliberate single-rotation inertial
+//! frame treatment. TLE-free manual-control helpers:
+//! [`propagate_numerical`], [`resolve_orbit`], [`orbit_shape`].
 
 use glam::DVec3;
 use pyo3::prelude::*;
@@ -48,10 +27,9 @@ use satkit::{Duration, Instant, Kepler, Vector3};
 use crate::engine::planet;
 use crate::engine::scene::body::CelestialBody;
 
-/// An instantaneous orbital state vector in the GCRF frame: the initial
-/// conditions for numerical propagation. Deliberately a plain-data type (no
-/// satkit types) so a future manually-controlled satellite can construct one
-/// directly, with no TLE behind it.
+/// An instantaneous GCRF orbital state vector - numerical-propagation
+/// initial conditions. Deliberately plain data (no satkit types) so a
+/// manually-controlled satellite can construct one with no TLE behind it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitState {
     /// Position, GCRF, meters.
@@ -64,38 +42,28 @@ pub struct OrbitState {
 /// `SatelliteMarker`; a scene may mix both kinds.
 #[derive(Clone, Debug)]
 pub enum Propagation {
-    /// Analytic SGP4 from the element set - cheap, for TLE-tracked objects.
-    /// Boxed: a parsed `TLE` is ~1 KB (element strings + cached propagator
-    /// init) vs the 48-byte state vector, and markers clone every frame.
+    /// Analytic SGP4 from the element set. Boxed: a parsed `TLE` is ~1 KB
+    /// vs the 48-byte state vector, and markers clone every frame.
     Sgp4(Box<TLE>),
-    /// Numerical integration (satkit `orbitprop`) from GCRF initial
-    /// conditions - works with no TLE (future manually-controlled
-    /// satellites).
+    /// Numerical `orbitprop` from GCRF initial conditions - no TLE needed.
     Numerical(OrbitState),
 }
 
-/// A satellite tracked from its TLE. Holds only the (immutable-meaning) inputs:
-/// the element set and the object name. The position state is derived on demand
-/// from the TLE and a datetime - see [`SatelliteState`] and [`state_at`].
-///
-/// [`state_at`]: Satellite::state_at
+/// A satellite tracked from its TLE. Holds only the element set and name;
+/// state is derived on demand via [`state_at`](Self::state_at).
 pub struct Satellite {
-    /// The parsed element set, propagated on demand for any requested time.
-    /// `&mut` is needed to propagate it (satkit's `sgp4` caches its
-    /// initialization in the TLE on the first call), so propagation methods
-    /// take `&mut self`.
+    /// `&mut` is needed to propagate (satkit's `sgp4` caches its
+    /// initialization in the TLE on first call), so propagation methods take
+    /// `&mut self`.
     tle: TLE,
-    /// Object name from the TLE's first line (e.g. "ISS (ZARYA)").
+    /// Object name from the TLE (e.g. "ISS (ZARYA)").
     pub name: String,
 }
 
 impl Satellite {
-    /// Parses a 3-line TLE (name line + the two element lines, e.g. a
-    /// scene's `ISS_TLE`). Panics on malformed input - the TLEs are
-    /// inline source literals, so a failure is a build-time bug, handled
-    /// like the other embedded data. No
-    /// propagation happens here - the state is computed on demand via
-    /// [`state_at`](Self::state_at).
+    /// Parses a 3-line TLE (name line + two element lines). Panics on
+    /// malformed input - TLEs are inline source literals, so a failure is a
+    /// build-time bug, handled like the other embedded data.
     pub fn from_tle(tle_3line: &str) -> Self {
         let mut lines = tle_3line.lines();
         let line0 = lines.next().expect("TLE line 0 (name)");
@@ -112,27 +80,22 @@ impl Satellite {
         self.tle.epoch
     }
 
-    /// The parsed element set, for callers that carry it elsewhere (a
-    /// scene clones it into a marker's `Propagation::Sgp4` so the renderer
-    /// can propagate the predicted orbit path itself).
+    /// The parsed element set.
     pub fn tle(&self) -> &TLE {
         &self.tle
     }
 
-    /// Propagates the orbit to `time` and returns the resulting state in the
-    /// world frame. Pure with respect to the satellite (nothing is stored);
-    /// takes `&mut self` only because satkit's `sgp4` caches initialization in
-    /// the TLE.
+    /// Propagates to `time`, in the world frame. `&mut self` only because
+    /// satkit's `sgp4` caches initialization in the TLE; nothing is stored.
     pub fn state_at(&mut self, time: &Instant) -> SatelliteState {
         propagate(&mut self.tle, time)
     }
 }
 
-/// The satellite's propagated state at a particular time, derived from the TLE.
-/// Recomputed on demand rather than stored on [`Satellite`].
+/// The propagated state at one time, recomputed on demand.
 pub struct SatelliteState {
-    /// Position in the renderer's world frame: kilometers, planet center at
-    /// the origin, same axes as the Terra body frame.
+    /// Position in the renderer's world frame: km, planet center at the
+    /// origin, same axes as the Terra body frame.
     pub position_km: DVec3,
     /// Sub-satellite geodetic latitude, degrees.
     pub latitude_deg: f64,
@@ -140,16 +103,15 @@ pub struct SatelliteState {
     pub longitude_deg: f64,
     /// Height above the WGS84 ellipsoid, kilometers.
     pub altitude_km: f64,
-    /// The GCRF state vector at the propagated time - initial conditions a
-    /// scene can hand to `Propagation::Numerical` for the predicted orbit
-    /// path.
+    /// The GCRF state vector at the propagated time - initial conditions
+    /// for `Propagation::Numerical`.
     pub orbit: OrbitState,
 }
 
 /// SGP4-propagates `tle` to `time` and resolves the result to the world frame.
 fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
-    // SGP4 -> position + velocity in the TEME frame, meters and m/s (one time
-    // sample, so the 3xN matrices have a single column).
+    // SGP4 -> TEME position + velocity (m, m/s); one time sample, so the
+    // 3xN matrices have a single column.
     let sgp4_state = sgp4(tle, &[*time]).expect("sgp4 propagation");
     let teme = Vector3::new([
         [sgp4_state.pos[(0, 0)]],
@@ -162,9 +124,9 @@ fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
         [sgp4_state.vel[(2, 0)]],
     ]);
 
-    // TEME -> GCRF state vector. Rotating the velocity by the same quaternion
-    // as the position is correct: both frames are quasi-inertial, so there is
-    // no omega-cross term (unlike a rotation into the Earth-fixed ITRF).
+    // TEME -> GCRF. Rotating the velocity by the same quaternion as the
+    // position is correct: both frames are quasi-inertial, so there is no
+    // omega-cross term (unlike a rotation into the Earth-fixed ITRF).
     let q_gcrf = qteme2gcrf(time);
     let pos_gcrf = q_gcrf * teme;
     let vel_gcrf = q_gcrf * teme_vel;
@@ -181,11 +143,9 @@ fn propagate(tle: &mut TLE, time: &Instant) -> SatelliteState {
     )
 }
 
-/// Resolves a GCRF state vector to the same [`SatelliteState`] the SGP4
-/// pipeline produces: rotate into the Earth-fixed frame at `time`, then the
-/// shared geodetic round trip. The state must already be propagated to
-/// `time` - this only changes frames. The TLE-free half of the marker
-/// pipeline, for manually-controlled satellites.
+/// Resolves a GCRF state vector to the same [`SatelliteState`] the SGP4 arm
+/// produces - a pure frame change; the state must already be propagated to
+/// `time`.
 pub fn resolve_orbit(state: &OrbitState, time: &Instant) -> SatelliteState {
     let gcrf = Vector3::new([
         [state.pos_gcrf_m.x],
@@ -196,11 +156,10 @@ pub fn resolve_orbit(state: &OrbitState, time: &Instant) -> SatelliteState {
     state_from_itrf(&itrf, *state)
 }
 
-/// The shared Earth-fixed tail of the marker pipeline: ITRF meters ->
-/// geodetic lat/lon/height -> a world-space point rebuilt from our own WGS84
-/// helpers, so the marker sits on the exact ellipsoid the mesh is built from
-/// (the surface point at (lat, lon), raised along the geodetic normal by the
-/// altitude). `orbit` is passed through untouched.
+/// Shared Earth-fixed tail: ITRF meters -> geodetic -> a world point rebuilt
+/// from our own WGS84 helpers (surface point + geodetic normal * altitude).
+/// The geodetic round trip is deliberate: it lands the marker on the exact
+/// ellipsoid the impostor traces. `orbit` passes through untouched.
 fn state_from_itrf(itrf: &Vector3, orbit: OrbitState) -> SatelliteState {
     let coord = ITRFCoord::from_vector(itrf);
     let (lat_rad, lon_rad, hae_m) = coord.to_geodetic_rad();
@@ -232,12 +191,10 @@ fn simple_state(state: &OrbitState) -> SimpleState {
     packed
 }
 
-/// The shared `orbitprop` settings. Defaults: EGM96 gravity 4x4 (seeded from
-/// embedded bytes in `init_satkit`), Sun/Moon third-body (embedded DE440),
-/// solid tides, relativistic correction, adaptive RKV98 with dense output.
-/// Drag and solar radiation pressure only run when `propagate`'s `satprops`
-/// is Some, so every caller here passes None to keep satkit's space-weather
-/// loader (a satkit-data file this build does not embed) unreachable;
+/// Shared `orbitprop` settings: defaults (EGM96 4x4, Sun/Moon third-body,
+/// solid tides, relativity, adaptive RKV98 dense output). Drag/SRP only run
+/// when `propagate`'s `satprops` is Some - every caller here passes None to
+/// keep satkit's non-embedded space-weather loader unreachable;
 /// `use_spaceweather: false` is belt-and-suspenders for the same reason.
 fn numerical_settings() -> PropSettings {
     PropSettings {
@@ -246,11 +203,10 @@ fn numerical_settings() -> PropSettings {
     }
 }
 
-/// Numerically steps a GCRF state vector from `from` to `to` (one
-/// `orbitprop` integration, force model as [`numerical_settings`]). The
-/// manually-controlled satellite's per-frame re-anchor: the scene stores
-/// the returned state as its new initial conditions at `to`, so a burn's
-/// velocity change compounds into every later frame.
+/// Numerically steps a GCRF state from `from` to `to` (one `orbitprop`
+/// integration). The manual-control per-frame re-anchor: the scene stores
+/// the result as its new initial conditions at `to`, so a burn's velocity
+/// change compounds into every later frame.
 pub fn propagate_numerical(state: &OrbitState, from: &Instant, to: &Instant) -> OrbitState {
     let initial = simple_state(state);
     let result = orbitprop::propagate(&initial, from, to, &numerical_settings(), None)
@@ -262,10 +218,9 @@ pub fn propagate_numerical(state: &OrbitState, from: &Instant, to: &Instant) -> 
     }
 }
 
-/// The shape of the osculating orbit through a GCRF state vector, as plain
-/// panel-readout data: apsis altitudes and current speed. `pyclass` (fields
-/// readable via `get_all`) so a `*_py` scene's script can pull the same
-/// readouts its Rust sibling formats - the dual Rust/Python API.
+/// Osculating-orbit panel readout: apsis altitudes + current speed.
+/// `pyclass` (`get_all`) so a `*_py` scene's script reads the same readouts
+/// its Rust sibling formats.
 #[pyclass(module = "globe", get_all)]
 pub struct OrbitShape {
     /// Apoapsis height above Terra's mean radius, km.
@@ -276,12 +231,11 @@ pub struct OrbitShape {
     pub speed_m_s: f64,
 }
 
-/// Reads the osculating apsides + speed from a GCRF state vector, for the
-/// manual-control panel's burn feedback. Apsis radii come from the Keplerian
-/// `a`/`e` (`r = a(1 +/- e)`); altitudes are above the *mean* radius (a
-/// spherical convenience readout, not the marker's geodetic WGS84 altitude).
-/// `None` for a non-elliptic (e >= 1, escape) state, which has no apoapsis -
-/// same fallback as the path renderer's empty path.
+/// Osculating apsides + speed from a GCRF state vector. Apsis radii from the
+/// Keplerian `a`/`e` (`r = a(1 +/- e)`); altitudes are above the *mean*
+/// radius (a spherical convenience readout, not the marker's geodetic WGS84
+/// altitude). `None` for a non-elliptic (e >= 1, escape) state - no apoapsis
+/// exists; same fallback as the path renderer's empty path.
 pub fn orbit_shape(state: &OrbitState) -> Option<OrbitShape> {
     let pos = Vector3::new([
         [state.pos_gcrf_m.x],
@@ -302,24 +256,18 @@ pub fn orbit_shape(state: &OrbitState) -> Option<OrbitShape> {
     })
 }
 
-/// Propagates one full orbital period ahead of `time` and returns
-/// `segments + 1` world-frame sample points (km), the first at the object's
-/// current position. Dispatches on the marker's [`Propagation`]: one batch
-/// `sgp4` call, or one numerical `orbitprop` integration sampled through its
-/// dense output - a scene may mix both kinds. The numerical arm returns an
-/// **empty** vector for a non-elliptic (escape) state, which has no period;
-/// the renderer skips such a path.
+/// Propagates one full period ahead of `time`, returning `segments + 1`
+/// world-frame samples (km), the first at the current position. The
+/// numerical arm returns an EMPTY vector for a non-elliptic (escape) state,
+/// which has no period; the renderer skips such a path.
 ///
-/// Frame treatment (shared by both arms) differs from the marker on purpose:
-/// every inertial-frame sample is rotated into the Earth-fixed frame with the
-/// SINGLE rotation at `time`, not each sample's own future rotation. That
-/// renders the orbit as the star-fixed inertial ellipse - a closed curve that
-/// Terra rotates under - rather than the open ground-track-like curve the
-/// per-sample rotation would give. The path floats at orbital altitude, so no
-/// geodetic round trip through the WGS84 helpers is needed (that exists on
-/// the marker only to land it on the exact mesh ellipsoid); ITRF meters map
-/// to world km by the axis permutation P alone (world (x,y,z) = ITRF (y,z,x),
-/// see `coordinates.md`).
+/// Frame treatment (both arms) deliberately differs from the marker: every
+/// inertial sample is rotated Earth-fixed with the SINGLE rotation at
+/// `time`, not each sample's own future rotation - rendering the star-fixed
+/// inertial ellipse (a closed curve Terra rotates under), not a ground
+/// track. The path floats at altitude, so no geodetic round trip (that
+/// exists on the marker only); ITRF m -> world km is the plain permutation P
+/// (see `coordinates.md`).
 pub fn orbit_path_inertial(prop: &Propagation, time: &Instant, segments: usize) -> Vec<DVec3> {
     match prop {
         Propagation::Sgp4(tle) => orbit_path_sgp4(tle, time, segments),
@@ -334,20 +282,19 @@ fn path_sample_times(time: &Instant, period_s: f64, segments: usize) -> Vec<Inst
         .collect()
 }
 
-/// ITRF meters -> world km: the axis permutation P (world (x,y,z) =
-/// ITRF (y,z,x)) plus the unit change. See `coordinates.md`.
+/// ITRF meters -> world km: the permutation P (world (x,y,z) = ITRF (y,z,x))
+/// plus the unit change.
 fn world_km_from_itrf_m(itrf: &Vector3) -> DVec3 {
     DVec3::new(itrf[1] / 1000.0, itrf[2] / 1000.0, itrf[0] / 1000.0)
 }
 
-/// The SGP4 path arm: one batch call over the TLE, period from the element
-/// set's mean motion.
+/// SGP4 path arm: one batch call; period from the element set's mean motion.
 fn orbit_path_sgp4(tle: &TLE, time: &Instant, segments: usize) -> Vec<DVec3> {
-    // `sgp4` needs `&mut` (it caches its propagator init in the TLE), but the
-    // caller's TLE sits behind a shared `RenderState` borrow - clone locally.
+    // `sgp4` needs `&mut` (it caches its propagator init in the TLE), but
+    // the caller's TLE sits behind a shared borrow - clone locally.
     let mut tle = tle.clone();
 
-    // TLE mean motion is revolutions per day, so one period in seconds:
+    // TLE mean motion is revolutions per day.
     let period_s = 86_400.0 / tle.mean_motion;
     let times = path_sample_times(time, period_s, segments);
     let state = sgp4(&mut tle, &times).expect("sgp4 orbit path propagation");
@@ -365,9 +312,8 @@ fn orbit_path_sgp4(tle: &TLE, time: &Instant, segments: usize) -> Vec<DVec3> {
         .collect()
 }
 
-/// The numerical path arm: satkit's `orbitprop` integrator from the GCRF
-/// initial conditions - no TLE involved. One `propagate` over the period,
-/// then all samples from its dense output in one `interp_batch`.
+/// Numerical path arm: one `orbitprop` propagate over the period, all
+/// samples from its dense output in one `interp_batch`.
 fn orbit_path_numerical(state: &OrbitState, time: &Instant, segments: usize) -> Vec<DVec3> {
     let pos = Vector3::new([
         [state.pos_gcrf_m.x],
@@ -380,12 +326,10 @@ fn orbit_path_numerical(state: &OrbitState, time: &Instant, segments: usize) -> 
         [state.vel_gcrf_m_s.z],
     ]);
 
-    // Period from the osculating elements (depends only on the semi-major
-    // axis, so circular/equatorial angle singularities cannot bite). Errs
-    // only for a non-elliptic (e >= 1) state, which a manually-controlled
-    // satellite can reach by burning to escape - "one period ahead" then has
-    // no meaning, so return the empty path (the renderer skips it) rather
-    // than panic.
+    // Period from the osculating elements depends only on the semi-major
+    // axis, so circular/equatorial singularities cannot bite. e >= 1
+    // (escape, reachable by burning) has no period - return the empty path
+    // (the renderer skips it) rather than panic.
     let Ok(kepler) = Kepler::from_pv(pos, vel) else {
         return Vec::new();
     };
@@ -416,7 +360,7 @@ fn orbit_path_numerical(state: &OrbitState, time: &Instant, segments: usize) -> 
 mod tests {
     use super::*;
 
-    /// Terra's GM (EGM96, m^3/s^2) - used only to construct the test state's
+    /// Terra's GM (EGM96, m^3/s^2) - only to construct the test state's
     /// circular speed; the propagator brings its own force model.
     const MU_M3_S2: f64 = 3.986004418e14;
     /// Test orbit radius, meters (~407 km above the mean radius).
@@ -434,13 +378,12 @@ mod tests {
         (state, time)
     }
 
-    /// The TLE-free pipeline must hold a circular LEO: the shape readout
-    /// reports the constructed altitude/speed, ten minutes of numerical
-    /// propagation stays on the (near-)circle while moving along track, and
-    /// the marker resolution lands the world point on the orbit radius near
-    /// the equator. Loose km-scale tolerances absorb the full force model
-    /// (J2 & co.) against the two-body construction; a frame or unit mix-up
-    /// misses by orders of magnitude.
+    /// The TLE-free pipeline must hold a circular LEO: shape readout matches
+    /// the constructed altitude/speed, ten minutes of propagation stays on
+    /// the (near-)circle while moving along track, and the resolved marker
+    /// lands on the orbit radius near the equator. Loose km-scale tolerances
+    /// absorb the full force model (J2 & co.) vs the two-body construction;
+    /// a frame or unit mix-up misses by orders of magnitude.
     #[test]
     fn numerical_pipeline_holds_circular_leo() {
         crate::engine::scene::celestial_sphere::init_satkit_for_tests();

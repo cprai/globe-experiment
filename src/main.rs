@@ -3,21 +3,10 @@ mod scenes;
 
 use clap::{Parser, Subcommand};
 
-// Deriving `Parser` directly on an enum makes each variant a top-level
-// subcommand - no wrapper struct or separate top-level `Subcommand` enum
-// needed. (Switch to a struct with a `#[command(subcommand)]` field only if
-// global flags shared across all subcommands are ever wanted.) The `///` doc
-// comment below is the user-facing `about` text, so keep it free of
-// implementation notes like this.
 /// Solar System: an astronomically-accurate solar-system renderer with
 /// satellite tracking (past scenes only). This CLI runs a past scene in
-/// an interactive window (`scene`); the actual setup lives in the
-/// `scenes` modules. `main` does nothing but parse args and dispatch.
-/// (Single-frame image rendering lives in the separate `headless` binary.)
-//
-// No explicit `name`: clap defaults the command name to `CARGO_PKG_NAME` (the
-// Cargo.toml package name, "globe-experiment"), so there's no string to keep in
-// sync. `version`/`about` likewise come from the package metadata / doc comment.
+/// an interactive window (`scene`). (Single-frame image rendering lives
+/// in the separate `headless` binary.)
 #[derive(Parser)]
 #[command(version, about)]
 enum Cli {
@@ -25,9 +14,8 @@ enum Cli {
     /// subcommand declaring exactly the arguments it takes (`scene <name>
     /// --help` shows them; only the Python-paneled scenes take `--script`).
     /// Omit the name to list the available scenes.
-    // `arg_required_else_help` makes the bare `scene` invocation print this
-    // help - the scene list - instead of clap's terse missing-subcommand
-    // error.
+    // arg_required_else_help: bare `scene` prints the scene list instead of
+    // clap's terse missing-subcommand error.
     #[command(arg_required_else_help = true)]
     Scene {
         #[command(subcommand)]
@@ -35,14 +23,10 @@ enum Cli {
     },
 }
 
-/// The set of available scenes, one subcommand per scene so each declares
-/// its own arguments: the per-scene `Args` structs live beside their scenes
-/// in `scenes/*` (only the `*_py` scenes have a `--script`, and clap itself
-/// enforces the pairing - a non-Python scene rejects it as an unknown
-/// argument). The `command(name = ...)` keeps the CLI tokens snake_case
-/// (clap would kebab-case the variant names) so the command reads
-/// `scene iss_and_hubble`. The `///` per-variant docs are the help text
-/// clap shows.
+/// One subcommand per scene, so each declares its own arguments (the
+/// per-scene `Args` structs live beside their scenes; clap itself enforces
+/// which scenes take `--script`). Explicit `command(name = ...)` keeps the
+/// CLI tokens snake_case (clap would kebab-case the variant names).
 #[derive(Subcommand)]
 enum SceneCommand {
     /// The International Space Station only.

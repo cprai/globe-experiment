@@ -1,9 +1,6 @@
-//! Lunar-eclipse scene: the 2025-03-14 total lunar eclipse, with no tracked
-//! objects - just the celestial sphere wound to the event, so Terra's
-//! shadow falls on Luna and turns it a coppery "blood-red Luna" (CLI:
-//! `globe-experiment scene lunar_eclipse`). Like `solar_eclipse` it carries
-//! no `Satellite` list; its clock starts directly from the eclipse datetime,
-//! and it draws no markers.
+//! Lunar-eclipse scene: the 2025-03-14 total lunar eclipse, no tracked
+//! objects - Terra's shadow turns Luna blood-red (CLI: `globe-experiment
+//! scene lunar_eclipse`).
 
 use satkit::Instant;
 
@@ -18,56 +15,40 @@ use crate::engine::ui::{
     UIDrawable, UIDrawablePanel,
 };
 
-/// Eye distance for the Luna framing (km): ~2 lunar radii above the surface, so
-/// the eclipsed disc fills the frame with a little margin (the camera orbits
-/// Luna, so the distance is relative to its surface, not Terra's).
+/// Eye distance for the Luna framing (km): ~2 lunar radii above the surface,
+/// so the eclipsed disc fills the frame with a little margin (the camera
+/// orbits Luna, so the distance is relative to its surface, not Terra's).
 const VIEW_DISTANCE_KM: f64 = 3500.0;
 
-/// Empty lunar-eclipse simulation: just the clock; no satellites. Its Camera
-/// Target panel switches the view between orbiting Luna (the default
-/// blood-red-Luna framing) and orbiting Terra by writing `camera_target`
-/// directly. No celestial sphere is stored - `CelestialSphere::at` is a pure
-/// function of time, so `frame_state` evaluates it fresh at each frame's
-/// clock instant (`new` builds a throwaway one for the initial framing).
+/// Empty lunar-eclipse simulation: just the clock; no satellites. A Terra /
+/// Luna Camera Target panel writes `camera_target` directly.
 pub struct LunarEclipseScene {
-    /// Simulation clock (datetime + play/paused + speed), reached only via
-    /// the `SceneClock` API - the Time panel's Run-toggle/speed-slider
-    /// callbacks included, which receive the scene at fire time and call the
-    /// setters directly.
     clock: Clock,
-    /// The body the camera orbits - owned by the scene, not the camera, and
-    /// passed into every camera call that scales by or centers on it.
-    /// Written directly by the Camera Target panel's key callbacks (via
-    /// [`Self::set_camera_target`], which reframes the camera on a genuine
-    /// Luna<->Terra switch).
+    /// Written directly by the Camera Target keys via
+    /// [`Self::set_camera_target`] (reframes on a genuine switch).
     camera_target: CameraTarget,
-    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
-    /// animations), seeded orbiting Luna with the eclipsed near side framed.
     camera: PtzCamera,
 }
 
 impl LunarEclipseScene {
     fn new() -> Self {
-        // ~30 min before greatest eclipse (06:58 UTC) - the start of totality -
-        // so the auto-playing clock runs through the deep umbral phase. Well
-        // inside the bundled EOP range (1962-01-01 .. build date).
+        // ~30 min before greatest eclipse (06:58 UTC) - the start of totality
+        // - so the auto-playing clock runs through the deep umbral phase.
+        // Well inside the bundled EOP range (1962-01-01 .. build date).
         let epoch =
             Instant::from_datetime(2025, 3, 14, 6, 28, 0.0).expect("valid lunar-eclipse datetime");
-        // `scene::init` must already have run (the celestial sphere reads
-        // satkit globals). Framed at the epoch - the clock has not ticked yet.
+        // Throwaway sphere at the epoch for the launch framing (the clock has
+        // not ticked yet); `scene::init` must already have run.
         let celestial_sphere = CelestialSphere::at(&epoch);
 
-        // Orbit Luna, looking at its Terra-facing near side (which is the side
-        // in Terra's shadow - the blood-red Luna). Looking *toward* Luna
-        // places the eye on its Terra-facing side, so Terra is behind the
-        // camera and never occludes the disc - no limb nudge needed. The
-        // Terra->Luna direction: the celestial sphere is heliocentric, so this
+        // Looking *toward* Luna puts the eye on its Terra-facing (eclipsed)
+        // side, so Terra is behind the camera and never occludes the disc -
+        // no limb nudge needed. The sphere is heliocentric, so the direction
         // is Luna's center minus Terra's center, not Luna's raw position.
         let center = celestial_sphere.luna().placement.pos_world
             - celestial_sphere.center_world(CelestialBody::TERRA);
-        // Default to orbiting Luna - the whole point is the blood-red Luna;
-        // the camera_target starts on the body the framing below orbits
-        // (the Camera Target panel's Luna key).
+        // Seed camera_target with the body the framing orbits, so the first
+        // frame does not reframe.
         let camera_target = CameraTarget::Body(CelestialBody::LUNA);
         let camera = PtzCamera::looking_toward(
             &camera_target,
@@ -83,12 +64,10 @@ impl LunarEclipseScene {
         }
     }
 
-    /// Switches the orbited body - the Camera Target panel keys' fire-time
-    /// callback. A genuine switch reframes the camera on the spot
-    /// (full-frame distance, re-aim, in-flight animations dropped) against
-    /// the sphere at the current clock instant; re-selecting the already
-    /// orbited body is a no-op, which also keeps the callback idempotent
-    /// under egui's discard-pass double fire.
+    /// Switches the orbited body - the Camera Target keys' fire-time
+    /// callback. A genuine switch reframes the camera; re-selecting the
+    /// orbited body no-ops, keeping the callback idempotent under egui's
+    /// discard-pass double fire.
     fn set_camera_target(&mut self, target: CameraTarget) {
         if self.camera_target.same_kind(&target) {
             return;
@@ -108,19 +87,11 @@ impl SceneClock for LunarEclipseScene {
 
 impl Scene for LunarEclipseScene {
     fn advance(&mut self) {
-        // Nothing scene-specific: the clock tick lives in `tick_scene` (any
-        // Camera Target key press or Time-panel edit already landed directly
-        // during the previous egui pass), and `frame_state` re-derives the
-        // celestial sphere at the frame's clock instant.
+        // Nothing scene-specific.
     }
 }
 
 impl ScenePtzCamera for LunarEclipseScene {
-    // The accessors behind the blanket `CameraControl` impl, which forwards
-    // every input event into the embedded camera: where the camera and the
-    // scene-owned orbit target live in this struct. A scene that needs to
-    // diverge (gate input, swap the camera kind) implements `CameraControl`
-    // directly instead.
     fn camera(&self) -> &PtzCamera {
         &self.camera
     }
@@ -137,25 +108,12 @@ impl ScenePtzCamera for LunarEclipseScene {
 impl CameraView for LunarEclipseScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock_now();
-        // This frame's celestial sphere, evaluated on the spot: `at` is a
-        // pure function of time, so it needs no stashing between frames (the
-        // renderer re-derives the same sphere from `RenderState.time`).
         let sphere = CelestialSphere::at(&now);
 
-        // Resolve the inertial rig into the render frame (the moving Luna
-        // center is re-resolved from the ephemeris inside `world_rig`). Any
-        // Luna<->Terra switch already landed - and reframed the camera -
-        // directly in the Camera Target key's callback (`set_camera_target`)
-        // during the previous egui pass, so the target here is simply the
-        // scene-owned one. The target packed below is the same one the rig
-        // was built for.
         let celestial_to_world = sphere.star_rot_inv.transpose();
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        // No satellites: an empty marker list. The renderer derives the Terra
-        // system from the frame's time; the target (Luna or Terra)
-        // keeps the origin at Terra either way.
         RenderState {
             time: now,
             camera_target: target,
@@ -169,33 +127,19 @@ impl CameraView for LunarEclipseScene {
 
 impl UIDrawable for LunarEclipseScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
-        // The Time panel (datetime + run/speed) plus the Terra / Luna
-        // Camera Target panel. The panel builders are deliberately kept
-        // per-scene - scenes may diverge in what they expose.
-        //
-        // Snapshot the displayed values up front (owned `String`/`f32`/`bool`)
-        // - the panels are owned and never borrow the scene. The control
-        // callbacks receive the scene as `&mut Self` at fire time and call
-        // the SceneClock setters directly; each stays idempotent under
-        // egui's discard-pass double fire by writing snapshot-derived values
-        // (the Run toggle sets the pre-click `running`, never a re-read
-        // flip).
+        // Snapshot displayed values up front - the panels are owned and
+        // never borrow the scene.
         let datetime = self.clock_datetime_label();
-        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
-        // font is monospace, so a fixed-width value keeps the digit window
-        // from resizing as the speed changes.
+        // Padded to the widest value (monospace font) so the digit window
+        // does not resize as the speed changes.
         let speed = format!("{:>5.1}", self.clock_multiplier());
         let running = !self.clock_paused();
 
-        // Exponential (base e) speed: the slider edits the exponent, so
-        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
-        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        // The slider edits the exponent: multiplier = e^exp, so 1x at the
+        // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
-        // The producer groups instruments into rows + picks content only; all
-        // styling and every metric live in the instrument modules / theme
-        // (taffy bottom-aligns the Run key with the speed window beside it).
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Time".to_string(),
@@ -216,7 +160,8 @@ impl UIDrawable for LunarEclipseScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    // Pausing = setting the snapshotted pre-click `running`.
+                    // Writes the pre-click snapshot - keep idempotent: egui's
+                    // discard pass can fire this twice per frame.
                     on_toggle: Box::new(move |scene: &mut Self| scene.set_clock_paused(running)),
                 }),
             ],
@@ -233,12 +178,9 @@ impl UIDrawable for LunarEclipseScene {
             rows: time_rows,
         }];
 
-        // The Terra / Luna Camera Target panel: two latching keys splitting
-        // one row, the orbited body lit. Each key's callback receives the
-        // scene at fire time and writes the camera target directly through
-        // `set_camera_target` (which reframes on a genuine switch and
-        // no-ops on the already-orbited body - idempotent) - the scene holds
-        // no selection state beyond `camera_target` itself.
+        // Terra / Luna Camera Target keys: each writes its fixed body through
+        // `set_camera_target` (no-op on re-select - idempotent); the scene
+        // holds no selection state beyond `camera_target` itself.
         let luna_active = self
             .camera_target
             .same_kind(&CameraTarget::Body(CelestialBody::LUNA));
@@ -275,15 +217,12 @@ impl UIDrawable for LunarEclipseScene {
     }
 }
 
-/// The `scene lunar_eclipse` CLI arguments - none today. Each scene
-/// subcommand declares its own arguments, so a future flag for this scene is
-/// added here, not in `main` (which only dispatches).
+/// The `scene lunar_eclipse` CLI arguments - none today.
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the lunar-eclipse scene already orbiting Luna (the eclipsed
-/// near-side disc centered - the camera is seeded in `new`) and hands off to
-/// the winit event loop.
+/// Builds the lunar-eclipse scene (camera seeded orbiting Luna in `new`) and
+/// runs the winit event loop.
 pub fn run(_args: Args) {
     scene::init();
 

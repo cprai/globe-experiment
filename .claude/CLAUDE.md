@@ -1,197 +1,74 @@
 # CLAUDE.md
 
-Project rules and conventions for **Solar System**, an astronomically-accurate
-solar-system renderer with satellite tracking (past scenes only). Rules are in
-`.claude/rules/` — topic files load at launch or when you open matching
-files. Read all loaded rules before making changes.
+Project rules for **Solar System**, an astronomically-accurate solar-system
+renderer with satellite tracking (past scenes only). Topic rules live in
+`.claude/rules/` — some load at launch, path-scoped ones when you open
+matching files. Read loaded rules before making changes.
 
-**When `.claude/rules/*.md` and the source disagree, the source wins.**
-Look-tuning constants in `scene.wgsl` in particular drift between sessions.
+**When rules/docs and the source disagree, the source wins.**
 
-**After completing all changes, print a one-line commit message describing the
-currently uncommitted changes — as an example only. Do NOT make any commits.**
+**After completing all changes, print a one-line commit message describing
+the currently uncommitted changes — as an example only. Do NOT commit.**
 
-## Code search: prefer serena, then the codebase-memory MCP (see the `codebase-search` skill)
+## Code search: prefer symbol search over grep/whole-file reads
 
-Whenever code needs to be searched, or before planning/making major code
-changes, **prefer symbol search over grep/glob/whole-file reads** — it
-returns exact symbols and precise source ranges, saving agent token cost. Two
-MCP tools cover this, in order:
+The `codebase-search` skill has the routing table. In order:
 
-1. **serena** (LSP-backed) is the **primary** searcher for every language it
-   is configured for in `.serena/project.yml` — currently **Rust**, **WGSL**
-   (`shaders/scene.wgsl`, via the hlsl/shader-language-server), and **Python**
-   (`scenes/*.py`). It is **live** — it reads the working tree through the
-   language servers, so there is **no index to refresh** — and gives
-   LSP-accurate structure, definitions, references, and implementations
-   (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`,
-   `find_implementations`).
-2. **codebase-memory-mcp** (the Rust knowledge graph) is kept for what serena
-   cannot do: **call-graph tracing** (`trace_path`), **Cypher/aggregation
-   queries** (`query_graph`), **complexity hotspots**, and **indexing
-   dependency-crate source** (satkit/wgpu/egui). It is a snapshot — re-index
-   before/after use.
+1. **serena** (LSP-backed, live — no index) for Rust, WGSL
+   (`shaders/scene.wgsl`), and Python (`scenes/*.py`) symbol lookup,
+   references, and structure.
+2. **codebase-memory-mcp** for what serena cannot do: call-graph tracing,
+   Cypher/aggregation queries, complexity hotspots, dependency-crate source.
+   It is a snapshot — re-index before use.
 
-The `codebase-search` skill has the routing table, serena notes, and the
-codebase-memory cheat sheet + re-index commands. Plain Grep/Read remain right
-for genuinely non-code files (`Cargo.toml`, `.claude/` docs, `OUT_DIR`), and
-always `Read` a file before editing.
-
----
+Plain Grep/Read for non-code files; always `Read` a file before editing.
 
 ## What this is
 
-Rust (edition 2024), winit 0.30, wgpu 29, egui 0.34. Physically-lit WGS84
-Terra in world-space km, Hillaire-2020 atmosphere, star/Sol/**Luna** from JPL
-DE440 ephemeris + real EOP, satellite TLE tracking via satkit SGP4 (each
-tracked satellite also draws its **predicted orbit path**: the marker carries
-a `Propagation` - a cloned TLE element set or a GCRF state vector - and the
-renderer propagates it one period ahead with the matching backend (analytic
-SGP4, or numerical satkit `orbitprop` needing no TLE - what the
-**manually-controlled satellite** flies on: the `manual_control` scene
-seeds one object from the ISS TLE, re-anchors its GCRF state vector to the
-clock each frame, and its bottom-center **Burns panel** of six hold-to-fire
-keys (prograde/retrograde, normal/anti-normal, radial out/in) integrates a
-game-strength thrust into the velocity while held, with apo/peri/speed
-readouts; a scene may mix both backends, and `iss_and_hubble`
-does), rendering the star-fixed
-inertial ellipse as a thick depth-tested line whose tail fades out sharply
-near one full orbit), inertial
-(star-fixed) camera that orbits a selectable **target** (Terra, Luna, or
-any of the **seven planets** in the `solar_system` scene via a Camera Target
-panel (one key per body); Luna in the eclipse scenes via a Terra/Luna
-panel; every such panel key writes the scene's `camera_target` directly
-(reframing the camera on a genuine switch) - there are no selector types; the `headless`
-binary picks the body with `camera.target` "terra"/"luna"/"mars"/... ),
-simulation clock (1x-100x, plays from launch). Luna is
-a triaxial ellipsoid at true scale/distance, oriented by the full IAU lunar
-rotation (correct near side + libration), lit by Sol, with **mutual
-Terra/Luna eclipse shadows** (solar-eclipse spot on Terra, lunar-eclipse "blood-red
-Luna"). The **seven planets** (`src/engine/planet.rs`) are triaxial ellipsoids
-(equal equatorial axes — their familiar oblate forms) at true
-position/scale (DE440, heliocentric-framed), oriented by the IAU planet rotation and
-sun-lit with simple Lambert. **EVERY body — Terra, the seven planets, and
-Luna — is drawn as a single shader impostor** (no mesh anywhere in the
-engine): the CPU projects the body center to screen space in `prepare` and the
-GPU draws one camera-facing quad whose fragment shader ray-traces the triaxial
-ellipsoid (Terra = the WGS84 spheroid), writing per-fragment depth so bodies
-occlude each other. Shading is **data-driven per body** (`planet::Maps` +
-feature flags in the per-body uniform): a bare-albedo body gets plain
-hard-terminator Lambert; Terra's row carries night/normal/specular maps +
-`has_atmosphere`, lighting up the full look (normal-map relief, GGX ocean
-glint, transmittance-tinted sunlight, emissive city lights) in the same
-`fs_planet`. The trace is **distance-adaptive**:
-perspective (eye-ray, reconstructed via `inv_view_proj`) for a near/orbited
-body, orthographic (parallel-ray, f32-safe) for a distant one — classified per
-frame by apparent angular size. **Same-system eclipse shadows are generic**:
-each impostor's uniform carries an occluder list filled from
-`CelestialBody::same_system` (Terra shadows Luna — the blood-red lunar
-eclipse — and Luna shadows Terra — the solar-eclipse spot; a future moon
-system self-shadows with no renderer change), with a
-per-body Sol angular radius for the penumbra. Because bodies sit
-millions-to-billions of km
-out (past f32 precision), **all rendering is done in a camera-target-local
-"render frame"**: positions are expressed relative to the camera target's
-center, so
-the orbited body sits at a bit-exact zero and far planets do not jitter. (The
-`CelestialSphere` itself is **heliocentric** — Sol at the origin, Terra at
-`-sol_geo` — and stores body placements as **f64** (`DVec3` centers, `DMat3`
-rotations); **all CPU-side computation is f64 end to end** — celestial sphere,
-the camera (`PtzCamera` rig + input, `DVec3`/`DQuat`), satellite pipeline, and
-the renderer's `prepare`/view-projection math (`DMat4`) — with f32 appearing only
-at the GPU uniform/instance upload and in egui-facing readouts. f64 is
-required: an f32 heliocentric-minus-origin cancels catastrophically.) The
-renderer derives every body's position/orientation from the frame's **time**
-(`CelestialSphere::at`); `RenderState` carries only the time, the camera rig, the
-camera target, and satellite markers. There is no Earth-fixed origin or
-`sol_dir` in the render path — every body is lit from Sol *position*. All nine
-bodies draw from every vantage; the **atmosphere** (a screen quad, drawn when
-a `has_atmosphere` body sits at the render origin — Terra/Luna targets today)
-and the **satellite overlays** (orbit paths + markers, Terra-frame positions)
-are the only gated passes. For Terra/Luna (render origin at Terra)
-geometry stays Terra-local. A **reversed-Z depth buffer** (Depth32Float) makes
-Terra occlude Luna. **Past scenes only** (before build date) — what makes full EOP accuracy
-attainable. The crate is named `globe-experiment`; `iced` is gone, do not
-reintroduce it. **Saturn's rings are not yet rendered** (deferred).
+Rust (edition 2024) on winit + wgpu + egui/egui_taffy, satkit
+(SGP4/ephemeris/EOP), pyo3 (embedded CPython, unconditional — every build
+needs Python 3 dev headers). Crate `globe-experiment`; `iced` is gone, do not
+reintroduce it.
 
-**Python scene scripting (pyo3 0.29, embedded CPython — unconditional
-dependency, every build needs Python 3 dev headers):** the `manual_control_py`
-and `solar_system_py` scenes are clones of their Rust siblings whose
-`UIDrawable::get_drawables` delegates to a script whose path is the scene's
-**required `--script` argument** (`scene manual_control_py --script
-scenes/manual_control_py.py`; each scene is its own clap subcommand with its
-own `Args` struct, so the non-Python scenes reject `--script` natively; the
-repo ships the reference scripts in the repo-root `scenes/` directory),
-**read at runtime** — edit + relaunch, no rebuild (the one deliberate
-exception to "everything embedded"). The script imports the embedded `globe` module
-(instruments, `Panel`/`PanelAnchor`, `Interactive*` twins holding Python
-callables, `Clock` (registered only for its `MIN`/`MAX_MULTIPLIER`
-classattrs), readout types — the dual Rust/Python UI
-API) and receives the live scene, itself a `#[pyclass]` (see `scenes.md`)
-whose `paused`/`multiplier`/`datetime_label()` properties (and, in
-`solar_system_py`, `selected_body`/`body_names()`/`request_body(i)` — the
-camera-target twin of the clock properties) — a snapshot/request mirror of
-the wrapper-owned clock behind the `SceneClock` trait API
-(`engine::scene::clock`, which holds all the
-clock logic as trait default methods; `Clock` itself is plain data;
-implementing `SceneClock` is also what grants every scene the `Scene`
-trait's provided `tick_scene` — clock tick + scene-specific
-`advance()` — that the application calls each frame) — are
-how a script reads and drives the clock (no `Clock` instance crosses into
-Python).
-Both scene pairs live side by side so the two APIs can be compared.
+Terra, Luna, and the seven planets at true position/scale from JPL DE440 +
+real EOP, each drawn as a single shader impostor (no meshes anywhere) with
+data-driven per-body shading; Hillaire-2020 atmosphere; mutual eclipse
+shadows. Satellite tracking via SGP4 or numerical propagation, with predicted
+orbit paths and a manually-thrustable satellite. Inertial (star-fixed) camera
+orbiting a selectable target; simulation clock (1x–100x). **Past scenes
+only** (before build date) — what makes full EOP accuracy attainable.
+Saturn's rings are not yet rendered (deferred).
 
-The crate builds **two binaries over one shared `src/engine/`** (no lib
-crate): `globe-experiment` (`src/main.rs`, the windowed app + scenes) and
-`headless` (`src/headless.rs`, the single-frame PNG renderer). Both bin roots
-declare `mod engine;` (everything used to run the app: `application`, `camera`,
-`planet`, `py`, `renderer`, `scene`, `ui`); the trees differ
-only at the top level — `scenes` exists only in the main tree, `offscreen`
-only in the headless tree. The headless binary compiles (but never calls) the
-winit-bound `engine::application` and links libpython without ever
-initializing the interpreter; its crate-level `allow(dead_code)` covers
-both.
-
----
+Two binaries over one shared `src/engine/` (no lib crate): `globe-experiment`
+(windowed app + `src/scenes/`) and `headless` (single-frame PNG). The `*_py`
+scenes load their UI panels from a runtime Python script (the required
+`--script` argument; reference scripts in repo-root `scenes/`) — edit +
+relaunch, no rebuild. See `architecture.md`.
 
 ## Build & run
 
 ```sh
 cargo run --release          # the windowed app (default-run = globe-experiment)
-# The separate `headless` binary renders one frame to a PNG (flat flags, no
-# subcommand). It takes ONE --scene JSON (simulation + camera + optional ui);
-# the output target (--output, --width, --height) stays as CLI flags. Unknown
-# JSON keys are rejected (deny_unknown_fields).
+# headless: one frame to PNG. ONE --scene JSON (simulation + camera +
+# optional ui); output target stays as CLI flags. Unknown JSON keys rejected.
 cargo run --release --bin headless -- --output frame.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
-# Add a "ui" section (Vec<ui::UiPanel>) to overlay mock UI panels for
-# headless UI-layout debugging. A panel is a corner anchor + "rows" (outer
-# array = top-to-bottom rows, inner = left-to-right instruments); taffy
-# computes all positions and the panel size, so the JSON carries no pixels:
-cargo run --release --bin headless -- --output mock.png --scene \
-    '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
-      "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0},
-      "ui":[{"anchor":"top_left","rows":[
-        [{"header":{"title":"Time / Subsolar"}}],
-        [{"readout":{"label":"UTC","value":"12:30:00"}}],
-        [{"dual_readout":{"left_label":"Lat","left_value":"-21",
-          "left_unit":"deg","right_label":"Lon","right_value":"-5",
-          "right_unit":"deg"}}],
-        [{"toggle":{"label":"Run","active":true}},
-         {"lamp":{"label":"Signal","status":"ok"}}],
-        [{"slider":{"value":0.5,"range":[0,4.6]}}]]}]}'
+# Optional "ui" section (Vec<ui::UiPanel>) overlays mock panels for layout
+# debugging: corner anchor + "rows" (outer = top-to-bottom, inner =
+# left-to-right instruments); taffy computes all sizes, no pixels in the JSON.
+# Instruments: header/readout/dual_readout/button/toggle/lamp/slider, e.g.
+#   "ui":[{"anchor":"top_left","rows":[
+#     [{"header":{"title":"Time"}}],
+#     [{"readout":{"label":"UTC","value":"12:30:00"}}],
+#     [{"toggle":{"label":"Run","active":true}},
+#      {"lamp":{"label":"Signal","status":"ok"}}]]}]
 ```
 
-First build: slow (~1.5 min extra), needs network. `build.rs` downloads 13
-textures (JPEG/TIFF verbatim: Terra x4, stars, Luna, + 7 planets — five 8K,
-two 2K), the JPL ephemeris (~98 MB), `EOP-All.csv`, the three IERS-2010
-tables, and the EGM96 gravity coefficients (~5.4 MB, for the numerical orbit
-propagator) into `OUT_DIR`; bakes 3 atmosphere LUTs as f16 KTX2. Subsequent builds reuse cached files. Delete a file in
-`OUT_DIR` to re-download it. **VRAM** is ~1.5 GB (the twelve native-res
-impostor-body maps — 9 albedos + Terra's night/normal/specular, all group 1 —
-total ~1.35 GB; group 0 keeps only the stars map + the 3 LUTs; see
-`constraints.md`).
+First build is slow (~1.5 min extra, needs network): `build.rs` downloads the
+textures, ephemeris, EOP, IERS tables, and gravity coefficients into
+`OUT_DIR` and bakes the atmosphere LUTs. Later builds reuse them; delete a
+file in `OUT_DIR` to refresh it. VRAM is ~1.5 GB (see `constraints.md`).
 
 **WGSL is compiled by naga at runtime, not during `cargo build`.** Validate
 after every shader edit:
@@ -200,10 +77,7 @@ after every shader edit:
 naga --compact --capabilities none shaders/scene.wgsl
 ```
 
-**Python scene scripts** (`scenes/*.py`) are formatted with `ruff format` and
-type-checked with `ty check` after edits (see the `format-python` /
-`check-python-ty` skills). `ty` currently reports the embedded `globe` module
-as unresolved (no stubs exist for the pyo3 module yet) — ignore those
-diagnostics for now, but fix anything else it flags. naga stays the
-authoritative WGSL error check; serena is for *querying* the shader, not
-linting it.
+**Python scene scripts** (`scenes/*.py`): `ruff format` + `ty check` after
+edits (`format-python` / `check-python-ty` skills). `ty` reporting the
+embedded `globe` module as unresolved is expected (no stubs yet) — ignore
+that, fix anything else.

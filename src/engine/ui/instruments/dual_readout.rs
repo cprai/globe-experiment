@@ -5,17 +5,10 @@ use super::readout::readout_block;
 use super::{Instrument, leaf};
 use crate::engine::ui::theme::SPACE_XXL;
 
-/// Two labelled values side by side on one row, for compact paired readouts
-/// (e.g. LAT / LON). Reuses [`super::Readout`]'s digit window (label above,
-/// value + optional unit block below) for each half.
-///
-/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly (the
-/// units default empty, so pre-unit JSON still parses); `Clone` so
-/// [`crate::engine::ui::PanelSet`] can hand a copy out of its borrowing
-/// `get_drawables` (and the Python bridge out of its pyclass cell); `pyclass`
-/// for the dual Rust/Python UI API - the Python constructor interleaves the
-/// units (`left_label, left_value, left_unit, right_...`) to match the field
-/// order, with the units defaulting empty like the serde defaults.
+/// Two labelled values side by side (e.g. LAT / LON), reusing
+/// [`super::Readout`]'s digit window per half. The Python constructor
+/// interleaves the units to match the field order, with the units defaulting
+/// empty like the serde defaults.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 #[pyclass(module = "globe", from_py_object)]
@@ -64,8 +57,8 @@ impl<S> Instrument<S> for DualReadout {
         leaf(tui, taffy::Style::default(), |ui| {
             ui.horizontal_top(|ui| {
                 readout_block(ui, &self.left_label, &self.left_value, &self.left_unit);
-                // A wider-than-row gap between the pair, so the two windows
-                // read as one paired instrument rather than two columns.
+                // Wider-than-row gap so the pair reads as one instrument,
+                // not two columns.
                 ui.add_space(SPACE_XXL);
                 readout_block(ui, &self.right_label, &self.right_value, &self.right_unit);
             });

@@ -1,38 +1,27 @@
-//! Simulation clock driving the satellite's motion.
+//! Simulation clock: wall-clock dt x multiplier, play/pause. Paused frames
+//! keep rendering but depict a frozen instant (a paused tick yields dt = 0).
 //!
-//! Time starts at the TLE epoch and advances by the wall-clock delta between
-//! redraws, scaled by an adjustable multiplier (1x real time .. 100x, set on
-//! an exponential base-e slider in the UI). It can be paused: frames keep
-//! rendering (the app renders unconditionally), but they depict a frozen
-//! instant - a paused tick advances nothing and yields dt = 0.
-//!
-//! [`Clock`] itself is plain data - a constructor and private fields, no
-//! behavior. All the clock logic lives in [`SceneClock`]'s default methods,
-//! which (being in this module) are the only code that can reach the fields:
-//! a scene implements just `clock_mut` and gets the whole API, and nothing
-//! outside this module can mutate the clock behind it.
+//! [`Clock`] is plain data; all logic lives in [`SceneClock`]'s default
+//! methods, which (same module) are the only code that can reach the private
+//! fields - nothing can mutate the clock behind the API.
 
 use std::time::Instant as WallClock;
 
 use pyo3::prelude::*;
 use satkit::{Duration, Instant};
 
-/// `pyclass` only for the `MIN_MULTIPLIER`/`MAX_MULTIPLIER` classattrs (a
-/// script reads them for its speed-slider range): no `Clock` instance
-/// crosses into Python - a `*_py` scene exposes the clock through its own
-/// scene pyclass properties, a snapshot/request mirror of the wrapper-owned
-/// clock behind the [`SceneClock`] trait API.
-/// All fields are private: every consumer (Rust scene or script) goes
-/// through that API, so no field can be mutated behind the clock's back.
+/// `pyclass` only for the `MIN_MULTIPLIER`/`MAX_MULTIPLIER` classattrs: no
+/// `Clock` instance crosses into Python - a `*_py` scene mirrors the clock
+/// as scene-pyclass snapshot/request properties. All fields private; every
+/// consumer goes through [`SceneClock`].
 #[pyclass(module = "globe")]
 pub struct Clock {
     /// Simulation time zero - the TLE's epoch.
     epoch: Instant,
     /// Simulation seconds advanced past the epoch.
     elapsed_seconds: f64,
-    /// Time scale: 1.0 = real time, up to 100.0 = 100x real time. The UI
-    /// drives this on an exponential (base e) slider, but it is stored as the
-    /// plain linear factor.
+    /// Linear time-scale factor (the UI slider is exponential base e, but
+    /// the stored value is plain linear).
     multiplier: f32,
     /// When true, time is frozen.
     paused: bool,
@@ -43,9 +32,8 @@ pub struct Clock {
 
 #[pymethods]
 impl Clock {
-    /// Real time to 100x real time. `classattr` so a script can read
-    /// `Clock.MIN_MULTIPLIER` for its speed-slider range; unchanged as Rust
-    /// associated consts.
+    /// Real time to 100x. `classattr` so a script can read the speed-slider
+    /// range; unchanged as Rust associated consts.
     #[classattr]
     pub const MIN_MULTIPLIER: f32 = 1.0;
     #[classattr]
@@ -65,25 +53,17 @@ impl Clock {
     }
 }
 
-/// The public clock API every scene goes through. A scene implements only
-/// `clock_mut` (a plain `clock` field in every scene struct - the `*_py`
-/// scenes keep it on their wrapper, outside the pyclass, precisely so this
-/// hook can hand out the `&mut Clock` a pyclass cell's borrow guard could
-/// not); everything else is a default method working directly on the
-/// [`Clock`] fields (private, so only this module's defaults can - the API
-/// surface AND its logic live in one place). Implementing this is also what
-/// grants a scene the `Scene` trait's provided `tick_scene`. The `*_py`
-/// scenes mirror the API to their scripts as scene-pyclass snapshot/request
-/// properties.
+/// The clock API every scene goes through. Implement only `clock_mut` (a
+/// plain field; the `*_py` scenes keep it on the wrapper, outside the
+/// pyclass, precisely so this hook can hand out the `&mut Clock` a pyclass
+/// cell's borrow guard could not); the default methods hold all the logic
+/// and are the only code that can touch [`Clock`]'s fields. Implementing
+/// this also grants the `Scene` trait's provided `tick_scene`.
 ///
-/// The Time panel's Run-toggle/speed-slider callbacks call the setters
-/// directly: a panel callback receives the live scene as its `&mut S`
-/// argument at fire time (see `ui::UIDrawablePanel` - it captures nothing,
-/// so every panel callback coexists). The one rule: a callback must stay
-/// idempotent under egui's discard-pass double fire, so the Run toggle
-/// writes a paused value snapshotted at panel-build time
-/// (`move |scene| scene.set_clock_paused(running)`) rather than flipping
-/// live state it re-reads.
+/// The Time panel's callbacks call the setters directly with build-time
+/// snapshots (`move |scene| scene.set_clock_paused(running)`), never
+/// read-modify-write: egui's discard pass can fire a callback twice per
+/// frame, so callbacks must stay idempotent.
 pub trait SceneClock {
     /// The one per-scene hook: where the clock lives in the struct.
     fn clock_mut(&mut self) -> &mut Clock;

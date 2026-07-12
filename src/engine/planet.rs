@@ -1,32 +1,15 @@
-//! Physical constants and geometry for EVERY celestial body - Terra, Luna,
-//! and the seven classical planets - in real-world units.
+//! Physical constants and geometry for every celestial body - Terra, Luna,
+//! and the seven planets - hung off the [`CelestialBody`] variants, in one
+//! shared body-frame convention (+Y = the rotation pole/north, prime
+//! meridian -> +Z, +X = 90 deg east).
 //!
-//! The bodies are not a separate enum: they are variants of [`CelestialBody`]
-//! (`Mercury`..`Neptune`, plus the `TerraSystem` pair). This module hangs
-//! their body-specific data and geometry off those variants - the triaxial
-//! radii, the simple IAU rotation constants (planets only), the texture
-//! files, and the body-fixed surface points/normals - in one shared
-//! parameterization convention (**+Y is north** / the rotation pole, prime
-//! meridian -> **+Z**, +X is 90 deg east). The orientation of each body frame
-//! in the world is supplied separately by the ephemeris-driven IAU rotation
-//! (see `celestial_sphere`); here we only define the geometry + the IAU
-//! constants it consumes. It deliberately depends on neither satkit nor wgpu.
-//!
-//! Every body is modeled as a **triaxial ellipsoid** (independent semi-axes
-//! on +X/+Y/+Z). Terra and each planet have their +X and +Z semi-axes equal -
-//! the familiar oblate spheroid of revolution (equatorial radius along +X/+Z,
-//! polar radius along +Y; Terra is the WGS84 reference ellipsoid, the gas
-//! giants' flattening is large and visible, Saturn ~10%, the rocky planets'
-//! tiny but modeled for uniformity). Luna is the one genuinely triaxial body
-//! (long axis toward Terra). The shared formulation is what lets one geometry
-//! pipeline and one impostor trace serve all nine.
-//!
-//! **Latitude convention is shape-driven**: a spheroid of revolution (rx ==
-//! rz) uses **geodetic** latitude (the WGS84 formulation - the standard for
-//! Terra satellite geodesy and planetographic mapping), while the triaxial
-//! body (Luna) uses parametric latitude (triaxial geodetic latitude has no
-//! clean closed form, and Luna's ~1-3 km axis spread makes the difference
-//! sub-texel). For a sphere the two coincide.
+//! Every body is a triaxial ellipsoid. Terra and each planet have rx == rz
+//! (a spheroid of revolution; Terra is the WGS84 reference ellipsoid); Luna
+//! is the one genuinely triaxial body. **Latitude convention is
+//! shape-driven**: spheroids use geodetic latitude (the WGS84 formulation),
+//! triaxial Luna uses parametric (triaxial geodetic latitude has no clean
+//! closed form, and Luna's ~1-3 km axis spread makes the difference
+//! sub-texel).
 
 use glam::DVec3;
 
@@ -41,15 +24,13 @@ pub const FLATTENING: f64 = 1.0 / INVERSE_FLATTENING;
 /// WGS84 semi-minor (polar) axis, km: b = a * (1 - f) ~ 6356.752314 km.
 pub const SEMI_MINOR_AXIS_KM: f64 = SEMI_MAJOR_AXIS_KM * (1.0 - FLATTENING);
 
-/// IUGG mean radius R1 = (2a + b) / 3 ~ 6371.0088 km, as a `const` (the
-/// non-const [`CelestialBody::mean_radius_km`] computes the same value from
-/// the table). Kept for const contexts that need a Terra-scale fallback
-/// (e.g. the free-coordinate camera target).
+/// IUGG mean radius R1 = (2a + b) / 3 ~ 6371.0088 km, as a `const` for const
+/// contexts needing a Terra-scale fallback (e.g. the free-coordinate camera
+/// target).
 pub const TERRA_MEAN_RADIUS_KM: f64 = (2.0 * SEMI_MAJOR_AXIS_KM + SEMI_MINOR_AXIS_KM) / 3.0;
 
-// --- Terra dynamics constants, for orbital simulation built on this
-// geometry. Not yet consumed anywhere; provided so satellites/orbits can be
-// expressed in the same real-world km/second frame as everything else. ---
+// Terra dynamics constants: not yet consumed; provided so orbital simulation
+// can share the same real-world km/second frame.
 /// Terra's standard gravitational parameter GM (WGS84/EGM), km^3 / s^2.
 #[allow(dead_code)]
 pub const TERRA_GRAVITATIONAL_PARAMETER_KM3_S2: f64 = 398600.4418;
@@ -58,10 +39,8 @@ pub const TERRA_GRAVITATIONAL_PARAMETER_KM3_S2: f64 = 398600.4418;
 pub const TERRA_ANGULAR_VELOCITY_RAD_S: f64 = 7.292_115_146_7e-5;
 
 /// Every planet, in increasing distance from Sol - the load/render order.
-/// Indexed by the renderer's per-planet GPU resource arrays and used to filter
-/// the planet entries out of the celestial-body render list. The array order is
-/// also the order the renderer loads the planet textures and builds the
-/// per-planet meshes/bind groups, so the two must not drift.
+/// Indexes the renderer's per-planet GPU resource arrays and its texture
+/// load order; the orders must not drift.
 pub const ALL: [CelestialBody; 7] = [
     CelestialBody::Mercury,
     CelestialBody::Venus,
@@ -72,15 +51,13 @@ pub const ALL: [CelestialBody; 7] = [
     CelestialBody::Neptune,
 ];
 
-/// IAU rotational elements for a planet (IAU/IAG Working Group on Cartographic
-/// Coordinates and Rotational Elements, 2009/2015): the north-pole right
-/// ascension `alpha0` and declination `delta0` (each a constant plus a linear
-/// rate in Julian centuries `T` of TT since J2000), and the prime-meridian
-/// angle `W = w0 + w_rate * d` (degrees; `d` = days of TT since J2000;
-/// `w_rate` is the sidereal spin, negative for the retrograde rotators Venus
-/// and Uranus). The small higher-order libration trig terms (Jupiter, Neptune)
-/// are omitted - they are far below a rendered pixel for a viewer - so this
-/// captures the axial tilt and the spin phase. Evaluated in `celestial_sphere`.
+/// IAU rotational elements (IAU/IAG Working Group on Cartographic
+/// Coordinates and Rotational Elements, 2009/2015): pole RA/Dec as a
+/// constant plus a rate per Julian century `T` of TT since J2000, and the
+/// prime-meridian angle `W = w0 + w_rate * d` (degrees; `d` = TT days since
+/// J2000; `w_rate` negative for the retrograde rotators Venus and Uranus).
+/// The higher-order libration trig terms (Jupiter, Neptune) are deliberately
+/// omitted - far below a rendered pixel. Evaluated in `celestial_sphere`.
 #[derive(Clone, Copy)]
 pub struct Rotation {
     pub ra0_deg: f64,
@@ -92,10 +69,9 @@ pub struct Rotation {
 }
 
 /// The body's equirectangular texture maps: `OUT_DIR` file names (downloaded
-/// verbatim by build.rs). The renderer `include_bytes!`-es these in its
-/// impostor-slot order; kept here as the single source of the mapping. Only
-/// the albedo is mandatory; the optional maps drive the richer shading
-/// features (a body without one renders with that feature off).
+/// verbatim by build.rs) - the single source of the file<->body mapping.
+/// Only the albedo is mandatory; a body missing an optional map renders with
+/// that shading feature off.
 #[derive(Clone, Copy)]
 pub struct Maps {
     /// Base color (sRGB).
@@ -114,23 +90,18 @@ struct Data {
     /// Triaxial semi-axes (km) in the body frame: `[+X (90 deg east),
     /// +Y (the rotation pole), +Z (the prime meridian)]`.
     radii_km: [f64; 3],
-    /// The body's texture maps (albedo + the optional feature maps).
     maps: Maps,
-    /// Simple pole + linear-spin IAU series; `None` for the Terra-system
-    /// bodies, whose orientation is not a table entry: Terra's body frame IS
-    /// the world frame (identity placement), and Luna's orientation is the
-    /// full IAU lunar rotation with the 13 libration arguments
+    /// Simple pole + linear-spin IAU series; `None` for the Terra system:
+    /// Terra's body frame IS the world frame (identity placement), and Luna
+    /// needs the full IAU lunar series with libration
     /// (`celestial_sphere::lunar_body_to_gcrf`).
     rotation: Option<Rotation>,
-    /// Whether the body carries the rendered atmosphere (the Hillaire LUT
-    /// set). Terra only today; the atmosphere pass draws for a
-    /// `has_atmosphere` body sitting at the render origin.
+    /// Whether the body carries the rendered atmosphere (Terra only today).
     has_atmosphere: bool,
 }
 
-/// Semi-axes of a spheroid of revolution (rx = rz = equatorial) - the shape
-/// of Terra and every planet. Keeps the equatorial value written once per
-/// body so the two equal axes cannot drift.
+/// Semi-axes of a spheroid of revolution (rx = rz = equatorial). Writes the
+/// equatorial value once per body so the two equal axes cannot drift.
 const fn spheroid_km(equatorial: f64, polar: f64) -> [f64; 3] {
     [equatorial, polar, equatorial]
 }
@@ -146,11 +117,9 @@ const fn albedo_only(albedo: &'static str) -> Maps {
 }
 
 impl CelestialBody {
-    /// The body's constants. `const fn` so the table is evaluated at compile
-    /// time and the accessors below stay zero-cost.
+    /// The body's constants; `const fn` so the accessors stay zero-cost.
     const fn body_data(self) -> Data {
         match self {
-            // Mercury: a near-perfect sphere; prograde, very slow spin.
             CelestialBody::Mercury => Data {
                 radii_km: spheroid_km(2439.7, 2439.7),
                 maps: albedo_only("8k_mercury.jpg"),
@@ -164,7 +133,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Venus: sphere; retrograde spin (negative w_rate), nearly upright.
             CelestialBody::Venus => Data {
                 radii_km: spheroid_km(6051.8, 6051.8),
                 maps: albedo_only("8k_venus_surface.jpg"),
@@ -178,23 +146,16 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Luna: the one genuinely triaxial body - the long axis points at
-            // Terra (the tidal bulge, +Z, the mean sub-Terra direction), the
-            // short axis is the rotation pole (+Y), and the along-orbit axis
-            // (+X, 90 deg east) sits between. The differences are only ~1-3 km
-            // of ~1737 km - imperceptible at render scale - but the body is
-            // genuinely not a sphere of revolution, so the geometry honors
-            // that. IAU/IAG principal-axis mean radii. Its rotation is None:
-            // Luna's orientation needs the full IAU lunar series with
-            // libration, implemented in `celestial_sphere`, not the simple
-            // pole + linear-spin form.
+            // Luna: genuinely triaxial - long axis (+Z) toward Terra (the
+            // tidal bulge), short axis the rotation pole (+Y). IAU/IAG
+            // principal-axis mean radii; the ~1-3 km spread is imperceptible
+            // at render scale but the geometry honors it.
             CelestialBody::TerraSystem(TerraSystemEntity::Luna) => Data {
                 radii_km: [1735.7, 1734.5, 1737.4],
                 maps: albedo_only("8k_moon.jpg"),
                 rotation: None,
                 has_atmosphere: false,
             },
-            // Mars: slightly oblate; ~24.6 h prograde day.
             CelestialBody::Mars => Data {
                 radii_km: spheroid_km(3396.19, 3376.20),
                 maps: albedo_only("8k_mars.jpg"),
@@ -208,7 +169,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Jupiter: strongly oblate; ~9.9 h System III rotation.
             CelestialBody::Jupiter => Data {
                 radii_km: spheroid_km(71492.0, 66854.0),
                 maps: albedo_only("8k_jupiter.jpg"),
@@ -222,7 +182,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Saturn: most oblate of all; ~10.7 h rotation.
             CelestialBody::Saturn => Data {
                 radii_km: spheroid_km(60268.0, 54364.0),
                 maps: albedo_only("8k_saturn.jpg"),
@@ -236,7 +195,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Uranus: oblate; retrograde spin about a nearly equator-on pole.
             CelestialBody::Uranus => Data {
                 radii_km: spheroid_km(25559.0, 24973.0),
                 maps: albedo_only("2k_uranus.jpg"),
@@ -250,7 +208,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Neptune: oblate; prograde (the N-libration trig terms dropped).
             CelestialBody::Neptune => Data {
                 radii_km: spheroid_km(24764.0, 24341.0),
                 maps: albedo_only("2k_neptune.jpg"),
@@ -264,11 +221,6 @@ impl CelestialBody {
                 }),
                 has_atmosphere: false,
             },
-            // Terra: the WGS84 reference ellipsoid, with the full texture-map
-            // set (night lights, relief, ocean mask) and the rendered
-            // atmosphere. Its rotation is None: the world frame IS the
-            // Terra-fixed body frame (identity placement, see
-            // `celestial_sphere`), so there is no series to evaluate.
             CelestialBody::TerraSystem(TerraSystemEntity::Terra) => Data {
                 radii_km: spheroid_km(SEMI_MAJOR_AXIS_KM, SEMI_MINOR_AXIS_KM),
                 maps: Maps {
@@ -283,32 +235,27 @@ impl CelestialBody {
         }
     }
 
-    /// The triaxial semi-axes in km, in the body frame (+X 90 deg east,
-    /// +Y the rotation pole, +Z the prime meridian). The renderer traces the
-    /// impostor ellipsoid from these (and sizes the quad by the largest
-    /// axis); f64, cast to f32 only when packed into the impostor uniform.
+    /// Triaxial semi-axes in km, body frame (+X 90 deg east, +Y the rotation
+    /// pole, +Z the prime meridian). f64; cast to f32 only at the impostor
+    /// uniform.
     pub fn radii_km(self) -> DVec3 {
         let [rx, ry, rz] = self.body_data().radii_km;
         DVec3::new(rx, ry, rz)
     }
 
-    /// Characteristic mean radius (km): the axis mean over the triaxial
-    /// semi-axes (for Terra's rx = rz row this is algebraically the classic
-    /// IUGG (2a + b) / 3). The camera scales its distance/zoom limits, near
-    /// plane, and pan rate by this so the interaction feel is the same
-    /// fraction of the body whichever one is targeted; for Luna it also sets
-    /// the eclipse caster/occlusion sphere, where the ~1.5 km triaxial spread
-    /// is far below the penumbra softness.
+    /// Axis-mean radius (km; for rx = rz this is algebraically the classic
+    /// IUGG (2a + b) / 3). Scales the camera's distance/zoom limits, near
+    /// plane, and pan rate so interaction feel is the same fraction of any
+    /// targeted body; for Luna it also sets the eclipse caster/occlusion
+    /// sphere, where the ~1.5 km triaxial spread is far below the penumbra
+    /// softness.
     pub fn mean_radius_km(self) -> f64 {
         let [rx, ry, rz] = self.body_data().radii_km;
         (rx + ry + rz) / 3.0
     }
 
-    /// The simple IAU rotational elements (evaluated against time in
-    /// `celestial_sphere`). Planet variants only - the Terra-system bodies'
-    /// orientation is not a table entry (Terra's body frame is the world
-    /// frame; Luna needs the full IAU lunar series with libration), so their
-    /// entries deliberately have none.
+    /// The simple IAU rotational elements - planet variants only; the
+    /// Terra-system bodies deliberately have none (see `Data::rotation`).
     pub fn rotation(self) -> Rotation {
         self.body_data()
             .rotation
@@ -326,16 +273,11 @@ impl CelestialBody {
     }
 }
 
-/// Point on the body ellipsoid surface at the given latitude/longitude
-/// (radians), in the body frame (km). Shape-driven latitude convention (see
-/// the module docs): a spheroid of revolution (rx == rz - Terra and every
-/// planet) treats the latitude as **geodetic** and uses the WGS84
-/// prime-vertical formulation (`N` is the prime-vertical radius of curvature;
-/// the polar (Y) coordinate carries the `(1 - e^2)` factor that flattens the
-/// poles - for Terra this is bit-for-bit the WGS84 math, and satellite
-/// geodetic coordinates land on the exact same ellipsoid). The triaxial body
-/// (Luna) uses the parametric form (the sphere direction with each axis
-/// scaled by its semi-axis).
+/// Point on the body ellipsoid at latitude/longitude (radians), body frame
+/// (km). A spheroid (rx == rz) treats latitude as **geodetic** via the WGS84
+/// prime-vertical formulation - for Terra this is bit-for-bit the WGS84
+/// math, so satellite geodetic coordinates land on the exact same ellipsoid;
+/// triaxial Luna uses the parametric form.
 pub fn surface_position(body: CelestialBody, latitude: f64, longitude: f64) -> DVec3 {
     let [rx, ry, rz] = body.body_data().radii_km;
     let (sin_lat, cos_lat) = latitude.sin_cos();
@@ -359,17 +301,12 @@ pub fn surface_position(body: CelestialBody, latitude: f64, longitude: f64) -> D
     }
 }
 
-/// Outward unit normal of the body ellipsoid at the given latitude/longitude
-/// (radians), in the body frame - the local "up" used for lighting and the
-/// camera's radial direction. For a spheroid the latitude is geodetic, and
-/// the geodetic normal is by definition the plain sphere direction
-/// `(cos_lat*sin_lon, sin_lat, cos_lat*cos_lon)` - the same lat/lon structure
-/// as a sphere's radial, which is why the analytic tangent frames and the
-/// surface-anchored noise work unchanged on the flattened body. For the
-/// triaxial body (parametric latitude) it is the ellipsoid gradient
-/// `(x/rx^2, y/ry^2, z/rz^2)`, not the radial direction (for the
-/// near-spherical Luna it is within ~0.04 deg of radial, but the true normal
-/// keeps the lighting geometrically honest).
+/// Outward unit normal at latitude/longitude (radians), body frame. For a
+/// spheroid the geodetic normal is by definition the plain sphere direction -
+/// why sphere-based tangent frames and surface-anchored noise work unchanged
+/// on the flattened body. The triaxial body uses the ellipsoid gradient
+/// `(x/rx^2, y/ry^2, z/rz^2)`, not the radial direction (within ~0.04 deg on
+/// near-spherical Luna, but geometrically honest).
 pub fn geodetic_normal(body: CelestialBody, latitude: f64, longitude: f64) -> DVec3 {
     let [rx, ry, rz] = body.body_data().radii_km;
     let (sin_lat, cos_lat) = latitude.sin_cos();

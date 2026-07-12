@@ -6,17 +6,10 @@ use serde::Deserialize;
 
 use super::{Instrument, ValueCallback, leaf};
 
-/// A value slider over `range` - the inert render data only. Drawing lives in
-/// [`Slider::draw`], shared by this struct's read-only [`Instrument`] impl and
-/// by [`InteractiveSlider`], which adds the edit callback.
-///
-/// `Deserialize` so the headless `--scene` `ui` JSON can name it directly;
-/// `Clone` so [`crate::engine::ui::PanelSet`] can hand a copy out of its
-/// borrowing `get_drawables` (and the Python bridge out of its pyclass cell);
-/// `pyclass` for the dual Rust/Python UI API. `range` deserializes from a
-/// `[min, max]` JSON array (see [`deserialize_range`]); `RangeInclusive` has
-/// no pyo3 conversion, so the Python face of `range` is a `(min, max)` tuple
-/// (explicit getter/setter below, no `pyo3(get, set)` on the field).
+/// A value slider over `range` - the inert render data only; [`Slider::draw`]
+/// is shared with [`InteractiveSlider`]. `range` deserializes from a
+/// `[min, max]` JSON array; `RangeInclusive` has no pyo3 conversion, so its
+/// Python face is a `(min, max)` tuple (explicit getter/setter below).
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[pyclass(module = "globe", from_py_object)]
@@ -50,9 +43,7 @@ impl Slider {
 
 impl Slider {
     /// Adds the slider as a full-width flex node; returns the new value when
-    /// the user edited it this frame, else `None`. Holds the widget look
-    /// (track fills the node, no value label) so the inert and interactive
-    /// paths render identically.
+    /// the user edited it this frame, else `None`.
     fn draw(&self, tui: &mut Tui) -> Option<f32> {
         // Percent width (not grow): a percentage contributes nothing to the
         // panel's content-driven min width, so the track follows whatever
@@ -77,17 +68,15 @@ impl Slider {
 
 impl<S> Instrument<S> for Slider {
     fn render(&mut self, tui: &mut Tui, _scene: &mut S) {
-        // Inert: still draggable, but the edit is discarded (e.g. a mock panel).
+        // Inert: still draggable, but the edit is discarded (mock panels).
         let _ = self.draw(tui);
     }
 }
 
-/// A [`Slider`] wired to an edit callback. `on_change` receives the live
-/// scene (threaded in by `control_panel` at fire time - no capture, so every
-/// panel callback coexists) plus the new value on each edit; the producer
-/// owns any value mapping (e.g. the speed slider edits an exponent and its
-/// callback exponentiates). Writing the received value into the scene is
-/// naturally idempotent under egui's discard-pass double fire.
+/// A [`Slider`] wired to an `on_change(scene, value)` edit callback; the
+/// producer owns any value mapping (e.g. the speed slider edits an exponent).
+/// Writing the received value is naturally idempotent under egui's
+/// discard-pass double fire.
 pub struct InteractiveSlider<S> {
     pub slider: Slider,
     pub on_change: ValueCallback<S>,
@@ -101,10 +90,7 @@ impl<S> Instrument<S> for InteractiveSlider<S> {
     }
 }
 
-/// Reads a slider `range` from a `[min, max]` JSON array into a
-/// `RangeInclusive`. The instrument keeps the richer range type; the wire form
-/// stays the two-element array the headless `--scene` `ui` JSON has always
-/// used.
+/// Reads a slider `range` from a `[min, max]` JSON array.
 fn deserialize_range<'de, D>(deserializer: D) -> Result<RangeInclusive<f32>, D::Error>
 where
     D: serde::Deserializer<'de>,

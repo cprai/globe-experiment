@@ -1,50 +1,26 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Files downloaded once and embedded into the binary verbatim (no transcode),
-/// then `include_bytes!`-ed by the runtime - giving a self-contained binary
-/// with no runtime data files. Each is downloaded straight into `OUT_DIR` under
-/// its own file name. Two kinds live here:
-///
-/// satkit astronomical data:
-/// - The JPL Development Ephemeris (DE440) binary (~98 MiB): Sol/planet
-///   positions, loaded via `jplephem::init_from_bytes`.
-/// - CelesTrak's `EOP-All.csv` Earth-orientation parameters (~2-3 MiB): polar
-///   motion + UT1-UTC for accurate ITRF<->GCRF, loaded via
-///   `earth_orientation_params::init_from_bytes`. It spans 1962-01-01 onward
-///   (measured) plus a few months of predictions; since this is a past-only
-///   simulation tool the frozen-at-build-time snapshot stays valid for every
-///   in-range date (delete the cached file to refresh).
-/// - The IERS Conventions 2010 nutation/CIO tables `tab5.2a/2b/2d.txt` (KB
-///   each): CIP X/Y series + CIO locator s series, loaded via
-///   `frametransform::init_iers_table_from_bytes`. Required by the full
-///   (non-approx) GCRF<->ITRF transforms the celestial sphere uses.
-/// - The ICGEM EGM96 gravity coefficients `EGM96.gfc` (~5.4 MiB text), loaded
-///   via `earthgravity::init_from_bytes`. Required by the numerical orbit
-///   propagator (satkit `orbitprop`) behind the predicted satellite path.
-///
-/// Terra/star textures (original JPEG/TIFF, embedded as-is):
-/// - The runtime decodes these with the `image` crate and uploads them as
-///   uncompressed RGBA8 (no GPU texture compression, for maximum platform
-///   compatibility), so there is no build-time transcode step. Whether each is
-///   a color map (sRGB) or a data map (linear) is decided at upload time in the
-///   renderer, not here.
+/// Files downloaded once into `OUT_DIR` and embedded verbatim
+/// (`include_bytes!`) - satkit astronomical data plus textures. The EOP
+/// snapshot spans 1962 onward (plus a few months of predictions); the
+/// past-only simulation keeps the build-time snapshot valid for every
+/// in-range date (delete the cached file to refresh). Whether a texture is
+/// sRGB or linear is decided at upload time in the renderer, not here.
 const EMBEDS: &[Embed] = &[
+    // JPL DE440 ephemeris, ~98 MiB; headroom for future DE versions.
     Embed {
         url: "https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440",
-        // ~98 MiB; generous headroom for future DE versions.
         limit: 256 * 1024 * 1024,
     },
     Embed {
         url: "https://celestrak.org/SpaceData/EOP-All.csv",
-        // A few MiB of text; generous cap.
         limit: 64 * 1024 * 1024,
     },
-    // IERS Conventions 2010 nutation/CIO tables (KB each), from satkit's own
-    // data bucket so the byte format matches `ierstable::from_bytes`. Seeded
-    // into satkit's IERS-table singletons; required by the full (non-approx)
-    // GCRF<->ITRF transforms the celestial sphere uses. Tab5A/5B = CIP X/Y
-    // series, Tab5D = CIO locator s series.
+    // IERS Conventions 2010 nutation/CIO tables (Tab5A/5B = CIP X/Y series,
+    // Tab5D = CIO locator s), from satkit's own data bucket so the byte
+    // format matches `ierstable::from_bytes`. Required by the full
+    // (non-approx) GCRF<->ITRF transforms.
     Embed {
         url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2a.txt",
         limit: 1024 * 1024,
@@ -57,19 +33,17 @@ const EMBEDS: &[Embed] = &[
         url: "https://storage.googleapis.com/astrokit-astro-data/tab5.2d.txt",
         limit: 1024 * 1024,
     },
-    // ICGEM EGM96 gravity coefficients (~5.4 MiB text), from satkit's own data
-    // bucket so the format matches `earthgravity::Gravity::from_bytes`. Seeded
-    // into satkit's gravity-model singleton; required by the numerical orbit
-    // propagator (orbitprop) behind the predicted orbit path - its lazy
-    // default loader would otherwise resolve a data dir at first propagation.
+    // ICGEM EGM96 gravity coefficients, from satkit's bucket (format must
+    // match `earthgravity::Gravity::from_bytes`). Required by the numerical
+    // orbit propagator - its lazy default loader would otherwise resolve a
+    // data dir at first propagation.
     Embed {
         url: "https://storage.googleapis.com/astrokit-astro-data/EGM96.gfc",
         limit: 64 * 1024 * 1024,
     },
+    // Textures are JPEG (~MBs) or TIFF (can be ~100 MiB); one generous cap.
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg",
-        // Textures are JPEG (~MBs) or TIFF (can be ~100 MiB uncompressed);
-        // generous cap covers both.
         limit: 256 * 1024 * 1024,
     },
     Embed {
@@ -88,16 +62,13 @@ const EMBEDS: &[Embed] = &[
         url: "https://www.solarsystemscope.com/textures/download/8k_stars_milky_way.jpg",
         limit: 256 * 1024 * 1024,
     },
-    // Lunar albedo map (equirectangular, selenographic mean-Terra frame),
-    // decoded + uploaded exactly like the Terra day map (sRGB color).
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_moon.jpg",
         limit: 256 * 1024 * 1024,
     },
-    // Planet albedo maps (equirectangular, body-fixed prime-meridian frame),
-    // decoded + uploaded exactly like the Luna map (sRGB color). The inner and
-    // gas-giant maps are 8K; the two ice-giant maps are only published at 2K.
-    // Saturn's rings are not yet rendered, so only its surface map is fetched.
+    // Planet albedo maps. The ice-giant maps are only published at 2K;
+    // Saturn's rings are not yet rendered, so only its surface map is
+    // fetched.
     Embed {
         url: "https://www.solarsystemscope.com/textures/download/8k_mercury.jpg",
         limit: 256 * 1024 * 1024,
@@ -143,12 +114,8 @@ fn main() {
     bake_luts(&out_dir);
 }
 
-/// Downloads `embed.url` straight into `OUT_DIR` under its own file name
-/// (unless it is already there) so the runtime can `include_bytes!` it.
-/// Registers the cached download with cargo so deleting it re-downloads on
-/// the next build. `OUT_DIR` persists across incremental builds, so the file
-/// is downloaded at most once. These files are embedded verbatim, so unlike
-/// the textures they *must* land on disk for `include_bytes!`.
+/// Downloads `embed.url` into `OUT_DIR` under its own file name unless
+/// already there; registers it with cargo so deleting it re-downloads.
 fn embed_verbatim(embed: &Embed, out_dir: &Path) {
     let url = embed.url;
     let name = url.rsplit('/').next().expect("embed url has a file name");
@@ -177,14 +144,9 @@ fn download(url: &str, limit: u64) -> Vec<u8> {
         .unwrap_or_else(|error| panic!("failed to read response of {url}: {error}"))
 }
 
-/// Bakes the atmosphere LUTs and writes them as uncompressed
-/// `R16G16B16A16_SFLOAT` KTX2 files - the exact texels the old runtime
-/// bake produced, so baking here changes nothing visually.
-///
-/// Unlike the BC7 transcode this runs on *every* script execution: the
-/// bake is sub-second, and cargo always reruns the script when `build.rs`
-/// (which now contains the bake) changes, so the tables can never go
-/// stale after a constants tweak.
+/// Bakes the atmosphere LUTs as uncompressed `R16G16B16A16_SFLOAT` KTX2.
+/// Runs on every script execution - the bake is sub-second - so the tables
+/// can never go stale after a constants tweak.
 fn bake_luts(out_dir: &Path) {
     let luts = atmosphere::bake();
 
@@ -221,9 +183,9 @@ fn bake_luts(out_dir: &Path) {
     }
 }
 
-/// Serializes a single-level 2D texture as a KTX2 file: 80-byte header,
-/// one level-index entry, a basic data format descriptor, then the raw
-/// block data (no supercompression), 16-byte aligned per the spec.
+/// Serializes a single-level 2D texture as a KTX2 file: 80-byte header, one
+/// level-index entry, a basic data format descriptor, then the raw block
+/// data (no supercompression), 16-byte aligned per the spec.
 fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> Vec<u8> {
     let (basic_dfd, type_size) = ktx2::dfd::Basic::from_format(format)
         .unwrap_or_else(|error| panic!("no DFD for {format:?}: {error:?}"));
@@ -276,28 +238,20 @@ fn write_ktx2(format: ktx2::Format, width: u32, height: u32, blocks: &[u8]) -> V
 }
 
 mod atmosphere {
-    //! Precomputed atmosphere lookup tables, after Hillaire 2020 ("A
-    //! Scalable and Production Ready Sky and Atmosphere Rendering
-    //! Technique") with Terra's standard medium: Rayleigh and Mie
-    //! scattering plus an ozone absorption layer.
-    //!
-    //! This code is build-time only - the app uploads the baked KTX2
-    //! tables and never touches this math at runtime - so it lives in the
-    //! build script rather than the runtime crate.
-    //!
-    //! Two kinds of LUT are baked on the CPU:
+    //! Precomputed atmosphere LUTs, after Hillaire 2020 ("A Scalable and
+    //! Production Ready Sky and Atmosphere Rendering Technique"), with
+    //! Terra's standard medium: Rayleigh + Mie scattering plus an ozone
+    //! absorption layer.
     //!
     //! - Transmittance: fraction of sunlight surviving from a point to the top
     //!   of the atmosphere, parameterized by (altitude, Sol zenith cosine).
     //! - Inscatter: the Rayleigh and Mie single-scattering integrals along a
-    //!   full view ray. Because the scene is a perfect sphere seen from
-    //!   outside, a ray is fully described by its impact parameter (closest
-    //!   approach to the planet center) plus the Sol angle at a reference
-    //!   point, so the per-pixel raymarch collapses into a 2D table. The only
-    //!   approximation is Sol's tilt *along* the ray, which is assumed
-    //!   perpendicular.
+    //!   full view ray. Seen from outside a perfect sphere, a ray is fully
+    //!   described by its impact parameter plus the Sol angle at a reference
+    //!   point, so the per-pixel raymarch collapses into a 2D table; the only
+    //!   approximation is Sol's tilt *along* the ray, assumed perpendicular.
     //!
-    //! The constants here must stay in sync with their WGSL twins in
+    //! The constants here MUST stay in sync with their WGSL twins in
     //! `shaders/scene.wgsl`. All lengths are kilometers; all coefficients
     //! are per kilometer.
 

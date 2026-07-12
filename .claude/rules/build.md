@@ -6,63 +6,18 @@ paths:
 
 # Build pipeline rules
 
-## Assets are in OUT_DIR — no assets/ dir
-
-Everything the runtime `include_bytes!`-es lands in `OUT_DIR`. There is no
-`assets/` directory. `cargo::rerun-if-changed=OUT_DIR/<name>` is emitted per
-file so deleting one triggers a re-download or re-bake on the next build.
-
-## EMBEDS table — verbatim downloads
-
-`embed_verbatim(embed, out_dir)` downloads to `OUT_DIR` unless already
-present. Currently nineteen entries:
-- **JPL DE440 ephemeris** `linux_p1550p2650.440` (~98 MiB) — embedded into
-  the binary; loaded via `jplephem::init_from_bytes`.
-- **CelesTrak `EOP-All.csv`** (~2-3 MiB) — embedded; loaded via
-  `earth_orientation_params::init_from_bytes`.
-- **IERS 2010 tables** `tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt` (KB each,
-  from satkit's astrokit-astro-data bucket) — embedded; loaded via
-  `frametransform::init_iers_table_from_bytes` for the full celestial-sphere
-  GCRF<->ITRF transforms.
-- **ICGEM EGM96 gravity coefficients** `EGM96.gfc` (~5.4 MiB text, same
-  bucket) — embedded; loaded via `earthgravity::init_from_bytes` for the
-  numerical orbit propagator (`orbitprop`) behind the predicted satellite
-  path's `Propagation::Numerical` arm.
-- **Six 8K Terra/star/Luna textures** (JPEG/TIFF verbatim): `8k_earth_daymap.jpg`,
-  `8k_earth_nightmap.jpg`, `8k_earth_normal_map.tif`, `8k_earth_specular_map.tif`,
-  `8k_stars_milky_way.jpg`, `8k_moon.jpg` (lunar albedo). Decoded at **runtime**
-  by `renderer::upload_image` (not at build time). Whether each is sRGB or
-  linear is decided in the renderer, not here.
-- **Seven planet textures** (JPEG verbatim, sRGB): `8k_mercury.jpg`,
-  `8k_venus_surface.jpg`, `8k_mars.jpg`, `8k_jupiter.jpg`, `8k_saturn.jpg` (8K),
-  `2k_uranus.jpg`, `2k_neptune.jpg` (2K). The filename<->planet mapping is owned
-  by `CelestialBody::maps()` (`src/engine/planet.rs`); the renderer's `include_bytes!`
-  list + this table must stay in `IMPOSTOR_BODIES` order (`planet::ALL`, Luna,
-  Terra). See `constraints.md` for the VRAM budget.
-
-## Atmosphere LUT bake
-
-`bake_luts` runs the inline `atmosphere::bake()` and writes three f16 KTX2
-tables (transmittance 256x64, two inscatter 256x128). Runs
-**unconditionally** — the tables can never go stale after a constants tweak.
-The LUTs are the **only** baked/KTX2 artifacts.
-
-## No build-side image decode or compression
-
-`build.rs` does not use the `image` crate. Textures are downloaded verbatim
-and decoded at runtime. `intel_tex_2` and BC7 compression are removed
-(phase 14, for multiplatform support). Do not re-add build-side decode or
-compression without reading `backlog.md` first.
-
-## C toolchain is required
-
-`ring` (pulled by `ureq`, used for HTTPS downloads in `build.rs`) compiles
-C/asm through `cc`. This is portable across all six targets but not pure-Rust.
-No practical workaround (`aws-lc-rs` also requires C).
-
-## Profile overrides
-
-`[profile.dev.package.*] opt-level = 3` for `image`, `zune-jpeg`, `zune-core`,
-`tiff`, `miniz_oxide`, `weezl` — speeds up the runtime texture decode (five
-33 MP images at startup) in dev builds. These are in `Cargo.toml`, not
-`build.rs`.
+- **Everything the runtime `include_bytes!`-es lands in `OUT_DIR`** (no
+  `assets/` dir). `cargo::rerun-if-changed` is emitted per file, so deleting
+  one triggers a re-download/re-bake. The asset list is the `EMBEDS` table in
+  `build.rs`; the texture-filename<->body mapping is owned by
+  `CelestialBody::maps()` and must stay in `IMPOSTOR_BODIES` order.
+- **The atmosphere LUT bake runs unconditionally** (sub-second) so the tables
+  never go stale after a constants tweak; the LUTs are the only baked
+  artifacts — everything else downloads verbatim.
+- **No build-side image decode or compression.** Textures decode at runtime;
+  `intel_tex_2`/BC7 were removed for multiplatform support (see `backlog.md`
+  before re-adding).
+- **C toolchain required** (`ring` via `ureq`, build-time only). No pure-Rust
+  workaround without replacing ureq's TLS.
+- The `[profile.dev.package.*] opt-level = 3` overrides in `Cargo.toml` exist
+  to speed the runtime decode of the 8K textures in dev builds.

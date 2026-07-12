@@ -1,39 +1,16 @@
-//! The `headless` binary: renders one frame to a PNG and exits, with no winit
-//! window or input. The frame is positioned by an explicit datetime (which
-//! fixes the celestial positions) and explicit camera parameters, and written
-//! to a caller-specified path - intended for visual debugging of rendering
-//! changes, e.g. by an agent that opens the image. This is the headless
-//! analogue of a scene's `run` in the main binary.
+//! The `headless` binary: renders one frame to a PNG and exits. The whole
+//! scene is a single `--scene` JSON ([`SceneSpec`]): `simulation` (the
+//! datetime), `camera`, and an optional `ui` section of mock panels - for
+//! visually debugging rendering and UI layouts without a live window. The
+//! output target (width/height/path) stays on the CLI.
 //!
-//! This bin root declares its own module tree (the two binaries share source
-//! files, not a lib crate): the shared `engine` plus `offscreen`, and not the
-//! main binary's `scenes`. The engine also carries items only the main
-//! binary calls (all of `engine::application`, plus windowed-only items in
-//! the shared modules), hence the crate-level `allow(dead_code)` - the main
-//! binary's tree keeps full dead-code checking for them.
-//!
-//! The whole scene is a single `--scene` JSON ([`SceneSpec`]): a `simulation`
-//! section (the datetime), a `camera` section, and an optional `ui` section of
-//! mock panels (see [`crate::engine::ui::UiPanel`]) to overlay - so an agent
-//! can debug rendering *and* UI layouts without a live window. The output
-//! target (width/height/path) stays on the CLI, not in the JSON. When `ui` is
-//! present the mock is run through the same `ui::control_panel` path as the
-//! live app and composited by [`OffscreenRenderer`]; this binary is the
-//! headless analogue of the windowed egui driving in the main binary's
-//! `application`.
-//!
-//! IMPORTANT: unlike scenes (see the "Scenes & valid time range" rules in
-//! `CLAUDE.md`), the headless binary does **not** range-check the datetime
-//! against the bundled Earth-orientation (EOP) data. The caller owns the time,
-//! and an out-of-range datetime silently degrades rather than erroring: before
-//! ~1962-01-01 satkit falls back to zero EOP, and past the last bundled EOP
-//! entry it constant-extrapolates. Choosing an in-range past datetime for an
-//! accurate frame is the caller's responsibility. This deliberate deviation is
-//! also documented in `.claude/rules/scenes.md` and the `analyze-render`
-//! skill.
+//! IMPORTANT: unlike scenes, this binary does NOT range-check the datetime
+//! against the bundled EOP data - deliberate: the caller owns the time, and
+//! an out-of-range datetime silently degrades (zero EOP before ~1962,
+//! constant extrapolation past the last entry) rather than erroring.
 
 // The shared engine is included whole in both bin trees; scene/windowed-
-// only items in it are intentionally unused here (see the module doc above).
+// only items in it are intentionally unused here.
 #![allow(dead_code)]
 
 mod engine;
@@ -56,14 +33,12 @@ use crate::offscreen::{MAX_FRAME_DIMENSION, OffscreenRenderer};
 /// and exits (no window, no interactivity). The `--scene` JSON fixes the
 /// celestial positions (its `simulation.datetime`) and the view (its `camera`),
 /// and may carry mock `ui` panels to overlay; the frame is written to --output.
-/// Intended for visually debugging rendering and UI changes.
 ///
 /// NOTE: the datetime is NOT range-checked against the bundled
 /// Earth-orientation (EOP) data - times outside the bundled range silently
 /// degrade rather than erroring. Use a past, in-range datetime for an accurate
 /// frame.
 //
-// The binary does exactly one thing, so the CLI is flat flags (no subcommand).
 // `name` is set explicitly: the derive default is CARGO_PKG_NAME
 // ("globe-experiment"), which would mislabel the help text.
 #[derive(Parser)]
@@ -92,10 +67,9 @@ fn main() {
     run(Cli::parse());
 }
 
-/// The full render scene, deserialized from the `--scene` JSON. Divides the
-/// celestial/simulation state from the camera and the optional UI overlay.
-/// `deny_unknown_fields` so a misspelled key (e.g. `latitde`) fails loudly
-/// rather than being silently dropped - the scene is hand-authored by agents.
+/// The full render scene, deserialized from the `--scene` JSON.
+/// `deny_unknown_fields` so a misspelled key fails loudly rather than being
+/// silently dropped - the scene is hand-authored by agents.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SceneSpec {
@@ -106,8 +80,7 @@ struct SceneSpec {
     ui: Vec<UiPanel>,
 }
 
-/// The `simulation` section: the celestial-state driver. Just the datetime
-/// today (camera lives in its own section); a struct so it can grow.
+/// The `simulation` section: just the datetime today; a struct so it can grow.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SimulationSpec {
@@ -117,7 +90,7 @@ struct SimulationSpec {
 }
 
 /// The `camera` section: the orbital camera placement, mirroring the
-/// `PtzCamera` pose fields the windowed path drives.
+/// `PtzCamera` pose fields.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CameraSpec {
@@ -129,19 +102,16 @@ struct CameraSpec {
     distance: f64,
     /// Tilt off nadir, degrees (0 looks straight down).
     tilt: f64,
-    /// Which body the camera orbits: `"terra"` (default) or `"luna"`. The
-    /// distance/tilt are relative to the chosen body's surface, so framing the
-    /// Luna usually wants a much smaller `distance` than Terra.
+    /// Which body the camera orbits. Distance/tilt are relative to the chosen
+    /// body's surface, so framing Luna usually wants a much smaller
+    /// `distance` than Terra.
     #[serde(default)]
     target: CameraTargetSpec,
 }
 
-/// The orbit body for the render camera. Mirrors the runtime [`CameraTarget`]
-/// kinds, but center-free: a body's world center is filled from the ephemeris
-/// at render time (the JSON only names the body). Lowercase JSON tokens
-/// (`"terra"`, `"luna"`, `"mars"`, ...); defaults to Terra so existing scenes
-/// are unchanged. A planet target renders with a floating origin (see
-/// `CameraTarget::render_origin`).
+/// The orbit body for the render camera, center-free (the body's center is
+/// filled from the ephemeris at render time). Lowercase JSON tokens;
+/// defaults to Terra so existing scenes are unchanged.
 #[derive(serde::Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum CameraTargetSpec {
@@ -190,15 +160,12 @@ impl CameraTargetSpec {
 }
 
 /// Renders one frame per the parsed CLI, writes it to `params.output` as a
-/// PNG, and prints a summary to stdout. Exits the process with a nonzero
-/// status on a usage error (bad datetime, bad dimensions, or write failure).
+/// PNG, and prints a summary. Exits nonzero on a usage error.
 fn run(params: Cli) {
-    // Parse the scene JSON first (strict: a misspelled key errors, see
-    // SceneSpec). Everything below reads from it.
     let scene: SceneSpec = serde_json::from_str(&params.scene)
         .unwrap_or_else(|error| fail(&format!("invalid --scene JSON: {error}")));
 
-    // Parse the datetime. No EOP range check - see the module note.
+    // No EOP range check - see the module note.
     let time = match parse_rfc3339(&scene.simulation.datetime) {
         Ok(time) => time,
         Err(message) => fail(&format!(
@@ -221,19 +188,13 @@ fn run(params: Cli) {
     // celestial-sphere or instant math, exactly like a scene.
     scene::init();
 
-    // Build the frame directly from the celestial sphere + camera: render mode
-    // has no clock, no tracked satellites, and no scene struct. The camera
-    // math is identical to the windowed path (see `application`'s redraw).
+    // No clock, no satellites, no scene struct: the frame is built directly
+    // from the celestial sphere + camera.
     let celestial = CelestialSphere::at(&time);
-    // Camera rig uses the equatorial frame (`star_rot_inv`); the star texture
-    // is sampled with the galactic-corrected `star_tex_rot_inv` below.
+    // Camera rig uses the equatorial frame (`star_rot_inv`); the star
+    // texture uses the galactic-corrected `star_tex_rot_inv`.
     let celestial_to_world = celestial.star_rot_inv.transpose();
 
-    // Resolve the orbit body by identity; its center (and the render origin) is
-    // looked up from the celestial sphere where needed. The target lives
-    // outside the camera (here a local, in a scene a struct field) and is
-    // passed into every camera call that depends on the orbited body;
-    // `PtzCamera::new` clamps the distance into its radius-scaled limits.
     let target = CameraTarget::Body(scene.camera.target.body());
     let camera = PtzCamera::new(
         &target,
@@ -251,13 +212,10 @@ fn run(params: Cli) {
         camera_pos: eye,
         camera_look_at: look_at,
         camera_up: up,
-        // Bodies only: render mode tracks no satellites, so no markers. The
-        // renderer derives Sol/Luna/planets from `time`.
+        // Bodies only: render mode tracks no satellites, so no markers.
         markers: Vec::new(),
     };
 
-    // Build the optional mock-UI overlay (empty `ui` = body-only frame). The
-    // panels were already validated by the scene parse above.
     let ui_frame =
         (!scene.ui.is_empty()).then(|| build_ui_frame(scene.ui, params.width, params.height));
 
@@ -280,27 +238,20 @@ fn parse_rfc3339(text: &str) -> Result<Instant, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "datetime is before the Unix epoch (1970-01-01)".to_string())?
         .as_secs_f64();
-    // `from_unixtime` is leap-second-correct (it re-adds the leap seconds Unix
-    // time omits), so this lands on the intended UTC instant.
+    // `from_unixtime` is leap-second-correct (it re-adds the leap seconds
+    // Unix time omits), so this lands on the intended UTC instant.
     Ok(Instant::from_unixtime(unix_seconds))
 }
 
-/// Runs the mock `panels` (the scene's `ui` section) through egui once to
-/// produce a render-ready [`UiFrame`] - the headless analogue of the windowed
-/// egui driving in `application`. The mock is rendered via the same
-/// `ui::control_panel` the live app uses (taffy lays out the rows; the JSON
-/// carries no pixel coordinates), so the overlay is faithful. The egui screen
-/// is sized to the output in points at 1.0 pixels-per-point, so mock panel
-/// sizes land in output pixels. The panels were already validated by the scene
-/// parse in [`run`].
+/// Runs the mock `panels` through egui once to produce a render-ready
+/// [`UiFrame`], via the same `ui::control_panel` and theme the live app
+/// uses. The egui screen is sized at 1.0 pixels-per-point, so mock panel
+/// sizes land in output pixels.
 fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     let mut mock = PanelSet { panels };
-    // Built once, like the windowed path's per-frame build (the mock is
-    // inert, so the panels are identical every pass anyway).
     let mut drawables = mock.get_drawables();
 
     let ctx = egui::Context::default();
-    // Same theme the windowed app installs, so a mock overlay is faithful.
     ui::install_theme(&ctx);
     let raw_input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -310,16 +261,12 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
         ..Default::default()
     };
 
-    // egui builds its font atlas and measures text lazily on the first pass, so
-    // a single pass tessellates to nothing. (The live app never sees this - it
-    // runs continuously, settling by frame two.) Run a throwaway warmup pass to
-    // load fonts/lay out (this also seeds egui_taffy's layout cache; each
-    // run_ui below may internally add a discard pass - install_theme sets
-    // max_passes = 2 - so the taffy layout is settled by the second run), then
-    // a second pass for the real geometry. egui emits each texture delta
-    // exactly once, so the font-atlas allocation arrives on the *warmup*
-    // output; merge its texture deltas into the second pass's so the renderer
-    // actually gets the atlas the glyph primitives reference.
+    // Two passes are required: egui builds its font atlas lazily, so a single
+    // pass tessellates to nothing - a throwaway warmup pass loads fonts and
+    // seeds egui_taffy's layout cache, then the second pass emits the real
+    // geometry. egui emits each texture delta exactly once, so the font-atlas
+    // allocation arrives on the warmup output; merge its deltas into the
+    // second pass's so the renderer gets the atlas the glyphs reference.
     let warmup = ctx.run_ui(raw_input.clone(), |ui| {
         ui::control_panel(ui.ctx(), &mut drawables, &mut mock)
     });
@@ -338,10 +285,7 @@ fn build_ui_frame(panels: Vec<UiPanel>, width: u32, height: u32) -> UiFrame {
     }
 }
 
-/// Prints a concise summary of the rendered frame to stdout: the resolved
-/// datetime, the camera, and the output path. Informational only - the
-/// headless binary is deliberately silent about EOP range (see the module
-/// note).
+/// Prints a concise summary of the rendered frame to stdout.
 fn print_summary(params: &Cli, camera: &CameraSpec, time: &Instant, distance: f64) {
     let (year, month, day, hour, minute, second) = time.as_datetime();
 

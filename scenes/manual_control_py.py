@@ -1,14 +1,6 @@
-# UI-panel producer for the `manual_control_py` scene - the Python twin of
-# the panel builder in `src/scenes/manual_control.rs` (kept side by side so
-# the two APIs can be compared line for line). Passed to the scene as its
-# required CLI script path (`scene manual_control_py scenes/manual_control_py.py`),
-# loaded at startup and re-read on every launch: edit this file and relaunch,
-# no rebuild.
-#
-# Contract: define `get_drawables(scene) -> list[Panel]`. It runs every
-# frame with the live scene object (`globe.ManualControlScene`); panel
-# callbacks fire later in the same frame, when egui's hit test triggers
-# them - never call them yourself from here.
+# UI-panel producer for the `manual_control_py` scene (its required --script
+# path; edit + relaunch, no rebuild). Contract: get_drawables(scene) ->
+# list[Panel], run every frame; panel callbacks fire later in the same frame.
 
 import math
 
@@ -29,27 +21,22 @@ from globe import (
 
 
 def time_panel(scene):
-    """The top-left Time panel: UTC + speed readouts, Run key, speed slider.
-
-    The clock is driven through the scene's own properties (paused /
-    multiplier / datetime_label() - the Python face of the Rust SceneClock
-    API); only the MIN/MAX_MULTIPLIER slider bounds still come from the
-    Clock class."""
+    """Top-left Time panel: UTC + speed readouts, Run key, speed slider."""
 
     def toggle_run():
         scene.paused = not scene.paused
 
     def set_speed(exponent):
-        # Exponential (base e) speed: the slider edits the exponent, so
-        # multiplier = e^exp - real time at the left, 100x at the right.
+        # The slider edits the exponent (multiplier = e^exp): real time at
+        # the left, 100x at the right.
         scene.multiplier = math.exp(exponent)
 
     rows = [
         [Header("Time")],
         [Readout("UTC", scene.datetime_label())],
         [
-            # Padded to the widest value ("100.0" = 5 chars, monospace) so
-            # the digit window keeps its size as the speed changes.
+            # Padded to the widest value ("100.0", monospace) so the digit
+            # window keeps its size as the speed changes.
             Readout("Speed", "%5.1f" % scene.multiplier, "x"),
             InteractiveToggle(Toggle("Run", not scene.paused), toggle_run),
         ],
@@ -67,7 +54,7 @@ def time_panel(scene):
 
 
 def telemetry_panel(scene):
-    """The top-right readouts: lat/lon, alt + speed, apo/peri (dashes on an
+    """Top-right readouts: lat/lon, alt + speed, apo/peri (dashes on an
     escape orbit, which has no apsides)."""
     telemetry = scene.telemetry()
     shape = scene.orbit_shape()
@@ -102,10 +89,8 @@ def telemetry_panel(scene):
 
 
 def burns_panel(scene):
-    """The bottom-center Burns panel: six hold-to-fire keys in opposing
-    pairs. The scene's bound request methods are the hold callbacks - they
-    fire every frame a key is held, and the Rust side folds the requests
-    into thrust."""
+    """Bottom-center Burns panel: six hold-to-fire keys; the scene's bound
+    request methods fire every frame a key is held."""
 
     def key(label, on_hold):
         return InteractiveHoldButton(Button(label), on_hold)

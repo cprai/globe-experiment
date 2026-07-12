@@ -1,14 +1,8 @@
 //! Python face of the panel API: the [`Panel`] pyclass a scene script
-//! returns from `get_drawables(scene)`, the `Interactive*` twins that pair a
-//! bare instrument with a Python callable (the script-side counterparts of
-//! the closure-holding Rust wrappers - deliberately the same names, referred
-//! to by `super::` path here), and [`panels_from_python`], the per-frame
-//! conversion into the renderer-facing [`UIDrawablePanel`]s.
-//!
-//! The bare instruments need no twin: they are pyclasses themselves (see the
-//! instrument files), so a script builds the very same structs the Rust
-//! scenes do and the conversion clones them out of their pyclass cells -
-//! exactly the inert path `spec.rs` takes for a deserialized mock panel.
+//! returns, the `Interactive*` twins (a bare instrument + a Python callable),
+//! and [`panels_from_python`]. The bare instruments need no twin - they are
+//! pyclasses themselves, so a script builds the very structs the Rust scenes
+//! do and the conversion clones them out inert.
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -18,11 +12,8 @@ use super::{
     UIDrawablePanel,
 };
 
-/// One anchored panel built by a scene script: the Python twin of
-/// [`UIDrawablePanel`]. `rows` holds the script's instrument objects
-/// untouched (outer list = top-to-bottom rows, inner = left-to-right
-/// instruments, same as the Rust type); they are only cast and converted
-/// when the frame's [`panels_from_python`] runs.
+/// One anchored panel built by a scene script. `rows` holds the script's
+/// instrument objects untouched until [`panels_from_python`] converts them.
 #[pyclass(module = "globe")]
 pub struct Panel {
     pub anchor: PanelAnchor,
@@ -37,8 +28,7 @@ impl Panel {
     }
 }
 
-/// A [`Button`] paired with a Python `on_press` callable, fired on click -
-/// the script-side [`super::InteractiveButton`].
+/// A [`Button`] paired with a Python `on_press` callable, fired on click.
 #[pyclass(module = "globe", name = "InteractiveButton")]
 pub struct InteractiveButton {
     pub button: Button,
@@ -54,8 +44,7 @@ impl InteractiveButton {
 }
 
 /// A [`Button`] paired with a Python `on_hold` callable, fired every frame
-/// the key is held - the script-side [`super::InteractiveHoldButton`] (the
-/// burn keys).
+/// the key is held (the burn keys).
 #[pyclass(module = "globe", name = "InteractiveHoldButton")]
 pub struct InteractiveHoldButton {
     pub button: Button,
@@ -70,8 +59,7 @@ impl InteractiveHoldButton {
     }
 }
 
-/// A [`Toggle`] paired with a Python `on_toggle` callable, fired on click -
-/// the script-side [`super::InteractiveToggle`].
+/// A [`Toggle`] paired with a Python `on_toggle` callable, fired on click.
 #[pyclass(module = "globe", name = "InteractiveToggle")]
 pub struct InteractiveToggle {
     pub toggle: Toggle,
@@ -87,7 +75,7 @@ impl InteractiveToggle {
 }
 
 /// A [`Slider`] paired with a Python `on_change` callable, called with the
-/// new `float` on each edit - the script-side [`super::InteractiveSlider`].
+/// new `float` on each edit.
 #[pyclass(module = "globe", name = "InteractiveSlider")]
 pub struct InteractiveSlider {
     pub slider: Slider,
@@ -102,13 +90,11 @@ impl InteractiveSlider {
     }
 }
 
-/// Calls a no-argument Python callback from inside an instrument's render,
-/// printing (not propagating) an exception: a failed callback is one missed
-/// state mutation, and panicking mid-egui-pass would unwind through the
-/// presenter - unlike a failed `get_drawables`, which the scene fail-fasts
-/// on (see the scene wrappers). Each call attaches on its own: callbacks
-/// fire during `control_panel`'s render, outside any attach scope or pyclass
-/// borrow.
+/// Calls a no-argument Python callback, printing (not propagating) an
+/// exception: a failed callback is one missed mutation, and panicking
+/// mid-egui-pass would unwind through the presenter. Each call attaches on
+/// its own - callbacks fire during render, outside any attach scope or
+/// pyclass borrow.
 fn call0_print_err(callback: &Py<PyAny>) {
     Python::attach(|py| {
         if let Err(err) = callback.call0(py) {
@@ -127,12 +113,10 @@ fn call1_print_err(callback: &Py<PyAny>, value: f32) {
 }
 
 /// Converts a script's `get_drawables` return - any iterable of [`Panel`]s -
-/// into the owned panels `control_panel` renders. Generic over the scene
-/// type `S` only to satisfy the panel type: the converted callbacks ignore
-/// the `&mut S` argument (the script drives the scene through its own bound
-/// pymethods instead) and own `Py` handles into the interpreter (dropping
-/// them without the GIL is safe - pyo3 defers the refcount decrement to the
-/// next attach).
+/// into the owned panels `control_panel` renders. The converted callbacks
+/// ignore the `&mut S` argument (the script drives the scene through its own
+/// bound pymethods) and own `Py` handles; dropping those without the GIL is
+/// safe - pyo3 defers the refcount decrement to the next attach.
 pub fn panels_from_python<S: 'static>(
     py: Python<'_>,
     panels: &Bound<'_, PyAny>,
@@ -163,14 +147,10 @@ pub fn panels_from_python<S: 'static>(
     Ok(out)
 }
 
-/// One panel element: a cast chain over every concrete instrument
-/// pyclass. A bare instrument clones out as its inert self (it impls
-/// [`Instrument`] for every `S`); an `Interactive*` twin becomes the Rust
-/// wrapper with a GIL-acquiring closure around its Python callable (the
-/// closure ignores the `&mut S` fire-time argument - the script's callback
-/// reaches the scene through its own bound pymethods). Anything else is
-/// a `TypeError` (propagated - a wrong element type is a script bug, handled
-/// by the scene's fail-fast).
+/// One panel element: a cast chain over every instrument pyclass. Bare
+/// instruments clone out inert; `Interactive*` twins become the Rust wrapper
+/// with a GIL-attaching closure. Anything else is a `TypeError` (propagated -
+/// a wrong element type is a script bug the scene fail-fasts on).
 fn instrument_from_python<S: 'static>(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Instrument<S>>> {
     let py = obj.py();
     if let Ok(cell) = obj.cast::<Header>() {
@@ -246,9 +226,8 @@ mod tests {
 
     use super::*;
 
-    /// A script exercising every registered class: one panel of each bare
-    /// instrument, one of each interactive twin, plus a deliberately bad
-    /// element for the error path.
+    /// One panel of each bare instrument, one of each interactive twin, plus
+    /// a deliberately bad element for the error path.
     const SCRIPT: &std::ffi::CStr = cr#"
 from globe import (Button, DualReadout, Header, InteractiveButton,
                    InteractiveHoldButton, InteractiveSlider, InteractiveToggle,
@@ -279,17 +258,14 @@ def bad():
         PyModule::from_code(py, SCRIPT, c"bridge_test.py", c"bridge_test").expect("script compiles")
     }
 
-    /// Every registered class must survive the Python -> Rust round trip:
-    /// the script builds one of each through the `globe` module and the
-    /// conversion must reproduce the panel/row shape.
+    /// Every registered class must survive the Python -> Rust round trip.
     #[test]
     fn converts_every_instrument_kind() {
         crate::engine::py::init();
         Python::attach(|py| {
             let module = load_script(py);
             let panels = module.getattr("build").unwrap().call0().unwrap();
-            // Any scene type satisfies the conversion (the callbacks ignore
-            // it); unit keeps the test scene-free.
+            // Unit scene type: the converted callbacks ignore it.
             let panels = panels_from_python::<()>(py, &panels).expect("conversion succeeds");
 
             assert_eq!(panels.len(), 2);
@@ -302,8 +278,8 @@ def bad():
         });
     }
 
-    /// A non-instrument element must fail the conversion (the scene wrapper
-    /// then fail-fasts) rather than being silently dropped.
+    /// A non-instrument element must fail the conversion, not be silently
+    /// dropped.
     #[test]
     fn rejects_non_instrument_elements() {
         crate::engine::py::init();

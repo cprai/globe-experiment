@@ -1,19 +1,6 @@
-//! Offscreen single-frame renderer: draws the scene to an offscreen
-//! texture and reads it back to CPU pixels, with no window, surface, or
-//! present. The presenting half of the `headless` binary (whose root,
-//! `src/headless.rs`, builds the frame this draws).
-//!
-//! It shares the scene core ([`SceneRenderer`]) and the device-creation path
-//! ([`request_adapter_device`]) with the main binary's windowed `Gfx`
-//! (`src/application/gfx.rs` - not part of this binary's module tree); the only
-//! differences are the presentation target (an owned color texture + a readback
-//! buffer instead of a swapchain surface) and that the UI is optional. The
-//! scene draw sequence is identical: clear to black (and the reversed-Z depth
-//! to 0.0), then stars -> planet impostors -> terra surface -> luna ->
-//! atmosphere (markers are skipped because the headless binary tracks none).
-//! When the caller supplies a [`UiFrame`] (from the `--scene` `ui` mock
-//! layouts), an egui overlay is composited on top, exactly as in the windowed
-//! path.
+//! `OffscreenRenderer`: surfaceless single-frame render + CPU readback
+//! around the shared `SceneRenderer`, with an optional egui overlay (the
+//! `--scene` mock UI). The `headless` binary's presenter.
 
 use crate::engine::renderer::{
     DEPTH_FORMAT, SceneRenderer, UiFrame, create_depth_view, depth_attachment,
@@ -21,38 +8,28 @@ use crate::engine::renderer::{
 };
 use crate::engine::scene::RenderState;
 
-/// Maximum width or height (pixels) for a single-frame [`OffscreenRenderer`]
-/// target. Matches wgpu's default 2D texture dimension limit
-/// (`wgpu::Limits::default().max_texture_dimension_2d`, which the scene device
-/// requests); the offscreen color texture cannot exceed it. `OffscreenRenderer`
-/// `debug_assert`s this against the real device limit so the two cannot drift.
+/// Maximum width or height (pixels) for the offscreen target. Matches wgpu's
+/// default `max_texture_dimension_2d`; a `debug_assert` checks it against
+/// the real device limit so the two cannot drift.
 pub const MAX_FRAME_DIMENSION: u32 = 8192;
 
-/// Offscreen color format. **Non-sRGB on purpose.** Every look-tuning constant
-/// in `scene.wgsl` is calibrated to the windowed surface, which is also
-/// non-sRGB (`Gfx::init` picks `!is_srgb()`). On a non-sRGB target the shader's
-/// 8-bit output is stored raw, and those bytes already equal the sRGB-encoded
-/// pixels a display shows - so writing them verbatim into a PNG (which viewers
-/// read as sRGB) reproduces the on-screen look. An sRGB target here would
-/// hardware-encode the output and render visibly brighter than the window.
-/// `Rgba8Unorm` (rather than the surface's usual `Bgra8Unorm`) also means the
-/// read-back bytes are already in RGBA order, with no channel swap.
+/// Offscreen color format. **Non-sRGB on purpose**: the windowed surface is
+/// also non-sRGB, so the shader's 8-bit output stored raw already equals the
+/// sRGB-encoded pixels a display shows - written verbatim to PNG it
+/// reproduces the on-screen look (an sRGB target would render brighter).
+/// `Rgba8Unorm` also means read-back bytes are already in RGBA order.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Renders a single scene frame offscreen and returns it as CPU pixels. Built
-/// once per `headless` invocation, used for one frame, then dropped.
+/// Renders a single scene frame offscreen and returns it as CPU pixels.
 pub struct OffscreenRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     scene: SceneRenderer,
-    /// egui paint backend, used only when a [`UiFrame`] is supplied (mock UI
-    /// overlay). Created unconditionally - it allocates nothing until a frame
-    /// with primitives is rendered.
+    /// egui paint backend, used only when a [`UiFrame`] is supplied. Created
+    /// unconditionally - it allocates nothing until primitives render.
     egui_renderer: egui_wgpu::Renderer,
-    /// The offscreen render target (RENDER_ATTACHMENT | COPY_SRC).
     color: wgpu::Texture,
-    /// Reversed-Z depth buffer matching the color target (same role as the
-    /// windowed `Gfx::depth_view`).
+    /// Reversed-Z depth buffer matching the color target.
     depth_view: wgpu::TextureView,
     /// CPU-mappable buffer the color texture is copied into (rows padded).
     readback: wgpu::Buffer,
@@ -64,12 +41,8 @@ pub struct OffscreenRenderer {
 
 impl OffscreenRenderer {
     /// Builds an offscreen renderer targeting a `width` x `height` image.
-    /// Creates its own surfaceless device (no optional features, same as
-    /// the windowed path), the scene resources, the egui paint backend
-    /// (used only for an optional mock-UI overlay), the offscreen color
-    /// texture, and the readback buffer. Panics if the dimensions are
-    /// outside `1..=MAX_FRAME_DIMENSION` (the caller validates first and
-    /// reports a clean CLI error).
+    /// Panics if the dimensions are outside `1..=MAX_FRAME_DIMENSION` (the
+    /// caller validates first and reports a clean CLI error).
     pub fn new(width: u32, height: u32) -> Self {
         assert!(
             width > 0
@@ -83,8 +56,8 @@ impl OffscreenRenderer {
         // No surface: offscreen rendering only.
         let (_adapter, device, queue) = request_adapter_device(&instance, None);
 
-        // Guard against MAX_FRAME_DIMENSION drifting from the real device limit
-        // (both come from the default wgpu limits today).
+        // Guard against MAX_FRAME_DIMENSION drifting from the real device
+        // limit (both come from the default wgpu limits today).
         debug_assert!(device.limits().max_texture_dimension_2d >= MAX_FRAME_DIMENSION);
 
         let scene = SceneRenderer::new(&device, &queue, FORMAT);
@@ -140,23 +113,17 @@ impl OffscreenRenderer {
         }
     }
 
-    /// Renders one frame from `render` and returns it as an RGBA8 image. Writes
-    /// the uniforms, draws the scene into the offscreen target in a single
-    /// depth-buffered pass (same depth/draw setup as the windowed path),
-    /// optionally composites an egui overlay from `ui` (the mock-UI layouts),
-    /// copies the result into the readback buffer, blocks until it is mapped,
-    /// then un-pads the rows into a tight RGBA8 buffer.
+    /// Renders one frame from `render`, optionally composites an egui overlay
+    /// from `ui`, and returns the frame as a tight RGBA8 image (blocking on
+    /// the readback).
     pub fn render(&mut self, render: &RenderState, ui: Option<UiFrame>) -> image::RgbaImage {
         let viewport = (f64::from(self.width), f64::from(self.height));
         self.scene
             .prepare(&self.device, &self.queue, render, viewport);
 
-        // Apply egui's texture-set deltas (font atlas + per-glyph) before they
-        // are referenced by the overlay draw. The offscreen path always renders
-        // to completion - there is no early-return frame like the windowed
-        // surface acquire - so the strict set-before-acquire ordering rule of
-        // the windowed `Gfx::update` is trivially met here; we keep set-before
-        // / free-after anyway to leave `egui_renderer` in a clean state.
+        // This path always renders to completion (no early-return acquire),
+        // so the windowed set-before-acquire ordering rule is trivially met;
+        // set-before / free-after is kept anyway.
         let screen = ui.as_ref().map(|ui| {
             for (id, delta) in &ui.textures_delta.set {
                 self.egui_renderer
@@ -177,9 +144,9 @@ impl OffscreenRenderer {
                 label: Some("offscreen frame encoder"),
             });
 
-        // egui's per-frame vertex/index/uniform buffers are updated through the
-        // encoder before the pass, yielding prologue command buffers submitted
-        // ahead of the main one. Empty when there is no UI to draw.
+        // egui's per-frame buffers update through the encoder before the
+        // pass, yielding prologue command buffers submitted ahead of the
+        // main one. Empty when there is no UI to draw.
         let egui_commands = match (ui.as_ref(), screen.as_ref()) {
             (Some(ui), Some(screen)) => self.egui_renderer.update_buffers(
                 &self.device,
@@ -241,15 +208,16 @@ impl OffscreenRenderer {
         self.queue
             .submit(egui_commands.into_iter().chain([encoder.finish()]));
 
-        // Free egui's released textures after submit - the just-submitted frame
-        // may still reference them. Benign no-op when there was no UI.
+        // Free egui's released textures after submit - the just-submitted
+        // frame may still reference them.
         if let Some(ui) = ui.as_ref() {
             for id in &ui.textures_delta.free {
                 self.egui_renderer.free_texture(id);
             }
         }
 
-        // Map the readback buffer and block until the GPU work + mapping finish.
+        // Map the readback buffer and block until the GPU work + mapping
+        // finish.
         let slice = self.readback.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {

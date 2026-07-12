@@ -1,15 +1,7 @@
-//! Embedded Python for scene scripting.
-//!
-//! The `*_py` scenes delegate their `UIDrawable::get_drawables` to a Python
-//! script whose path is the scene's required `--script` argument (the repo
-//! ships reference scripts under the repo-root `scenes/`), loaded once at
-//! scene startup and
-//! re-read on every launch (edit the script, relaunch, no rebuild). The script
-//! imports the engine's Python surface from the embedded `globe` module
-//! registered here, and receives the live scene pyclass each frame.
-//!
-//! The headless binary compiles (but never calls) this module: it links
-//! libpython yet never initializes the interpreter.
+//! Embedded Python for scene scripting: interpreter init, the `globe`
+//! module, and the runtime script loader (scripts are re-read every launch -
+//! edit + relaunch, no rebuild). The headless binary compiles but never
+//! calls this: it links libpython without initializing the interpreter.
 
 use std::ffi::CString;
 use std::path::Path;
@@ -19,18 +11,14 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 /// The embedded `globe` module - the Python half of the dual Rust/Python UI
-/// API. Registered via `append_to_inittab` (before interpreter init), so
-/// scripts can `from globe import ...`.
-///
-/// The `*_py` scene structs themselves are pyclasses too but are NOT
-/// registered here: they live in `src/scenes/` (which the engine must not
-/// reference) and reach Python only as instances handed into the script.
+/// API. The `*_py` scene structs are pyclasses too but are NOT registered
+/// here: they live in `src/scenes/` (which engine must not reference) and
+/// reach Python only as instances handed into the script.
 #[pymodule]
 fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use crate::engine::scene;
     use crate::engine::ui;
 
-    // The bare instruments + their vocabulary enums.
     m.add_class::<ui::Header>()?;
     m.add_class::<ui::Readout>()?;
     m.add_class::<ui::DualReadout>()?;
@@ -40,19 +28,14 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ui::LampStatus>()?;
     m.add_class::<ui::Slider>()?;
     m.add_class::<ui::PanelAnchor>()?;
-    // The panel + the script-side interactive twins.
     m.add_class::<ui::py::Panel>()?;
     m.add_class::<ui::py::InteractiveButton>()?;
     m.add_class::<ui::py::InteractiveHoldButton>()?;
     m.add_class::<ui::py::InteractiveToggle>()?;
     m.add_class::<ui::py::InteractiveSlider>()?;
-    // The scene-side dual API the scripts read/drive. Clock is registered
-    // only for its MIN/MAX_MULTIPLIER classattrs (the speed-slider bounds):
-    // no Clock instance crosses into Python - a script drives the clock
-    // through its scene pyclass's paused/multiplier/datetime_label()
-    // properties, the Python face of the scenes' SceneClock trait API. The
-    // camera target is likewise scene-pyclass properties (selected_body/
-    // body_names()/request_body()), so no target type is registered either.
+    // Clock is registered only for its MIN/MAX_MULTIPLIER classattrs: no
+    // Clock instance crosses into Python - scripts drive the clock (and the
+    // camera target) through their scene pyclass's properties.
     m.add_class::<scene::Clock>()?;
     m.add_class::<scene::SatelliteTelemetry>()?;
     m.add_class::<scene::satellite::OrbitShape>()?;
@@ -63,9 +46,8 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// `append_to_inittab` MUST precede `Python::initialize()` - a module
 /// appended after init would never be importable - so both live inside the
-/// one `Once`. Call this before any `Python::attach` (there is no
-/// auto-initialize feature; an early attach panics loudly, which is the
-/// desired failure for a scene that forgot to init).
+/// one `Once`. Call before any `Python::attach` (there is no
+/// auto-initialize; an early attach panics loudly, the desired failure).
 pub fn init() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -74,15 +56,10 @@ pub fn init() {
     });
 }
 
-/// Loads the scene script at `path` and returns its module-level
-/// `get_drawables` function.
-///
-/// The path is caller-chosen (the `*_py` scenes take it as their required
-/// `--script` argument; their tests pass the repo's `scenes/*.py`
-/// explicitly) - no
-/// resolution happens here. Failures - missing file, compile error, missing
-/// function - panic with the Python traceback printed: the script is loaded
-/// once at startup, so fail-fast beats limping into a per-frame error loop.
+/// Loads the scene script at `path` (caller-chosen, no resolution here) and
+/// returns its module-level `get_drawables`. Failures panic with the Python
+/// traceback printed: the script loads once at startup, so fail-fast beats
+/// limping into a per-frame error loop.
 pub fn load_get_drawables(py: Python<'_>, path: &Path) -> Py<PyAny> {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));

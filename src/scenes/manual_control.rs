@@ -1,11 +1,9 @@
 //! Manually-controlled satellite scene: one object seeded from the ISS TLE
-//! but propagated **numerically** (satkit `orbitprop`, no TLE retained), so
-//! the user can reshape the orbit at runtime. A bottom-center "Burns" panel
-//! offers the six orbital-frame thrust keys (prograde / retrograde, normal /
-//! anti-normal, radial out / radial in); while a key is held the thrust
-//! acceleration integrates into the GCRF velocity, and the marker, predicted
-//! orbit path, and apsis readouts all follow the post-burn state
-//! (CLI: `globe-experiment scene manual_control`).
+//! but propagated **numerically** (satkit `orbitprop`, no TLE retained). A
+//! bottom-center "Burns" panel holds six orbital-frame thrust keys; while
+//! held, the thrust integrates into the GCRF velocity and the marker,
+//! predicted path, and apsis readouts follow (CLI: `globe-experiment scene
+//! manual_control`).
 
 use glam::DVec3;
 use satkit::Instant;
@@ -22,10 +20,10 @@ use crate::engine::ui::{
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
-// This scene's seed TLE, inlined as a source literal - see `iss.rs` for the
-// format notes. (Deliberately duplicated per scene.) Unlike the tracking
-// scenes the element set is used ONCE, to bootstrap the initial GCRF state
-// vector; after that the orbit belongs to the user.
+// Seed TLE - see `iss.rs` for the column-sensitive format notes.
+// Deliberately duplicated per scene - do not factor into a shared const.
+// Used ONCE to bootstrap the initial GCRF state; after that the orbit
+// belongs to the user.
 
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
 /// element set - the starting orbit only.
@@ -35,35 +33,25 @@ const ISS_TLE: &str = concat!(
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
-/// Thrust acceleration while a burn key is held, m/s^2. Deliberately game-like
-/// (~1 g, vastly stronger than any real station thruster): holding prograde
-/// for ~10 s of simulation time adds ~100 m/s of delta-v, enough to visibly
-/// reshape the predicted orbit ellipse while you watch. Scaled by simulation
-/// dt, so time-warp burns harder in wall time (physically consistent).
+/// Thrust while a burn key is held, m/s^2. Deliberately game-like (~1 g,
+/// vastly stronger than any real station thruster): ~10 s of held prograde
+/// adds ~100 m/s of delta-v, enough to visibly reshape the predicted orbit.
+/// Scaled by simulation dt, so time-warp burns harder in wall time.
 const BURN_ACCEL_M_S2: f64 = 10.0;
 
-/// Manually-controlled simulation: the clock held directly, plus the
-/// satellite's live GCRF state vector (re-anchored to the clock every frame)
-/// and the six burn request flags. No celestial sphere is stored -
-/// `CelestialSphere::at` is a pure function of time, so `frame_state`
-/// evaluates it fresh at each frame's clock instant (the same pattern as the
-/// renderer).
+/// Manually-controlled simulation: clock, the satellite's live GCRF state
+/// vector (re-anchored to the clock every frame), and the burn request flags.
 pub struct ManualControlScene {
-    /// Simulation clock (datetime + play/paused + speed), reached only via
-    /// the `SceneClock` API.
     clock: Clock,
     /// Object name from the seed TLE, for the panel header.
     name: String,
-    /// The satellite's GCRF state vector, valid at `orbit_epoch`. THE orbit -
-    /// burns mutate its velocity, and each frame's numerical propagation
-    /// carries the result forward. No TLE behind it after seeding.
+    /// THE orbit - burns mutate its velocity, and each frame's numerical
+    /// propagation carries the result forward. No TLE behind it after seeding.
     orbit: OrbitState,
     /// The instant `orbit` is valid at; advanced to the clock each frame.
     orbit_epoch: Instant,
-    /// Burn request flags, one per key. A held key's callback receives the
-    /// scene and sets its flag during the egui pass; `advance` folds them
-    /// into a velocity change next frame, then clears them. The flags stay
-    /// (unlike the old clock/selector request flags) because the burn is
+    /// Burn request flags, one per key, set by the held keys' callbacks
+    /// during the egui pass. Flags (not direct edits) because the burn is
     /// dt-scaled: only `advance` knows the frame's simulation dt.
     burn_prograde: bool,
     burn_retrograde: bool,
@@ -71,20 +59,16 @@ pub struct ManualControlScene {
     burn_anti_normal: bool,
     burn_radial_out: bool,
     burn_radial_in: bool,
-    /// The scene's interactive orbital camera (pan/tilt/zoom rig plus its
-    /// animations); the default whole-Terra view.
     camera: PtzCamera,
-    /// The body the camera orbits - owned by the scene, not the camera, and
-    /// passed into every camera call that scales by or centers on it. Fixed
-    /// at Terra here (no selector), so it never reframes.
+    /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
 }
 
 impl ManualControlScene {
     fn new() -> Self {
-        // The TLE lives exactly long enough to produce the initial conditions:
-        // one SGP4 sample at its own epoch, converted to a GCRF state vector
-        // (reads satkit globals - `scene::init` must already have run).
+        // The TLE lives exactly long enough to produce the initial
+        // conditions: one SGP4 sample at its own epoch, converted to a GCRF
+        // state vector (reads satkit globals - `scene::init` must have run).
         let mut seed = Satellite::from_tle(ISS_TLE);
         let epoch = seed.epoch();
         let orbit = seed.state_at(&epoch).orbit;
@@ -104,10 +88,9 @@ impl ManualControlScene {
         }
     }
 
-    /// The unit thrust direction for the currently-held burn keys, in GCRF:
-    /// the orbital frame is derived from the live state (prograde = velocity,
-    /// radial = position, normal = angular momentum r x v). Held opposing
-    /// keys cancel; `None` when nothing is held (or everything cancels).
+    /// Unit thrust direction for the held burn keys, in GCRF (prograde =
+    /// velocity, radial = position, normal = r x v). Held opposing keys
+    /// cancel; `None` when nothing is held or everything cancels.
     fn burn_direction(&self) -> Option<DVec3> {
         let radial = self.orbit.pos_gcrf_m.normalize();
         let prograde = self.orbit.vel_gcrf_m_s.normalize();
@@ -148,11 +131,6 @@ impl SceneClock for ManualControlScene {
 
 impl Scene for ManualControlScene {
     fn advance(&mut self) {
-        // The clock already ticked in `tick_scene` (any Time-panel
-        // pause/speed edit already landed via the SceneClock setters during
-        // the previous egui pass); only the scene-specific work remains. The
-        // celestial sphere is not stashed here: `frame_state` re-derives it
-        // at the frame's clock instant.
         let now = self.clock_now();
 
         // Re-anchor the state vector to the clock: one numerical step over
@@ -165,9 +143,9 @@ impl Scene for ManualControlScene {
             self.orbit_epoch = now;
 
             // Thrust as one impulse per frame (Euler integration of a
-            // continuous burn - frame dt is small enough that the chord
-            // error is far below the game-like thrust's own fiction).
-            // dt-scaled, so a paused clock burns nothing.
+            // continuous burn; frame dt keeps the chord error far below the
+            // game-like thrust's own fiction). dt-scaled, so a paused clock
+            // burns nothing.
             if let Some(direction) = self.burn_direction() {
                 self.orbit.vel_gcrf_m_s += direction * (BURN_ACCEL_M_S2 * dt);
             }
@@ -185,11 +163,6 @@ impl Scene for ManualControlScene {
 }
 
 impl ScenePtzCamera for ManualControlScene {
-    // The accessors behind the blanket `CameraControl` impl, which forwards
-    // every input event into the embedded camera: where the camera and the
-    // scene-owned orbit target live in this struct. A scene that needs to
-    // diverge (gate input, swap the camera kind) implements `CameraControl`
-    // directly instead.
     fn camera(&self) -> &PtzCamera {
         &self.camera
     }
@@ -206,21 +179,14 @@ impl ScenePtzCamera for ManualControlScene {
 impl CameraView for ManualControlScene {
     fn frame_state(&mut self) -> RenderState {
         let now = self.clock_now();
-        // This frame's celestial sphere, evaluated on the spot: `at` is a
-        // pure function of time, so it needs no stashing between frames (the
-        // renderer re-derives the same sphere from `RenderState.time`).
         let sphere = CelestialSphere::at(&now);
 
-        // Resolve the camera first: build the rig against this frame's sphere
-        // (Terra's moving center is re-resolved inside `world_rig`; the fixed
-        // Terra target never reframes) - the eye feeds the marker-occlusion
-        // test below.
         let celestial_to_world = sphere.star_rot_inv.transpose();
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
         // `advance` just re-anchored the state to `now`, so this is a pure
-        // frame change (GCRF -> the world-frame marker), no propagation.
+        // frame change (GCRF -> world-frame marker), no propagation.
         let state = satellite::resolve_orbit(&self.orbit, &now);
         let markers = vec![SatelliteMarker {
             position_km: state.position_km,
@@ -244,44 +210,26 @@ impl CameraView for ManualControlScene {
 
 impl UIDrawable for ManualControlScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
-        // The Time panel first, then the telemetry panel, then the Burns
-        // panel. The panel builder is deliberately kept per-scene (like the
-        // propagation loop) - scenes may diverge in what they expose.
-        //
-        // Snapshot the displayed values up front (owned values only) - the
-        // panels are owned and never borrow the scene. Every callback
-        // receives the scene as `&mut Self` at fire time: the Time-panel
-        // pair calls the SceneClock setters directly (idempotent under
-        // egui's discard-pass double fire via build-time snapshots - the Run
-        // toggle sets the pre-click `running`, never a re-read flip), and a
-        // burn key sets its `burn_*` flag on the scene.
-        //
-        // The readout re-derives from the live state at the same instant
-        // `frame_state` used (`Clock::now()` is pure, `advance` anchored
-        // `self.orbit` to it earlier this redraw, and nothing mutated either
-        // since), so this pure frame change matches the rendered marker with
-        // no stashed state. `shape` is `None` after a burn to escape (e >= 1:
-        // no apsides).
+        // Snapshot displayed values up front - the panels are owned and never
+        // borrow the scene. The readout re-derives from the live state at the
+        // same instant `frame_state` used (`advance` anchored `self.orbit` to
+        // it this redraw), so it matches the rendered marker. `shape` is
+        // `None` after a burn to escape (e >= 1: no apsides).
         let now = self.clock_now();
         let state = satellite::resolve_orbit(&self.orbit, &now);
         let shape = satellite::orbit_shape(&self.orbit);
 
         let datetime = self.clock_datetime_label();
-        // Padded to the widest value (MAX_MULTIPLIER "100.0" = 5 chars): the
-        // font is monospace, so a fixed-width value keeps the digit window
-        // from resizing as the speed changes.
+        // Padded to the widest value (monospace font) so the digit window
+        // does not resize as the speed changes.
         let clock_speed = format!("{:>5.1}", self.clock_multiplier());
         let running = !self.clock_paused();
 
-        // Exponential (base e) speed: the slider edits the exponent, so
-        // multiplier = e^exp - real time (e^0 = 1x) at the left, 100x at the
-        // right, 10x at the midpoint. The mapping lives here, not in the panel.
+        // The slider edits the exponent: multiplier = e^exp, so 1x at the
+        // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
         let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
 
-        // The producer groups instruments into rows + picks content only; all
-        // styling and every metric live in the instrument modules / theme
-        // (taffy bottom-aligns the Run key with the speed window beside it).
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Time".to_string(),
@@ -302,7 +250,8 @@ impl UIDrawable for ManualControlScene {
                         label: "Run".to_string(),
                         active: running,
                     },
-                    // Pausing = setting the snapshotted pre-click `running`.
+                    // Writes the pre-click snapshot - keep idempotent: egui's
+                    // discard pass can fire this twice per frame.
                     on_toggle: Box::new(move |scene: &mut Self| scene.set_clock_paused(running)),
                 }),
             ],
@@ -319,9 +268,8 @@ impl UIDrawable for ManualControlScene {
             rows: time_rows,
         }];
 
-        // Values padded to their widest form (monospace font), so the
-        // digit windows keep their size as the numbers move - see iss.rs.
-        // Apsis windows show dashes on an escape orbit (no apsides).
+        // Values padded to their widest form (monospace) - see iss.rs. Apsis
+        // windows show dashes on an escape orbit (no apsides).
         let (apo, peri) = match &shape {
             Some(shape) => (
                 format!("{:>7.1}", shape.apoapsis_alt_km),
@@ -371,9 +319,9 @@ impl UIDrawable for ManualControlScene {
             rows,
         });
 
-        // The Burns panel: six hold-to-fire keys in opposing pairs (paired
-        // keys split each row). A held key sets its request flag every frame;
-        // `advance` turns the flags into thrust.
+        // Burns panel: six hold-to-fire keys in opposing pairs. A held key
+        // sets its request flag every frame; `advance` turns flags into
+        // thrust.
         let rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Burns".to_string(),
@@ -430,19 +378,15 @@ impl UIDrawable for ManualControlScene {
     }
 }
 
-/// The `scene manual_control` CLI arguments - none today. Each scene
-/// subcommand declares its own arguments, so a future flag for this scene is
-/// added here, not in `main` (which only dispatches).
+/// The `scene manual_control` CLI arguments - none today.
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the manual-control simulation and hands off to the winit event
-/// loop. Blocks until the window closes.
+/// Builds the manual-control simulation and runs the winit event loop until
+/// close.
 pub fn run(_args: Args) {
-    // Seed satkit's global state (embedded ephemeris + EOP + IERS tables +
-    // EGM96 gravity) before anything else: `new` parses a TLE, and every
-    // frame numerically propagates the orbit and evaluates the
-    // CelestialSphere.
+    // Seed satkit's globals (ephemeris + EOP + IERS tables + EGM96 gravity)
+    // before the TLE parse and the per-frame numerical propagation.
     scene::init();
 
     application::run(ApplicationState::new(ManualControlScene::new()));
