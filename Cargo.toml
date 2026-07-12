@@ -18,6 +18,11 @@ path = "src/main.rs"
 name = "headless"
 path = "src/headless.rs"
 
+# The root package plus the proc-macro helper; keeps fmt/clippy/test
+# covering `macros/`.
+[workspace]
+members = ["macros"]
+
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }
@@ -37,6 +42,8 @@ humantime = "2"
 # so only these three codecs are needed; other default formats are dropped.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff"] }
 ktx2 = "0.5"
+# The #[derive(SceneClock)] proc macro (see src/engine/scene/clock.rs).
+macros = { path = "macros" }
 pollster = "0.4"
 # Embedded CPython for scene scripting: the *_py scenes load a repo-root
 # scenes/*.py script at runtime and delegate their UIDrawable panel production

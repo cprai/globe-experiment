@@ -21,7 +21,9 @@ headless (bin headless)     -> engine, offscreen (no scenes; compiles
 
 Both bin roots declare the shared `mod engine;` (no lib crate). The compiler
 enforces only the top level: `headless.rs` never declares `scenes`, `main.rs`
-never declares `offscreen`.
+never declares `offscreen`. One workspace member besides the root package:
+`macros/`, the proc-macro crate behind `#[derive(SceneClock)]` (derives
+cannot live in the crate that uses them).
 
 Engine modules and their roles:
 
@@ -63,8 +65,9 @@ UIDrawable`; adding a scene never touches the application layer.
   plus the provided `tick_scene` (clock tick + advance; for every
   `Self: SceneClock`), the application's per-frame entry point.
 - **`SceneClock`** — the whole clock API as trait default methods over one
-  required `clock_mut()`. `Clock` is plain data with private fields; only the
-  same-module trait defaults reach them (compiler-enforced).
+  required `clock_mut()`, supplied per scene by `#[derive(SceneClock)]` over
+  the scene's `clock` field. `Clock` is plain data with private fields; only
+  the same-module trait defaults reach them (compiler-enforced).
 - **`CameraControl`/`CameraView`** — input vs frame production. Normally via
   `ScenePtzCamera`.
 - **`UIDrawable`** — `get_drawables()`, the frame's owned panels. Called

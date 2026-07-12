@@ -18,6 +18,9 @@ pub use body::CelestialBody;
 // not `unused_imports`) would warn without the allow.
 #[allow(unused_imports)]
 pub use clock::{Clock, SceneClock};
+// The derive macro shares the trait's name (macro vs type namespace), so
+// one `use engine::scene::SceneClock` imports both — the serde pattern.
+pub use macros::SceneClock;
 
 use crate::engine::planet;
 use celestial_sphere::CelestialSphere;

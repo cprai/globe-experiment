@@ -42,7 +42,9 @@ impl Clock {
     }
 }
 
-/// The clock API every scene goes through. Implement only `clock_mut` (a
+/// The clock API every scene goes through. `#[derive(SceneClock)]` (the
+/// `macros` crate, re-exported next to this trait) supplies the only
+/// required method, `clock_mut`, from a field named `clock` (a
 /// plain field; the `*_py` scenes keep it on the wrapper, outside the
 /// pyclass, precisely so this hook can hand out the `&mut Clock` a pyclass
 /// cell's borrow guard could not); the default methods hold all the logic

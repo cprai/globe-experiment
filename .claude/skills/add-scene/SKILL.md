@@ -22,8 +22,9 @@ time window) and wires it into the clap CLI.
      Vec<Satellite>, camera: PtzCamera, camera_target: CameraTarget }`
      (direct fields; there is no shared core struct, and no stored
      `CelestialSphere`).
-   - implements `crate::engine::scene::SceneClock` for it: just
-     `clock_mut() -> &mut Clock`. **All clock access goes through the
+   - derives `SceneClock` (`#[derive(SceneClock)]`, from the `macros`
+     proc-macro crate re-exported next to the trait; requires the field to
+     be named `clock`). **All clock access goes through the
      trait's default API** (`tick_clock`/`clock_now`/
      `clock_datetime_label`/...) - the logic lives in those defaults beside
      `Clock` (plain data, private fields), so the compiler enforces it.

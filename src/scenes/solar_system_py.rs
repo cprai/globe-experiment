@@ -128,6 +128,7 @@ impl SolarSystemSceneInner {
 
 /// What the application owns: the `Py` handle, the script's `get_drawables`
 /// (loaded once at startup), and the clock + camera + target as plain fields.
+#[derive(SceneClock)]
 pub struct SolarSystemPyScene {
     inner: Py<SolarSystemSceneInner>,
     get_drawables_fn: Py<PyAny>,
@@ -182,12 +183,6 @@ impl SolarSystemPyScene {
             inner.multiplier = multiplier;
             inner.datetime_label = datetime_label;
         });
-    }
-}
-
-impl SceneClock for SolarSystemPyScene {
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.clock
     }
 }
 

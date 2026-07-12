@@ -25,6 +25,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Empty solar-eclipse simulation: just the clock; no satellites. A Terra /
 /// Luna Camera Target panel writes `camera_target` directly.
+#[derive(SceneClock)]
 pub struct SolarEclipseScene {
     clock: Clock,
     /// Written directly by the Camera Target keys via
@@ -78,12 +79,6 @@ impl SolarEclipseScene {
         self.camera
             .reframe(&target, &sphere, sphere.star_rot_inv.transpose());
         self.camera_target = target;
-    }
-}
-
-impl SceneClock for SolarEclipseScene {
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.clock
     }
 }
 

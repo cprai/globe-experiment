@@ -25,6 +25,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Empty solar-system simulation: just the clock; no satellites. A
 /// one-key-per-body Camera Target panel writes `camera_target` directly.
+#[derive(SceneClock)]
 pub struct SolarSystemScene {
     clock: Clock,
     /// Written directly by the Camera Target keys via
@@ -58,12 +59,6 @@ impl SolarSystemScene {
         self.camera
             .reframe(&target, &sphere, sphere.star_rot_inv.transpose());
         self.camera_target = target;
-    }
-}
-
-impl SceneClock for SolarSystemScene {
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.clock
     }
 }
 

@@ -946,6 +946,7 @@ dependencies = [
  "humantime",
  "image",
  "ktx2",
+ "macros",
  "pollster",
  "pyo3",
  "rayon",
@@ -1433,6 +1434,14 @@ name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+
+[[package]]
+name = "macros"
+version = "0.0.0"
+dependencies = [
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "memchr"

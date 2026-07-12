@@ -45,6 +45,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Manually-controlled simulation: clock, the satellite's live GCRF state
 /// vector (re-anchored to the clock every frame), and the burn request flags.
+#[derive(SceneClock)]
 pub struct ManualControlScene {
     clock: Clock,
     /// Object name from the seed TLE, for the panel header.
@@ -124,12 +125,6 @@ impl ManualControlScene {
             sum -= radial;
         }
         sum.try_normalize()
-    }
-}
-
-impl SceneClock for ManualControlScene {
-    fn clock_mut(&mut self) -> &mut Clock {
-        &mut self.clock
     }
 }
 
