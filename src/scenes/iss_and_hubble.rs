@@ -2,12 +2,11 @@
 //! The original default scene (CLI: `globe-experiment scene iss_and_hubble`).
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
-use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::camera::{PtzCamera, ScenePtzCamera};
 use crate::engine::scene::kinematic_body::KinematicBody;
 use crate::engine::scene::orbital_body::OrbitalBody;
 use crate::engine::scene::{
-    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    self, BodyTelemetry, CameraTarget, Clock, Scene, SceneClock, SceneKinematicBodies,
     SceneOrbitalBodies,
 };
 use crate::engine::ui::{
@@ -77,30 +76,6 @@ impl IssAndHubbleScene {
 impl Scene for IssAndHubbleScene {
     fn advance(&mut self) {
         // Nothing scene-specific.
-    }
-}
-
-impl CameraView for IssAndHubbleScene {
-    fn frame_state(&mut self) -> RenderState {
-        let now = self.clock_now();
-        let sphere = CelestialSphere::at(&now);
-
-        let celestial_to_world = sphere.star_rot_inv.transpose();
-        let target = self.camera_target;
-        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
-
-        // Terra target, so the render-frame eye is the geocentric eye
-        // `tracked_bodies` needs.
-        let tracked_bodies = self.tracked_bodies(&now, eye);
-
-        RenderState {
-            time: now,
-            camera_target: target,
-            camera_pos: eye,
-            camera_look_at: look_at,
-            camera_up: up,
-            tracked_bodies,
-        }
     }
 }
 

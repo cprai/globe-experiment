@@ -12,9 +12,12 @@ use std::time::Instant;
 
 use glam::{DMat3, DQuat, DVec3};
 
-use super::{CameraControl, CursorHint, PointerButton, ScrollDelta};
+use super::{CameraControl, CameraView, CursorHint, PointerButton, ScrollDelta};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::{CameraTarget, CelestialBody};
+use crate::engine::scene::{
+    CameraTarget, CelestialBody, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    SceneOrbitalBodies,
+};
 
 /// Minimum release speed, in px/s, for a drag to keep coasting.
 const FLICK_SPEED: f64 = 50.0;
@@ -609,5 +612,38 @@ impl<S: ScenePtzCamera> CameraControl for S {
 
     fn cursor_hint(&self) -> CursorHint {
         self.camera().cursor_hint()
+    }
+}
+
+/// Every scene flying a [`PtzCamera`] produces its frame identically, so the
+/// standard trait set also supplies [`CameraView`]. A scripted or fixed
+/// camera implements [`CameraView`] directly instead of `ScenePtzCamera`.
+impl<S> CameraView for S
+where
+    S: Scene + SceneClock + ScenePtzCamera + SceneOrbitalBodies + SceneKinematicBodies,
+{
+    fn frame_state(&mut self) -> RenderState {
+        let now = self.clock_now();
+        let sphere = CelestialSphere::at(&now);
+
+        let celestial_to_world = sphere.star_rot_inv.transpose();
+        let target = *self.camera_target();
+        let (eye, look_at, up) = self
+            .camera()
+            .world_rig(&target, &sphere, celestial_to_world);
+
+        // The render-frame eye doubles as `tracked_bodies`' geocentric eye:
+        // exact for a Terra target, and every body-tracking scene orbits
+        // Terra (body-less scenes never use it).
+        let tracked_bodies = self.tracked_bodies(&now, eye);
+
+        RenderState {
+            time: now,
+            camera_target: target,
+            camera_pos: eye,
+            camera_look_at: look_at,
+            camera_up: up,
+            tracked_bodies,
+        }
     }
 }

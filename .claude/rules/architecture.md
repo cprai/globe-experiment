@@ -36,8 +36,9 @@ Engine modules and their roles:
   methods defaulted) + `CameraView` (`frame_state`) trait pair every scene
   implements, and the device-neutral input vocabulary. `ptz.rs`: `PtzCamera`
   (the interactive orbital rig + all input/animation state) and
-  `ScenePtzCamera` (three accessors; a blanket impl supplies the whole
-  `CameraControl` surface). See `camera.md`.
+  `ScenePtzCamera` (three accessors; blanket impls supply the whole
+  `CameraControl` surface and — together with the clock/body traits — all of
+  `CameraView`). See `camera.md`.
 - **`scene`** — `Scene` trait, `RenderState`, `Clock`/`SceneClock`,
   `CameraTarget`, `CelestialBody` (`celestial_body.rs`), the celestial
   sphere, and the tracked-body pipeline (`body.rs`: `TrackedBody` + shared
@@ -82,7 +83,10 @@ UIDrawable`; adding a scene never touches the application layer.
 - **`CameraControl`/`CameraView`** — input vs frame production.
   `CameraControl` normally via `ScenePtzCamera`, supplied per scene by
   `#[derive(ScenePtzCamera)]` over the scene's `camera` + `camera_target`
-  fields.
+  fields. `CameraView` comes from a second blanket impl (in `ptz.rs`) over
+  `Scene + SceneClock + ScenePtzCamera` + the two body traits — no scene
+  implements `frame_state` itself; a scripted/fixed camera would implement
+  `CameraView` directly instead of `ScenePtzCamera`.
 - **`UIDrawable`** — `get_drawables()`, the frame's owned panels. Called
   once per frame BEFORE egui's `run_ui`.
 
@@ -93,7 +97,8 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
 ## Cross-cutting invariants
 
 - **`CelestialSphere::at` is a pure function of time and is stored nowhere.**
-  Scenes and the renderer evaluate it on the spot; `RenderState` carries only
+  The `CameraView` blanket impl and the renderer evaluate it on the spot;
+  `RenderState` carries only
   time + resolved camera rig + `CameraTarget` + tracked bodies (dot +
   precomputed trail, plain data).
 - **Scenes own their tracked bodies** as direct per-kind `Vec` fields
@@ -121,9 +126,10 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
 
 ## Purity rules (kept by review)
 
-- `scene` imports neither winit/wgpu nor any camera or ui type.
-  (`RenderState` and `CameraTarget` are defined in `scene` and consumed by
-  `renderer`/`camera` — the two sanctioned edges.)
+- `scene` imports neither winit/wgpu nor any camera or ui type. (The
+  sanctioned dependency direction is the reverse: `renderer`/`camera` consume
+  `scene` types — `RenderState`, `CameraTarget`, and, for the `CameraView`
+  blanket impl in `ptz.rs`, the scene traits + `CelestialSphere`.)
 - `camera` and `renderer` are winit-free; the windowed presenter (`Gfx`)
   lives in `application/gfx.rs`, its headless twin in `src/offscreen.rs`.
 - `application` never touches the `CelestialSphere`; it consumes only the

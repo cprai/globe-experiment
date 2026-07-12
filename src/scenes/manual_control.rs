@@ -7,12 +7,10 @@
 use glam::DVec3;
 
 use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
-use crate::engine::scene::celestial_sphere::CelestialSphere;
+use crate::engine::camera::{PtzCamera, ScenePtzCamera};
 use crate::engine::scene::kinematic_body::KinematicBody;
 use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
-    SceneOrbitalBodies,
+    self, CameraTarget, Clock, Scene, SceneClock, SceneKinematicBodies, SceneOrbitalBodies,
 };
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
@@ -139,31 +137,6 @@ impl Scene for ManualControlScene {
         self.burn_anti_normal = false;
         self.burn_radial_out = false;
         self.burn_radial_in = false;
-    }
-}
-
-impl CameraView for ManualControlScene {
-    fn frame_state(&mut self) -> RenderState {
-        let now = self.clock_now();
-        let sphere = CelestialSphere::at(&now);
-
-        let celestial_to_world = sphere.star_rot_inv.transpose();
-        let target = self.camera_target;
-        let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
-
-        // Terra target, so the render-frame eye is the geocentric eye
-        // `tracked_bodies` needs. The trail comes from the live post-burn
-        // state, so the predicted orbit reshapes as the burn happens.
-        let tracked_bodies = self.tracked_bodies(&now, eye);
-
-        RenderState {
-            time: now,
-            camera_target: target,
-            camera_pos: eye,
-            camera_look_at: look_at,
-            camera_up: up,
-            tracked_bodies,
-        }
     }
 }
 
