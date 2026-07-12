@@ -7,14 +7,11 @@
 
 use std::time::Instant as WallClock;
 
-use pyo3::prelude::*;
 use satkit::{Duration, Instant};
 
-/// `pyclass` only for the `MIN_MULTIPLIER`/`MAX_MULTIPLIER` classattrs: no
-/// `Clock` instance crosses into Python - a `*_py` scene mirrors the clock
-/// as scene-pyclass snapshot/request properties. All fields private; every
-/// consumer goes through [`SceneClock`].
-#[pyclass(module = "globe")]
+/// All fields private; every consumer goes through [`SceneClock`]. The
+/// clock imposes no multiplier range - each scene owns its own min/max
+/// constants for its speed slider.
 pub struct Clock {
     /// Simulation time zero - the TLE's epoch.
     epoch: Instant,
@@ -30,22 +27,14 @@ pub struct Clock {
     last: Option<WallClock>,
 }
 
-#[pymethods]
-impl Clock {
-    /// Real time to 100x. `classattr` so a script can read the speed-slider
-    /// range; unchanged as Rust associated consts.
-    #[classattr]
-    pub const MIN_MULTIPLIER: f32 = 1.0;
-    #[classattr]
-    pub const MAX_MULTIPLIER: f32 = 100.0;
-}
-
 impl Clock {
     pub fn new(epoch: Instant) -> Self {
         Self {
             epoch,
             elapsed_seconds: 0.0,
-            multiplier: Self::MIN_MULTIPLIER,
+            // Real time; a scene wanting a different start speed sets it
+            // through `SceneClock`.
+            multiplier: 1.0,
             // Per the owner's choice, the clock runs from launch.
             paused: false,
             last: None,

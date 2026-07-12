@@ -6,7 +6,6 @@ import math
 
 from globe import (
     Button,
-    Clock,
     DualReadout,
     Header,
     InteractiveHoldButton,
@@ -18,6 +17,10 @@ from globe import (
     Slider,
     Toggle,
 )
+
+# Speed-slider range: real time to 100x.
+MIN_MULTIPLIER = 1.0
+MAX_MULTIPLIER = 100.0
 
 
 def time_panel(scene):
@@ -44,7 +47,7 @@ def time_panel(scene):
             InteractiveSlider(
                 Slider(
                     math.log(scene.multiplier),
-                    (math.log(Clock.MIN_MULTIPLIER), math.log(Clock.MAX_MULTIPLIER)),
+                    (math.log(MIN_MULTIPLIER), math.log(MAX_MULTIPLIER)),
                 ),
                 set_speed,
             )

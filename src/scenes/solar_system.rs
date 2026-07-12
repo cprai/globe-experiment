@@ -19,6 +19,10 @@ use crate::engine::ui::{
     UIDrawable, UIDrawablePanel,
 };
 
+/// Speed-slider range: real time to 100x.
+const MIN_MULTIPLIER: f32 = 1.0;
+const MAX_MULTIPLIER: f32 = 100.0;
+
 /// Empty solar-system simulation: just the clock; no satellites. A
 /// one-key-per-body Camera Target panel writes `camera_target` directly.
 pub struct SolarSystemScene {
@@ -116,7 +120,7 @@ impl UIDrawable for SolarSystemScene {
         // The slider edits the exponent: multiplier = e^exp, so 1x at the
         // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+        let exp_range = MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln();
 
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {

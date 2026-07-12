@@ -33,10 +33,6 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ui::py::InteractiveHoldButton>()?;
     m.add_class::<ui::py::InteractiveToggle>()?;
     m.add_class::<ui::py::InteractiveSlider>()?;
-    // Clock is registered only for its MIN/MAX_MULTIPLIER classattrs: no
-    // Clock instance crosses into Python - scripts drive the clock (and the
-    // camera target) through their scene pyclass's properties.
-    m.add_class::<scene::Clock>()?;
     m.add_class::<scene::SatelliteTelemetry>()?;
     m.add_class::<scene::satellite::OrbitShape>()?;
     Ok(())

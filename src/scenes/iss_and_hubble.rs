@@ -36,6 +36,10 @@ const HST_TLE: &str = concat!(
     "2 20580  28.4690  85.5400 0002600 310.0000  50.0000 15.09600000123456\n",
 );
 
+/// Speed-slider range: real time to 100x.
+const MIN_MULTIPLIER: f32 = 1.0;
+const MAX_MULTIPLIER: f32 = 100.0;
+
 /// ISS + Hubble simulation: clock plus two tracked satellites.
 pub struct IssAndHubbleScene {
     clock: Clock,
@@ -155,7 +159,7 @@ impl UIDrawable for IssAndHubbleScene {
         // The slider edits the exponent: multiplier = e^exp, so 1x at the
         // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+        let exp_range = MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln();
 
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {

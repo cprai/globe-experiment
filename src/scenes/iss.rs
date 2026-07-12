@@ -27,6 +27,10 @@ const ISS_TLE: &str = concat!(
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
+/// Speed-slider range: real time to 100x.
+const MIN_MULTIPLIER: f32 = 1.0;
+const MAX_MULTIPLIER: f32 = 100.0;
+
 /// ISS-only simulation: clock plus a single tracked satellite.
 pub struct IssScene {
     clock: Clock,
@@ -136,7 +140,7 @@ impl UIDrawable for IssScene {
         // The slider edits the exponent: multiplier = e^exp, so 1x at the
         // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+        let exp_range = MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln();
 
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {

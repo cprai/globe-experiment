@@ -39,6 +39,10 @@ const ISS_TLE: &str = concat!(
 /// Scaled by simulation dt, so time-warp burns harder in wall time.
 const BURN_ACCEL_M_S2: f64 = 10.0;
 
+/// Speed-slider range: real time to 100x.
+const MIN_MULTIPLIER: f32 = 1.0;
+const MAX_MULTIPLIER: f32 = 100.0;
+
 /// Manually-controlled simulation: clock, the satellite's live GCRF state
 /// vector (re-anchored to the clock every frame), and the burn request flags.
 pub struct ManualControlScene {
@@ -228,7 +232,7 @@ impl UIDrawable for ManualControlScene {
         // The slider edits the exponent: multiplier = e^exp, so 1x at the
         // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+        let exp_range = MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln();
 
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {

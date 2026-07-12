@@ -71,6 +71,7 @@ compared — keep each pair's panels in sync.
   mid-egui-pass would unwind through the presenter).
 - **Script contract**: module-level `get_drawables(scene) -> list[Panel]`,
   importing from the embedded `globe` module; the clock is driven through the
-  scene's own properties (no `Clock` instance crosses into Python — the class
-  is registered only for its `MIN`/`MAX_MULTIPLIER` classattrs). The 9-key
-  camera-target loop needs the `lambda i=i:` capture (Python's late binding).
+  scene's own properties (nothing clock-shaped crosses into Python — each
+  script owns its speed-slider min/max constants, like the Rust scenes own
+  theirs). The 9-key camera-target loop needs the `lambda i=i:` capture
+  (Python's late binding).

@@ -19,6 +19,10 @@ use crate::engine::ui::{
 /// frame with Luna's umbral shadow spot centered near the subsolar point.
 const VIEW_DISTANCE_KM: f64 = 22000.0;
 
+/// Speed-slider range: real time to 100x.
+const MIN_MULTIPLIER: f32 = 1.0;
+const MAX_MULTIPLIER: f32 = 100.0;
+
 /// Empty solar-eclipse simulation: just the clock; no satellites. A Terra /
 /// Luna Camera Target panel writes `camera_target` directly.
 pub struct SolarEclipseScene {
@@ -136,7 +140,7 @@ impl UIDrawable for SolarEclipseScene {
         // The slider edits the exponent: multiplier = e^exp, so 1x at the
         // left, 100x at the right, 10x at the midpoint.
         let speed_exp = self.clock_multiplier().ln();
-        let exp_range = Clock::MIN_MULTIPLIER.ln()..=Clock::MAX_MULTIPLIER.ln();
+        let exp_range = MIN_MULTIPLIER.ln()..=MAX_MULTIPLIER.ln();
 
         let time_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {

@@ -176,7 +176,7 @@ impl ManualControlSceneInner {
             // Mirror defaults matching a fresh `Clock`; the wrapper's `new`
             // pushes the real snapshots right after it builds the clock.
             paused: false,
-            multiplier: Clock::MIN_MULTIPLIER,
+            multiplier: 1.0,
             datetime_label: String::new(),
             requested_paused: None,
             requested_multiplier: None,
