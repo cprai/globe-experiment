@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/engine/shaders/scene.wgsl"
+  - "engine/src/shaders/scene.wgsl"
 ---
 
 # Shader rules & invariants
@@ -44,7 +44,7 @@ and `camera.md`.
   `star_rot_inv` (see `simulation.md`). Star lookup is camera-relative view
   direction only (see `camera.md`).
 - `MAX_OCCLUDERS`, `PLANET_QUAD_MARGIN`, and the `BODY_FLAG_*` bits must
-  match `src/engine/renderer/mod.rs`; the atmosphere geometry constants must
+  match `engine/src/renderer/mod.rs`; the atmosphere geometry constants must
   match `build.rs` (see `atmosphere.md`).
 
 ## Look-tuning discipline

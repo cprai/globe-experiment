@@ -21,5 +21,6 @@ feature requirement; current zoom rarely samples past 4K density).
   fixed-scale to preserve the coherent wipe).
 - No tracked bodies in the `headless` binary (deliberate). If wanted:
   feed a scene's `frame_state` instead of the current direct `RenderState`
-  construction (the `scenes` module is not in the headless tree today).
+  construction (`scenes` lives in the root crate, which the engine-owned
+  headless bin cannot see).
 - Real bloom post-process — explicitly **declined**.

@@ -1,6 +1,6 @@
 ---
 name: edit-atmosphere-constants
-description: Change atmosphere medium/geometry constants or the inscatter LUT parameterization while keeping the duplicated build.rs bake side and src/engine/shaders/scene.wgsl shader side in sync. Use when touching atmosphere math; a change on one side silently corrupts the atmosphere.
+description: Change atmosphere medium/geometry constants or the inscatter LUT parameterization while keeping the duplicated build.rs bake side and engine/src/shaders/scene.wgsl shader side in sync. Use when touching atmosphere math; a change on one side silently corrupts the atmosphere.
 ---
 
 # Edit atmosphere constants (keep both sides in sync)
@@ -17,7 +17,7 @@ changing them safely.
 
 ## What is duplicated (change one, change the other)
 1. **Atmosphere medium + geometry constants:** in `build.rs`'s inline
-   `mod atmosphere` (the LUT bake) **and** in `src/engine/shaders/scene.wgsl` (the
+   `mod atmosphere` (the LUT bake) **and** in `engine/src/shaders/scene.wgsl` (the
    geometric twins + `MIE_G`).
 2. **Inscatter LUT parameterization** — implemented independently twice and
    must match exactly:
@@ -31,7 +31,7 @@ changing them safely.
 
 ## Steps
 1. Edit the constant/mapping on **both** the bake side (`build.rs`) and the
-   shader side (`src/engine/shaders/scene.wgsl`).
+   shader side (`engine/src/shaders/scene.wgsl`).
 2. **Force a LUT rebake** if you changed the bake: delete the stale LUT
    outputs so `build.rs` regenerates them (see the `refresh-embedded-assets`
    skill), then rebuild.

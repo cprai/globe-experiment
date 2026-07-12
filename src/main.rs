@@ -1,4 +1,3 @@
-mod engine;
 mod scenes;
 
 use clap::{Parser, Subcommand};

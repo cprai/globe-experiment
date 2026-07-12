@@ -15,8 +15,8 @@ gitignored cargo build dir for the crate.)
 
 ## Find OUT_DIR
 ```sh
-# the build-script OUT_DIR for this crate (under target/.../build/<crate>-*/out)
-find target -type d -name out -path '*globe-experiment*' 2>/dev/null
+# build.rs belongs to the `engine` crate (under target/.../build/engine-*/out)
+find target -type d -name out -path '*/build/engine-*' 2>/dev/null
 ```
 
 ## Assets and how to refresh each

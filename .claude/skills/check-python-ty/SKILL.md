@@ -20,7 +20,7 @@ ty check scenes/
 ## Expected failure — ignore for now
 The scene scripts `import` the embedded **`globe`** module, which only exists
 at runtime inside the app (it is a pyo3 module registered from Rust in
-`src/engine/py.rs`). No type stubs exist for it, so ty reports it as an
+`engine/src/py.rs`). No type stubs exist for it, so ty reports it as an
 **unresolved import** and exits non-zero. **This is expected and ignored for
 now** (owner: types are not set up properly yet). Read past those `globe`
 diagnostics and fix any *other* type error ty surfaces.

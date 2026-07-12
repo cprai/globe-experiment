@@ -23,7 +23,7 @@ cargo clippy --release -- -D warnings
 
 ## Notes
 - Run after **every** `.rs` change.
-- Caveat: clippy (like `cargo build`) never compiles `src/engine/shaders/scene.wgsl` —
+- Caveat: clippy (like `cargo build`) never compiles `engine/src/shaders/scene.wgsl` —
   it says nothing about the shader. Validate the shader separately with the
   `validate-wgsl-naga` skill.
 - There is **no test suite and no CI** in this repo. Verification is clippy

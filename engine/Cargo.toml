@@ -1,0 +1,71 @@
+# The shared engine library: rendering, camera, scene/tracked-body pipeline,
+# instrument UI, and the embedded-Python surface. Also owns the offscreen
+# presenter and the single-frame `headless` binary (the windowed app lives in
+# the workspace-root `globe-experiment` crate).
+[package]
+name = "engine"
+edition = "2024"
+
+# Cargo auto-discovers only src/main.rs and src/bin/*; the headless bin root
+# lives beside the lib sources, so it needs an explicit section.
+[[bin]]
+name = "headless"
+path = "src/headless.rs"
+
+[dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
+# The headless binary's CLI (--scene/--width/--height/--output).
+clap = { version = "4.6.1", features = ["derive"] }
+egui = "0.34.3"
+# Taffy (CSS flexbox) layout for the instrument panels: panels are flex
+# columns of rows, sized to content - no absolute instrument positions.
+# Pure-Rust (taffy + parking_lot), portable across all six targets.
+egui_taffy = "0.12"
+egui-wgpu = "0.34.3"
+egui-winit = "0.34.3"
+# The scene-trait derives (SceneClock, ScenePtzCamera, SceneOrbitalBodies,
+# SceneKinematicBodies) - re-exported from scene/mod.rs and camera/mod.rs so
+# consumers never depend on the proc-macro crate directly.
+engine-macros = { path = "../engine-macros" }
+glam = "0.33.1"
+# RFC3339 datetime parsing for the single-frame `headless` binary.
+humantime = "2"
+# Decodes the embedded body and star textures at startup (jpeg/tiff) and encodes
+# the `headless` binary's single-frame output (png). The textures are embedded verbatim by
+# build.rs (no build-time transcode) and decoded here into uncompressed RGBA8,
+# so only these three codecs are needed; other default formats are dropped.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "tiff"] }
+ktx2 = "0.5"
+pollster = "0.4"
+# Embedded CPython for scene scripting: a Python-paneled scene loads a
+# repo-root scenes/*.py script at runtime and delegates its UIDrawable panel
+# production to it. No `auto-initialize` - the interpreter is initialized
+# explicitly (engine::py::init), after append_to_inittab registers the `globe`
+# module. Unconditional (owner decision 2026-07-07): every build links
+# libpython and needs the Python dev headers; the headless bin links it but
+# never initializes it.
+pyo3 = "0.29"
+rayon = "1.10"
+# SGP4 satellite propagation, the JPL DE440 ephemeris reader, and the
+# IERS-2010 frame transforms behind the celestial sphere. default-features off
+# drops the `download` feature (satkit's own runtime data fetch via ureq): the
+# ephemeris, EOP table, and IERS tables are instead downloaded by build.rs,
+# embedded, and seeded via the `init_from_bytes` APIs (see
+# `simulation::celestial_sphere::init_satkit`).
+satkit = { version = "0.18", default-features = false }
+# Deserializes the `headless` binary's --scene JSON (simulation + camera +
+# mock-panel ui)
+# into the egui-free spec types (pure-Rust, portable across all six targets).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wgpu = "29"
+winit = "0.30"
+
+[build-dependencies]
+bytemuck = "1.25.0"
+half = { version = "2.7.1", features = ["bytemuck"] }
+# Only the atmosphere LUTs are KTX2-wrapped at build time now; the Terra/star
+# textures are downloaded and embedded verbatim (decoded at runtime), so there
+# is no build-time image decode or BC7 transcode (no `image` / `intel_tex_2`).
+ktx2 = "0.5"
+ureq = "3.3.0"

@@ -25,7 +25,7 @@ ruff format --check scenes/
 ## Scope
 - Runs on the `scenes/*.py` scene scripts, the only hand-written Python this
   repo ever holds (everything else Python-side is embedded CPython driven
-  from Rust in `src/engine/py.rs`).
+  from Rust in `engine/src/py.rs`).
 - Formatting only. It does **not** type-check — verify types separately with
   the `check-python-ty` skill (`ty check`).
 - No `pyproject.toml`/`ruff.toml` is checked in, so ruff uses its built-in

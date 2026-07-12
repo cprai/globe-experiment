@@ -1,7 +1,7 @@
 ---
 paths:
-  - "build.rs"
-  - "src/engine/shaders/scene.wgsl"
+  - "engine/build.rs"
+  - "engine/src/shaders/scene.wgsl"
 ---
 
 # Atmosphere model — constants & sync rules
@@ -9,7 +9,7 @@ paths:
 ## Constants that MUST stay in sync (no compile/runtime check)
 
 Atmosphere medium + geometry constants exist in THREE places: `build.rs mod
-atmosphere` (LUT bake), `src/engine/shaders/scene.wgsl` (geometric twins + `MIE_G`), and
+atmosphere` (LUT bake), `engine/src/shaders/scene.wgsl` (geometric twins + `MIE_G`), and
 `renderer::ATMOSPHERE_TOP_KM` (sizes the atmosphere quad). The inscatter LUT
 parameterization (split row mapping, reference-point choice, Bruneton
 transmittance mapping) is independently implemented in both `build.rs` and

@@ -10,21 +10,26 @@ UI), satkit (SGP4 + ephemeris + EOP), glam (math), pyo3 (embedded CPython,
 unconditional), rayon (parallel init), image, ktx2, clap. Build-only: ureq
 (asset download), half (f16 LUT bake). Versions in `Cargo.toml`.
 
-## Two binaries, one engine
+## Three crates: engine lib, windowed app, proc macros
 
 ```
-main (bin globe-experiment) -> engine, scenes    (no offscreen/headless code)
-headless (bin headless)     -> engine, offscreen (no scenes; compiles
-                               engine::application dead under its crate-level
-                               allow(dead_code))
+globe-experiment (root pkg, bin)  -> engine        src/main.rs + src/scenes/
+engine (lib + bin headless)       -> engine-macros engine/src/ (lib.rs), owns
+                                                   offscreen.rs + headless.rs
+                                                   + build.rs (assets/OUT_DIR)
+engine-macros (proc-macro)                         the scene derives
 ```
 
-Both bin roots declare the shared `mod engine;` (no lib crate). The compiler
-enforces only the top level: `headless.rs` never declares `scenes`, `main.rs`
-never declares `offscreen`. One workspace member besides the root package:
-`macros/`, the proc-macro crate behind the scene derives (`SceneClock`,
+The crate boundary enforces the dependency direction: engine never sees
+`scenes`, and the windowed app pulls in no offscreen/headless code (those
+live behind engine's `headless` bin, run via `cargo run -p engine --bin
+headless`). `engine-macros` holds the scene derives (`SceneClock`,
 `ScenePtzCamera`, `SceneOrbitalBodies`, `SceneKinematicBodies` — derives
-cannot live in the crate that uses them).
+cannot live in the crate that uses them); their generated impls emit
+`::engine::...` paths and are re-exported through `engine::scene` /
+`engine::camera`, so consumers never depend on the macro crate directly.
+Root `Cargo.toml` keeps the `[profile.dev.package.*]` decode-speed overrides
+(profiles only apply from the workspace root).
 
 Engine modules and their roles:
 
@@ -57,9 +62,9 @@ Engine modules and their roles:
 - **`py`** — embedded-interpreter init, the `globe` pymodule registration,
   and the runtime script loader. Never references `src/scenes`.
 
-Top-level extras: **`scenes`** (main tree; one module per past scene, each
-with its own clap `Args` + `run()`) and **`offscreen`** (headless tree; the
-surfaceless presenter).
+Also in engine: **`offscreen`** (the surfaceless presenter behind the
+`headless` bin). In the root crate: **`scenes`** (one module per past scene,
+each with its own clap `Args` + `run()`).
 
 ## The four scene traits
 
@@ -131,6 +136,6 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
   `scene` types — `RenderState`, `CameraTarget`, and, for the `CameraView`
   blanket impl in `ptz.rs`, the scene traits + `CelestialSphere`.)
 - `camera` and `renderer` are winit-free; the windowed presenter (`Gfx`)
-  lives in `application/gfx.rs`, its headless twin in `src/offscreen.rs`.
+  lives in `application/gfx.rs`, its headless twin in `engine/src/offscreen.rs`.
 - `application` never touches the `CelestialSphere`; it consumes only the
   finished `RenderState`.

@@ -1,7 +1,8 @@
 ---
 paths:
-  - "build.rs"
+  - "engine/build.rs"
   - "Cargo.toml"
+  - "engine/Cargo.toml"
 ---
 
 # Build pipeline rules

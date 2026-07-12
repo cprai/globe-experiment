@@ -1,11 +1,11 @@
 ---
 name: format-wgsl
-description: Format src/engine/shaders/scene.wgsl with wgslfmt, the formatting authority for WGSL. Use after every shader edit. It is ASCII-safe and touches only whitespace/layout, never tokens.
+description: Format engine/src/shaders/scene.wgsl with wgslfmt, the formatting authority for WGSL. Use after every shader edit. It is ASCII-safe and touches only whitespace/layout, never tokens.
 ---
 
 # Format WGSL
 
-Format `src/engine/shaders/scene.wgsl`. `wgslfmt` is the formatting authority for
+Format `engine/src/shaders/scene.wgsl`. `wgslfmt` is the formatting authority for
 `.wgsl`, just as rustfmt is for `.rs`. Don't hand-format WGSL.
 
 ## Tools
@@ -13,11 +13,11 @@ Format `src/engine/shaders/scene.wgsl`. `wgslfmt` is the formatting authority fo
 
 ## Command
 ```sh
-wgslfmt src/engine/shaders/scene.wgsl
+wgslfmt engine/src/shaders/scene.wgsl
 ```
 Check-only (verify without writing):
 ```sh
-wgslfmt --check src/engine/shaders/scene.wgsl
+wgslfmt --check engine/src/shaders/scene.wgsl
 ```
 
 ## Notes

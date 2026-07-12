@@ -1,7 +1,7 @@
 ---
 paths:
-  - "src/engine/camera/ptz.rs"
-  - "src/engine/application/mod.rs"
+  - "engine/src/camera/ptz.rs"
+  - "engine/src/application/mod.rs"
 ---
 
 # Input rules

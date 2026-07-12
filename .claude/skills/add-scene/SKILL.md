@@ -25,7 +25,7 @@ time window) and wires it into the clap CLI.
      Vec<OrbitalBody>` (TLE + SGP4) and/or `kinematic_bodies:
      Vec<KinematicBody>` (numerical, thrustable) — and a scene declares only
      the kinds it tracks.
-   - derives `SceneClock` (`#[derive(SceneClock)]`, from the `macros`
+   - derives `SceneClock` (`#[derive(SceneClock)]`, from the `engine-macros`
      proc-macro crate re-exported next to the trait; requires the field to
      be named `clock`). **All clock access goes through the
      trait's default API** (`tick_clock`/`clock_now`/
@@ -33,16 +33,16 @@ time window) and wires it into the clap CLI.
      `Clock` (plain data, private fields), so the compiler enforces it.
    - implements `Scene` (`advance`: just `self.tick_clock()` - any
      Time-panel edit already landed directly during the previous egui
-     pass), `crate::engine::camera::ScenePtzCamera` (three accessors -
+     pass), `engine::camera::ScenePtzCamera` (three accessors -
      `camera()`/`camera_mut()`/`camera_target()` - whose blanket impl
      supplies the whole `CameraControl` surface), and `CameraView`
      (`frame_state`: build one `TrackedBody` per body — `state_at(&now)`
      for the dot, `!body_occluded(eye, position)` for visibility,
      `trail(&now)` for the predicted path — and fill `RenderState` with the
      collected `tracked_bodies`; copy the loop from an existing scene).
-   - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
+   - implements `engine::ui::UIDrawable` for it (import `UIDrawable`,
      `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
-     you use, from `crate::ui`): build the top-left **Time panel** first (copy
+     you use, from `engine::ui`): build the top-left **Time panel** first (copy
      it from an existing scene: UTC readout, speed readout, Run toggle +
      speed slider whose callbacks receive the scene as `&mut Self` at fire
      time and call the `SceneClock` setters directly - keep them

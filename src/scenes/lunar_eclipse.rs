@@ -4,14 +4,14 @@
 
 use satkit::Instant;
 
-use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{PtzCamera, ScenePtzCamera};
-use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::{
+use engine::application::{self, ApplicationState};
+use engine::camera::{PtzCamera, ScenePtzCamera};
+use engine::scene::celestial_sphere::CelestialSphere;
+use engine::scene::{
     self, CameraTarget, CelestialBody, Clock, Scene, SceneClock, SceneKinematicBodies,
     SceneOrbitalBodies,
 };
-use crate::engine::ui::{
+use engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
     UIDrawable, UIDrawablePanel,
 };

@@ -38,7 +38,7 @@ LSP-accurate. It covers exactly the languages listed in
 `.serena/project.yml` → `languages:`:
 
 - **rust** → rust-analyzer (the whole `src/` engine + `build.rs`).
-- **hlsl** → shader-language-server, which handles **`src/engine/shaders/scene.wgsl`**.
+- **hlsl** → shader-language-server, which handles **`engine/src/shaders/scene.wgsl`**.
 - **python** → pyright, for any `scenes/*.py` runtime scene scripts (none
   checked in right now — see `scenes.md`).
 

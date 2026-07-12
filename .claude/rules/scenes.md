@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/scenes/**/*.rs"
-  - "src/headless.rs"
+  - "engine/src/headless.rs"
 ---
 
 # Scenes

@@ -6,13 +6,13 @@
 
 use glam::DVec3;
 
-use crate::engine::application::{self, ApplicationState};
-use crate::engine::camera::{PtzCamera, ScenePtzCamera};
-use crate::engine::scene::kinematic_body::KinematicBody;
-use crate::engine::scene::{
+use engine::application::{self, ApplicationState};
+use engine::camera::{PtzCamera, ScenePtzCamera};
+use engine::scene::kinematic_body::KinematicBody;
+use engine::scene::{
     self, CameraTarget, Clock, Scene, SceneClock, SceneKinematicBodies, SceneOrbitalBodies,
 };
-use crate::engine::ui::{
+use engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };

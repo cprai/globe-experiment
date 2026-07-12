@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/engine/camera/**/*.rs"
+  - "engine/src/camera/**/*.rs"
 ---
 
 # Camera rules

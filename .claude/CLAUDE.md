@@ -15,7 +15,7 @@ the currently uncommitted changes — as an example only. Do NOT commit.**
 The `codebase-search` skill has the routing table. In order:
 
 1. **serena** (LSP-backed, live — no index) for Rust, WGSL
-   (`src/engine/shaders/scene.wgsl`), and Python symbol lookup, references,
+   (`engine/src/shaders/scene.wgsl`), and Python symbol lookup, references,
    and structure.
 2. **codebase-memory-mcp** for what serena cannot do: call-graph tracing,
    Cypher/aggregation queries, complexity hotspots, dependency-crate source.
@@ -39,8 +39,10 @@ orbiting a selectable target; simulation clock (1x–100x). **Past scenes
 only** (before build date) — what makes full EOP accuracy attainable.
 Saturn's rings are not yet rendered (deferred).
 
-Two binaries over one shared `src/engine/` (no lib crate): `globe-experiment`
-(windowed app + `src/scenes/`) and `headless` (single-frame PNG). See
+Three crates: the `engine` lib (`engine/src/`, also owns the offscreen
+presenter + the `headless` single-frame-PNG bin and the asset-embedding
+`build.rs`), `engine-macros` (the scene derives), and the root
+`globe-experiment` bin (windowed app: `src/main.rs` + `src/scenes/`). See
 `architecture.md`. No Python-paneled scene ships right now; the engine's
 Python scripting interfaces (`engine::py`, `ui::py`) are deliberately kept
 alive for their return (see `scenes.md`).
@@ -48,10 +50,10 @@ alive for their return (see `scenes.md`).
 ## Build & run
 
 ```sh
-cargo run --release          # the windowed app (default-run = globe-experiment)
+cargo run --release          # the windowed app (the root package's only bin)
 # headless: one frame to PNG. ONE --scene JSON (simulation + camera +
 # optional ui); output target stays as CLI flags. Unknown JSON keys rejected.
-cargo run --release --bin headless -- --output frame.png --scene \
+cargo run --release -p engine --bin headless -- --output frame.png --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},
       "camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}'
 # Optional "ui" section (Vec<ui::UiPanel>) overlays mock panels for layout
@@ -74,7 +76,7 @@ file in `OUT_DIR` to refresh it. VRAM is ~1.5 GB (see `constraints.md`).
 after every shader edit:
 
 ```sh
-naga --compact --capabilities none src/engine/shaders/scene.wgsl
+naga --compact --capabilities none engine/src/shaders/scene.wgsl
 ```
 
 **Python code** (none checked in right now): `ruff format` + `ty check`

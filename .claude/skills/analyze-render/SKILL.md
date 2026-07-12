@@ -17,7 +17,7 @@ datetime + camera that frames the feature you changed.
 
 ## Command
 ```sh
-cargo run --release --bin headless -- --output /tmp/render.png --width 1280 --height 720 \
+cargo run --release -p engine --bin headless -- --output /tmp/render.png --width 1280 --height 720 \
     --scene '{
       "simulation": {"datetime": "2024-01-01T12:00:00Z"},
       "camera": {"longitude": <deg>, "latitude": <deg>,
@@ -34,7 +34,7 @@ frame it with a much smaller `distance`, e.g. ~2500-3500 km); the camera always
 looks at the orbited body's center, so lon/lat only pick which side you view.
 The output target (`--output`/`--width`/`--height`) stays as CLI flags. An
 optional `ui` section overlays mock UI panels (see the
-`build-and-run`/`src/engine/ui/` docs) - not usually needed for look analysis. Then
+`build-and-run`/`engine/src/ui/` docs) - not usually needed for look analysis. Then
 open `/tmp/render.png` with the Read tool and describe / compare what you see.
 
 The command also prints a summary to stdout (resolved datetime, camera with the

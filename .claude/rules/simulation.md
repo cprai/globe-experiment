@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/engine/scene/**/*.rs"
+  - "engine/src/scene/**/*.rs"
 ---
 
 # Simulation & satkit rules

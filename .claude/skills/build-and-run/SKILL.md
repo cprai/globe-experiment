@@ -29,7 +29,7 @@ cargo run --release -- scene          # lists available scenes
   downloads five textures (BC7-encoded in memory), the ~98 MB JPL DE440
   ephemeris, and CelesTrak's `EOP-All.csv` into `OUT_DIR`. Subsequent
   builds reuse the cache.
-- A clean `cargo build` proves **nothing** about `src/engine/shaders/scene.wgsl` — WGSL
+- A clean `cargo build` proves **nothing** about `engine/src/shaders/scene.wgsl` — WGSL
   is compiled by naga at runtime, not during `cargo build`. Validate the
   shader separately (see the `validate-wgsl-naga` skill).
 - Look and interaction feel can only be judged on a **native Windows

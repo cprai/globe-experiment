@@ -17,7 +17,7 @@ via lavapipe).
 One call, one-line verdict; the log is shown only on failure:
 
 ```sh
-cargo run -q --release --bin headless -- \
+cargo run -q --release -p engine --bin headless -- \
     --output /tmp/smoke.png --width 320 --height 240 --scene \
     '{"simulation":{"datetime":"2024-01-15T12:30:00Z"},"camera":{"longitude":-75,"latitude":40,"distance":12742,"tilt":0}}' \
     > /tmp/smoke.log 2>&1 \

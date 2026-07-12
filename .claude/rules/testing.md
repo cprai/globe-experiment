@@ -12,11 +12,12 @@
   - Tests needing satkit globals must seed via the `Once`-guarded
     `celestial_sphere::init_satkit_for_tests` (the ephemeris seed is
     set-once per process; a second bare `init_satkit` panics).
-  - `cargo test` runs the shared-engine tests twice (one harness per bin
-    root); each harness is its own process, so the `Once` seeding holds.
+  - Run `cargo test --workspace` from the root (bare `cargo test` covers
+    only the root package, which has no tests; the unit tests live in the
+    `engine` lib harness).
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none
-  src/engine/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing
+  engine/src/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing
   about the shader). Keep the naga CLI version aligned with `Cargo.lock`.
 - **`wgsl-analyzer`** is a secondary, spec-strict linter: only the LSP server
   path works (pull diagnostics); its CLI subcommands are stubs that panic.
