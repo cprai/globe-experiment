@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/**/*.rs"
-  - "shaders/scene.wgsl"
+  - "src/engine/shaders/scene.wgsl"
 ---
 
 # Coordinate system & mapping

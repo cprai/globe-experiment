@@ -1,11 +1,11 @@
 ---
 name: validate-wgsl-naga
-description: Statically validate shaders/scene.wgsl with the naga CLI (naga --compact --capabilities none). This is the authoritative shader check - the same naga the app links through wgpu. Use after every shader edit; a clean cargo build says nothing about the shader.
+description: Statically validate src/engine/shaders/scene.wgsl with the naga CLI (naga --compact --capabilities none). This is the authoritative shader check - the same naga the app links through wgpu. Use after every shader edit; a clean cargo build says nothing about the shader.
 ---
 
 # Validate WGSL with the naga CLI (authoritative)
 
-Statically validate `shaders/scene.wgsl` after **every** shader edit. This
+Statically validate `src/engine/shaders/scene.wgsl` after **every** shader edit. This
 is the authoritative static check: the CLI is the **same naga** the app
 links through wgpu (CLI 29.x <-> the `wgpu`/`naga` 29.x in `Cargo.lock`), so
 it runs the exact frontend + IR validator that would otherwise only fire at
@@ -18,7 +18,7 @@ naga only runs at app runtime.
 
 ## Command (strictest invocation)
 ```sh
-naga --compact --capabilities none shaders/scene.wgsl
+naga --compact --capabilities none src/engine/shaders/scene.wgsl
 ```
 
 ## What the flags buy

@@ -38,6 +38,6 @@ reword the surrounding comment so the formula stays on one line. Treat a
 formula split across a wrap as a bug to fix, not accept.
 
 ## Scope
-- Runs on `.rs` only. It does **not** touch `shaders/scene.wgsl` — use the
+- Runs on `.rs` only. It does **not** touch `src/engine/shaders/scene.wgsl` — use the
   `format-wgsl` skill for that.
 - Keep all source ASCII-only (golden rule); rustfmt won't fix non-ASCII.

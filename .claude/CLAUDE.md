@@ -15,7 +15,7 @@ the currently uncommitted changes — as an example only. Do NOT commit.**
 The `codebase-search` skill has the routing table. In order:
 
 1. **serena** (LSP-backed, live — no index) for Rust, WGSL
-   (`shaders/scene.wgsl`), and Python (`scenes/*.py`) symbol lookup,
+   (`src/engine/shaders/scene.wgsl`), and Python (`scenes/*.py`) symbol lookup,
    references, and structure.
 2. **codebase-memory-mcp** for what serena cannot do: call-graph tracing,
    Cypher/aggregation queries, complexity hotspots, dependency-crate source.
@@ -74,7 +74,7 @@ file in `OUT_DIR` to refresh it. VRAM is ~1.5 GB (see `constraints.md`).
 after every shader edit:
 
 ```sh
-naga --compact --capabilities none shaders/scene.wgsl
+naga --compact --capabilities none src/engine/shaders/scene.wgsl
 ```
 
 **Python scene scripts** (`scenes/*.py`): `ruff format` + `ty check` after

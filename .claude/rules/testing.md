@@ -17,7 +17,7 @@
     root); each harness is its own process, so the `Once` seeding holds.
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none
-  shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing
+  src/engine/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing
   about the shader). Keep the naga CLI version aligned with `Cargo.lock`.
 - **`wgsl-analyzer`** is a secondary, spec-strict linter: only the LSP server
   path works (pull diagnostics); its CLI subcommands are stubs that panic.

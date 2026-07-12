@@ -252,8 +252,8 @@ mod atmosphere {
     //!   approximation is Sol's tilt *along* the ray, assumed perpendicular.
     //!
     //! The constants here MUST stay in sync with their WGSL twins in
-    //! `shaders/scene.wgsl`. All lengths are kilometers; all coefficients
-    //! are per kilometer.
+    //! `src/engine/shaders/scene.wgsl`. All lengths are kilometers; all
+    //! coefficients are per kilometer.
 
     use half::f16;
 

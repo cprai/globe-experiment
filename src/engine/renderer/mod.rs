@@ -414,9 +414,7 @@ impl SceneRenderer {
             || {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("scene shader"),
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../../../shaders/scene.wgsl").into(),
-                    ),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/scene.wgsl").into()),
                 })
             },
             || {

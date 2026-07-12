@@ -2,7 +2,7 @@
 paths:
   - "src/**/*.rs"
   - "build.rs"
-  - "shaders/scene.wgsl"
+  - "src/engine/shaders/scene.wgsl"
   - "scenes/**/*.py"
 ---
 

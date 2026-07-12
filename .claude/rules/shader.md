@@ -1,6 +1,6 @@
 ---
 paths:
-  - "shaders/scene.wgsl"
+  - "src/engine/shaders/scene.wgsl"
 ---
 
 # Shader rules & invariants
