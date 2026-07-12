@@ -3,7 +3,7 @@
 //! a pure function of time - never stored). Deliberately free of any
 //! winit/wgpu/ui/camera dependency.
 
-pub mod body;
+pub mod celestial_body;
 pub mod celestial_sphere;
 pub mod clock;
 pub mod satellite;
@@ -12,7 +12,7 @@ use glam::DVec3;
 use pyo3::prelude::*;
 use satkit::Instant;
 
-pub use body::CelestialBody;
+pub use celestial_body::CelestialBody;
 // `SceneClock` is used by both bin trees; `Clock` only by the main tree's
 // scenes, so the headless tree (whose crate-level allow covers `dead_code`,
 // not `unused_imports`) would warn without the allow.

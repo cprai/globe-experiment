@@ -13,7 +13,7 @@
 
 use glam::DVec3;
 
-use crate::engine::scene::body::{CelestialBody, TerraSystemEntity};
+use crate::engine::scene::celestial_body::{CelestialBody, TerraSystemEntity};
 
 /// WGS84 semi-major (equatorial) axis, km - Terra's defining shape constant.
 pub const SEMI_MAJOR_AXIS_KM: f64 = 6378.137;

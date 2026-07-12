@@ -39,7 +39,7 @@ Engine modules and their roles:
   `ScenePtzCamera` (three accessors; a blanket impl supplies the whole
   `CameraControl` surface). See `camera.md`.
 - **`scene`** — `Scene` trait, `RenderState`, `Clock`/`SceneClock`,
-  `CameraTarget`, `CelestialBody` (`body.rs`), the celestial sphere, the
+  `CameraTarget`, `CelestialBody` (`celestial_body.rs`), the celestial sphere, the
   satellite pipeline. No winit/wgpu/egui/camera-type imports.
 - **`planet`** — every body's physical data (Terra + 7 planets + Luna, one
   table keyed by `CelestialBody`) + the WGS84 consts and surface helpers.

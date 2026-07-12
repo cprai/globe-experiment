@@ -25,7 +25,7 @@ use satkit::tle::TLE;
 use satkit::{Duration, Instant, Kepler, Vector3};
 
 use crate::engine::planet;
-use crate::engine::scene::body::CelestialBody;
+use crate::engine::scene::celestial_body::CelestialBody;
 
 /// An instantaneous GCRF orbital state vector - numerical-propagation
 /// initial conditions. Deliberately plain data (no satkit types) so a

@@ -26,7 +26,7 @@ use satkit::jplephem::geocentric_pos;
 use satkit::{Instant, SolarSystem, TimeScale, Vector3};
 
 use crate::engine::planet::{self, Rotation};
-use crate::engine::scene::body::{BodyState, CelestialBody, Placement};
+use crate::engine::scene::celestial_body::{BodyState, CelestialBody, Placement};
 
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
 /// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s with
