@@ -7,8 +7,8 @@ paths:
 
 `mod.rs`: the `CameraControl`/`CameraView` trait pair + input vocabulary.
 `ptz.rs`: `PtzCamera` (rig + all input/animation state) + `ScenePtzCamera`
-(three accessors; blanket impl supplies `CameraControl`). Input rules live in
-`input.md`.
+(three accessors, supplied per scene by `#[derive(ScenePtzCamera)]`; blanket
+impl supplies `CameraControl`). Input rules live in `input.md`.
 
 ## Inertial (star-fixed) frame
 

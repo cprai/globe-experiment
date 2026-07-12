@@ -25,7 +25,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Empty solar-system simulation: just the clock; no satellites. A
 /// one-key-per-body Camera Target panel writes `camera_target` directly.
-#[derive(SceneClock)]
+#[derive(SceneClock, ScenePtzCamera)]
 pub struct SolarSystemScene {
     clock: Clock,
     /// Written directly by the Camera Target keys via
@@ -65,20 +65,6 @@ impl SolarSystemScene {
 impl Scene for SolarSystemScene {
     fn advance(&mut self) {
         // Nothing scene-specific.
-    }
-}
-
-impl ScenePtzCamera for SolarSystemScene {
-    fn camera(&self) -> &PtzCamera {
-        &self.camera
-    }
-
-    fn camera_mut(&mut self) -> &mut PtzCamera {
-        &mut self.camera
-    }
-
-    fn camera_target(&self) -> &CameraTarget {
-        &self.camera_target
     }
 }
 

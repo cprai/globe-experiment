@@ -242,7 +242,7 @@ impl ManualControlSceneInner {
 
 /// What the application owns: the `Py` handle, the script's `get_drawables`
 /// (loaded once at startup), and the clock + camera + target as plain fields.
-#[derive(SceneClock)]
+#[derive(SceneClock, ScenePtzCamera)]
 pub struct ManualControlPyScene {
     inner: Py<ManualControlSceneInner>,
     get_drawables_fn: Py<PyAny>,
@@ -331,20 +331,6 @@ impl Scene for ManualControlPyScene {
         let now = self.clock_now();
         Python::attach(|py| self.inner.borrow_mut(py).advance(&now));
         self.push_clock_snapshots();
-    }
-}
-
-impl ScenePtzCamera for ManualControlPyScene {
-    fn camera(&self) -> &PtzCamera {
-        &self.camera
-    }
-
-    fn camera_mut(&mut self) -> &mut PtzCamera {
-        &mut self.camera
-    }
-
-    fn camera_target(&self) -> &CameraTarget {
-        &self.camera_target
     }
 }
 

@@ -11,6 +11,10 @@ pub use ptz::PtzCamera;
 // headless root covers dead code, not unused imports.
 #[allow(unused_imports)]
 pub use ptz::ScenePtzCamera;
+// The derive macro shares the trait's name (macro vs type namespace), so
+// one `use engine::camera::ScenePtzCamera` imports both - the serde pattern.
+#[allow(unused_imports)]
+pub use macros::ScenePtzCamera;
 
 use crate::engine::scene::RenderState;
 

@@ -45,7 +45,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Manually-controlled simulation: clock, the satellite's live GCRF state
 /// vector (re-anchored to the clock every frame), and the burn request flags.
-#[derive(SceneClock)]
+#[derive(SceneClock, ScenePtzCamera)]
 pub struct ManualControlScene {
     clock: Clock,
     /// Object name from the seed TLE, for the panel header.
@@ -158,20 +158,6 @@ impl Scene for ManualControlScene {
         self.burn_anti_normal = false;
         self.burn_radial_out = false;
         self.burn_radial_in = false;
-    }
-}
-
-impl ScenePtzCamera for ManualControlScene {
-    fn camera(&self) -> &PtzCamera {
-        &self.camera
-    }
-
-    fn camera_mut(&mut self) -> &mut PtzCamera {
-        &mut self.camera
-    }
-
-    fn camera_target(&self) -> &CameraTarget {
-        &self.camera_target
     }
 }
 

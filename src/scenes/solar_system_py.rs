@@ -128,7 +128,7 @@ impl SolarSystemSceneInner {
 
 /// What the application owns: the `Py` handle, the script's `get_drawables`
 /// (loaded once at startup), and the clock + camera + target as plain fields.
-#[derive(SceneClock)]
+#[derive(SceneClock, ScenePtzCamera)]
 pub struct SolarSystemPyScene {
     inner: Py<SolarSystemSceneInner>,
     get_drawables_fn: Py<PyAny>,
@@ -216,20 +216,6 @@ impl Scene for SolarSystemPyScene {
         // Only refresh the Inner's clock snapshots for the coming
         // get_drawables; the requested body is folded by `frame_state`.
         self.push_clock_snapshots();
-    }
-}
-
-impl ScenePtzCamera for SolarSystemPyScene {
-    fn camera(&self) -> &PtzCamera {
-        &self.camera
-    }
-
-    fn camera_mut(&mut self) -> &mut PtzCamera {
-        &mut self.camera
-    }
-
-    fn camera_target(&self) -> &CameraTarget {
-        &self.camera_target
     }
 }
 

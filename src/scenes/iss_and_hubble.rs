@@ -41,7 +41,7 @@ const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
 /// ISS + Hubble simulation: clock plus two tracked satellites.
-#[derive(SceneClock)]
+#[derive(SceneClock, ScenePtzCamera)]
 pub struct IssAndHubbleScene {
     clock: Clock,
     satellites: Vec<Satellite>,
@@ -68,20 +68,6 @@ impl IssAndHubbleScene {
 impl Scene for IssAndHubbleScene {
     fn advance(&mut self) {
         // Nothing scene-specific.
-    }
-}
-
-impl ScenePtzCamera for IssAndHubbleScene {
-    fn camera(&self) -> &PtzCamera {
-        &self.camera
-    }
-
-    fn camera_mut(&mut self) -> &mut PtzCamera {
-        &mut self.camera
-    }
-
-    fn camera_target(&self) -> &CameraTarget {
-        &self.camera_target
     }
 }
 

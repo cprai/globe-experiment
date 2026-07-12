@@ -561,12 +561,14 @@ impl PtzCamera {
 }
 
 /// The camera hookup for a scene that flies a [`PtzCamera`]: implement the
-/// three accessors and the blanket [`CameraControl`] impl below supplies the
-/// whole input surface. Three, not one, because the forwarding needs three
-/// shapes: `camera_mut` for the mutating calls, `camera` for `cursor_hint`'s
-/// `&self`, and `camera_target` because `pointer_move`/`scroll`/`tick` scale
-/// by the orbited body (the target stays scene-owned). A scene that must
-/// diverge implements [`CameraControl`] directly instead.
+/// three accessors (normally `#[derive(ScenePtzCamera)]` over the scene's
+/// `camera` + `camera_target` fields) and the blanket [`CameraControl`] impl
+/// below supplies the whole input surface. Three, not one, because the
+/// forwarding needs three shapes: `camera_mut` for the mutating calls,
+/// `camera` for `cursor_hint`'s `&self`, and `camera_target` because
+/// `pointer_move`/`scroll`/`tick` scale by the orbited body (the target
+/// stays scene-owned). A scene that must diverge implements
+/// [`CameraControl`] directly instead.
 pub trait ScenePtzCamera {
     /// Where the camera lives in the scene struct (shared view).
     fn camera(&self) -> &PtzCamera;
