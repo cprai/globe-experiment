@@ -59,7 +59,7 @@ impl Slider {
         // width the readout rows set rather than driving it.
         let style = taffy::Style {
             size: taffy::Size {
-                width: taffy::prelude::percent(1.0),
+                width: taffy::prelude::percent(1.0_f32),
                 height: taffy::prelude::auto(),
             },
             ..Default::default()
