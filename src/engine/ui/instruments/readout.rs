@@ -14,7 +14,7 @@ use crate::engine::ui::theme::{
 /// empty to mirror the serde default.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct Readout {
     #[pyo3(get, set)]
     pub label: String,

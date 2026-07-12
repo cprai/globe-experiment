@@ -42,7 +42,7 @@ const BURN_ACCEL_M_S2: f64 = 10.0;
 /// The live simulation state, as a pyclass: the script's whole surface.
 /// The clock and camera are deliberately NOT in here - they live on the
 /// wrapper, out of the script's reach.
-#[pyclass(name = "ManualControlScene", module = "globe")]
+#[pyclass(name = "ManualControlScene")]
 pub struct ManualControlSceneInner {
     /// Object name from the seed TLE, for the panel header.
     #[pyo3(get)]
@@ -263,6 +263,8 @@ pub struct ManualControlPyScene {
 impl ManualControlPyScene {
     fn new(script: PathBuf) -> Self {
         let mut scene = Python::attach(|py| {
+            // Not registered in the module, so the name is stamped here.
+            py::set_class_module::<ManualControlSceneInner>(py).expect("stamp __module__");
             let inner = Py::new(py, ManualControlSceneInner::new()).expect("scene pyclass");
             // The clock starts at the seed TLE's epoch, read back off the
             // freshly built Inner.

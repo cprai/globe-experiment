@@ -16,7 +16,7 @@ use crate::engine::ui::theme::{
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[pyclass(module = "globe", eq, from_py_object)]
+#[pyclass(eq, from_py_object)]
 pub enum LampStatus {
     Ok,
     Caution,
@@ -29,7 +29,7 @@ pub enum LampStatus {
 #[allow(dead_code)]
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct Lamp {
     #[pyo3(get, set)]
     pub label: String,

@@ -14,7 +14,7 @@ use super::{
 
 /// One anchored panel built by a scene script. `rows` holds the script's
 /// instrument objects untouched until [`panels_from_python`] converts them.
-#[pyclass(module = "globe")]
+#[pyclass]
 pub struct Panel {
     pub anchor: PanelAnchor,
     pub rows: Vec<Vec<Py<PyAny>>>,
@@ -29,7 +29,7 @@ impl Panel {
 }
 
 /// A [`Button`] paired with a Python `on_press` callable, fired on click.
-#[pyclass(module = "globe", name = "InteractiveButton")]
+#[pyclass(name = "InteractiveButton")]
 pub struct InteractiveButton {
     pub button: Button,
     pub on_press: Py<PyAny>,
@@ -45,7 +45,7 @@ impl InteractiveButton {
 
 /// A [`Button`] paired with a Python `on_hold` callable, fired every frame
 /// the key is held (the burn keys).
-#[pyclass(module = "globe", name = "InteractiveHoldButton")]
+#[pyclass(name = "InteractiveHoldButton")]
 pub struct InteractiveHoldButton {
     pub button: Button,
     pub on_hold: Py<PyAny>,
@@ -60,7 +60,7 @@ impl InteractiveHoldButton {
 }
 
 /// A [`Toggle`] paired with a Python `on_toggle` callable, fired on click.
-#[pyclass(module = "globe", name = "InteractiveToggle")]
+#[pyclass(name = "InteractiveToggle")]
 pub struct InteractiveToggle {
     pub toggle: Toggle,
     pub on_toggle: Py<PyAny>,
@@ -76,7 +76,7 @@ impl InteractiveToggle {
 
 /// A [`Slider`] paired with a Python `on_change` callable, called with the
 /// new `float` on each edit.
-#[pyclass(module = "globe", name = "InteractiveSlider")]
+#[pyclass(name = "InteractiveSlider")]
 pub struct InteractiveSlider {
     pub slider: Slider,
     pub on_change: Py<PyAny>,
@@ -275,6 +275,28 @@ def bad():
             assert_eq!(row_shape, [1, 2, 1, 2, 2]);
             assert_eq!(panels[1].rows.len(), 1);
             assert_eq!(panels[1].rows[0].len(), 4);
+        });
+    }
+
+    /// Registered classes must carry the module name (stamped at
+    /// registration, not per-class attributes - see `engine::py`).
+    #[test]
+    fn classes_report_the_module_name() {
+        crate::engine::py::init();
+        Python::attach(|py| {
+            let module = py
+                .import(crate::engine::py::MODULE_NAME)
+                .expect("embedded module imports");
+            for class in ["Button", "LampStatus", "Panel", "InteractiveSlider"] {
+                let name: String = module
+                    .getattr(class)
+                    .unwrap()
+                    .getattr("__module__")
+                    .unwrap()
+                    .extract()
+                    .unwrap();
+                assert_eq!(name, crate::engine::py::MODULE_NAME, "{class}.__module__");
+            }
         });
     }
 

@@ -24,7 +24,7 @@ use crate::engine::ui::{self, UIDrawable, UIDrawablePanel};
 /// The live simulation state, as a pyclass: the script's whole surface. The
 /// clock and camera are deliberately NOT in here - they live on the wrapper,
 /// out of the script's reach.
-#[pyclass(name = "SolarSystemScene", module = "globe")]
+#[pyclass(name = "SolarSystemScene")]
 pub struct SolarSystemSceneInner {
     /// Script-facing clock mirror: snapshots the wrapper refreshes each
     /// frame, plus `requested_*` edits the wrapper folds into the
@@ -153,15 +153,19 @@ impl SolarSystemPyScene {
         // the Rust sibling).
         let epoch =
             Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
-        let mut scene = Python::attach(|py| Self {
-            inner: Py::new(py, SolarSystemSceneInner::new()).expect("scene pyclass"),
-            get_drawables_fn: py::load_get_drawables(py, &script),
-            script,
-            clock: Clock::new(epoch),
-            camera: PtzCamera::default(),
-            // Matches the Inner's start body (Terra), so the first frame
-            // does not reframe.
-            camera_target: CameraTarget::terra(),
+        let mut scene = Python::attach(|py| {
+            // Not registered in the module, so the name is stamped here.
+            py::set_class_module::<SolarSystemSceneInner>(py).expect("stamp __module__");
+            Self {
+                inner: Py::new(py, SolarSystemSceneInner::new()).expect("scene pyclass"),
+                get_drawables_fn: py::load_get_drawables(py, &script),
+                script,
+                clock: Clock::new(epoch),
+                camera: PtzCamera::default(),
+                // Matches the Inner's start body (Terra), so the first frame
+                // does not reframe.
+                camera_target: CameraTarget::terra(),
+            }
         });
         // Seed the script-facing snapshots so a `get_drawables` that runs
         // before the first advance (the test harnesses do) reads real clock
@@ -312,6 +316,13 @@ mod tests {
     fn solar_system_script_builds_selector() {
         py::init();
         let mut scene = SolarSystemPyScene::new(repo_script());
+
+        // The Inner is unregistered in the module; `new` stamps its name.
+        let module: String = Python::attach(|py| {
+            let class = scene.inner.bind(py).get_type();
+            class.getattr("__module__").unwrap().extract().unwrap()
+        });
+        assert_eq!(module, py::MODULE_NAME);
 
         let panels = scene.get_drawables();
         assert_eq!(panels.len(), 2, "script must return two panels");

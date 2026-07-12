@@ -221,7 +221,7 @@ pub fn propagate_numerical(state: &OrbitState, from: &Instant, to: &Instant) -> 
 /// Osculating-orbit panel readout: apsis altitudes + current speed.
 /// `pyclass` (`get_all`) so a `*_py` scene's script reads the same readouts
 /// its Rust sibling formats.
-#[pyclass(module = "globe", get_all)]
+#[pyclass(get_all)]
 pub struct OrbitShape {
     /// Apoapsis height above Terra's mean radius, km.
     pub apoapsis_alt_km: f64,

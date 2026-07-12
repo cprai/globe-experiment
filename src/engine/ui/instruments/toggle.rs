@@ -9,7 +9,7 @@ use crate::engine::ui::theme::{ACCENT_GREEN, HAIRLINE, KEY_LIT, KEY_LIT_TEXT};
 /// only; [`Toggle::draw`] is shared with [`InteractiveToggle`].
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct Toggle {
     #[pyo3(get, set)]
     pub label: String,

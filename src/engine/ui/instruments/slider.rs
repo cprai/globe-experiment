@@ -12,7 +12,7 @@ use super::{Instrument, ValueCallback, leaf};
 /// Python face is a `(min, max)` tuple (explicit getter/setter below).
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct Slider {
     #[pyo3(get, set)]
     pub value: f32,

@@ -193,7 +193,7 @@ pub struct SatelliteMarker {
 /// `pyclass` (`get_all`; `skip_from_py_object` - Python only ever receives
 /// one, never hands one back).
 #[derive(Clone, Debug)]
-#[pyclass(module = "globe", get_all, skip_from_py_object)]
+#[pyclass(get_all, skip_from_py_object)]
 pub struct SatelliteTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").
     pub name: String,

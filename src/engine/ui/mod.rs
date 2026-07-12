@@ -25,7 +25,7 @@ use theme::{paint_bevel, paint_rivets, panel_frame};
 /// `egui::Align2` in [`control_panel`]). Add more anchors when needed.
 #[derive(Clone, Copy, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[pyo3::pyclass(module = "globe", eq, from_py_object)]
+#[pyo3::pyclass(eq, from_py_object)]
 pub enum PanelAnchor {
     TopLeft,
     TopRight,

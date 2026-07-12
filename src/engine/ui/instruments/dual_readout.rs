@@ -11,7 +11,7 @@ use crate::engine::ui::theme::SPACE_XXL;
 /// empty like the serde defaults.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct DualReadout {
     #[pyo3(get, set)]
     pub left_label: String,

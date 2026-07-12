@@ -10,7 +10,7 @@ use crate::engine::ui::theme::{
 /// A section header: an amber title with a rule spanning the panel width.
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-#[pyclass(module = "globe", from_py_object)]
+#[pyclass(from_py_object)]
 pub struct Header {
     #[pyo3(get, set)]
     pub title: String,

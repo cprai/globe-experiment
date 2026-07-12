@@ -9,6 +9,21 @@ use std::sync::Once;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use pyo3::{PyClass, PyTypeInfo};
+
+/// The Python-visible module name - THE definition. The `#[pymodule]` fn
+/// ident below must match: pyo3 derives the import name from the ident and
+/// takes only literals, so the two cannot share one token.
+pub const MODULE_NAME: &str = "globe";
+
+/// Stamps `T.__module__` = [`MODULE_NAME`]. `#[pyclass(module = ...)]`
+/// takes only string literals, so the name is stamped at runtime to keep it
+/// defined once. Registration below covers every module class; call this
+/// directly only for pyclasses that reach Python unregistered (the `*_py`
+/// scene Inners).
+pub fn set_class_module<T: PyTypeInfo>(py: Python<'_>) -> PyResult<()> {
+    T::type_object(py).setattr("__module__", MODULE_NAME)
+}
 
 /// The embedded `globe` module - the Python half of the dual Rust/Python UI
 /// API. The `*_py` scene structs are pyclasses too but are NOT registered
@@ -19,22 +34,27 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use crate::engine::scene;
     use crate::engine::ui;
 
-    m.add_class::<ui::Header>()?;
-    m.add_class::<ui::Readout>()?;
-    m.add_class::<ui::DualReadout>()?;
-    m.add_class::<ui::Button>()?;
-    m.add_class::<ui::Toggle>()?;
-    m.add_class::<ui::Lamp>()?;
-    m.add_class::<ui::LampStatus>()?;
-    m.add_class::<ui::Slider>()?;
-    m.add_class::<ui::PanelAnchor>()?;
-    m.add_class::<ui::py::Panel>()?;
-    m.add_class::<ui::py::InteractiveButton>()?;
-    m.add_class::<ui::py::InteractiveHoldButton>()?;
-    m.add_class::<ui::py::InteractiveToggle>()?;
-    m.add_class::<ui::py::InteractiveSlider>()?;
-    m.add_class::<scene::SatelliteTelemetry>()?;
-    m.add_class::<scene::satellite::OrbitShape>()?;
+    fn add<T: PyClass>(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add_class::<T>()?;
+        set_class_module::<T>(m.py())
+    }
+
+    add::<ui::Header>(m)?;
+    add::<ui::Readout>(m)?;
+    add::<ui::DualReadout>(m)?;
+    add::<ui::Button>(m)?;
+    add::<ui::Toggle>(m)?;
+    add::<ui::Lamp>(m)?;
+    add::<ui::LampStatus>(m)?;
+    add::<ui::Slider>(m)?;
+    add::<ui::PanelAnchor>(m)?;
+    add::<ui::py::Panel>(m)?;
+    add::<ui::py::InteractiveButton>(m)?;
+    add::<ui::py::InteractiveHoldButton>(m)?;
+    add::<ui::py::InteractiveToggle>(m)?;
+    add::<ui::py::InteractiveSlider>(m)?;
+    add::<scene::SatelliteTelemetry>(m)?;
+    add::<scene::satellite::OrbitShape>(m)?;
     Ok(())
 }
 
