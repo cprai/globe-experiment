@@ -19,12 +19,17 @@ pub use celestial_body::CelestialBody;
 // not `unused_imports`) would warn without the allow.
 #[allow(unused_imports)]
 pub use clock::{Clock, SceneClock};
-// The derive macro shares the trait's name (macro vs type namespace), so
+pub use kinematic_body::SceneKinematicBodies;
+// The derive macros share their trait's name (macro vs type namespace), so
 // one `use engine::scene::SceneClock` imports both — the serde pattern.
-pub use macros::SceneClock;
+// Derives are invoked only by the main tree's scenes, hence the allow (the
+// headless root's crate-level allow covers dead code, not unused imports).
+#[allow(unused_imports)]
+pub use macros::{SceneClock, SceneKinematicBodies, SceneOrbitalBodies};
+pub use orbital_body::SceneOrbitalBodies;
 
 use crate::engine::planet;
-use body::TrackedBody;
+use body::{TrackedBody, body_occluded};
 use celestial_sphere::CelestialSphere;
 
 /// Fallback characteristic radius (km) for a free [`CameraTarget::Coordinate`]:
@@ -144,6 +149,37 @@ pub trait Scene {
     {
         self.tick_clock();
         self.advance();
+    }
+
+    /// Every tracked body's render payload for this frame, orbital first,
+    /// then kinematic - the `frame_state` conversion, provided via the two
+    /// body traits so a scene without a body kind (empty derived slice)
+    /// contributes nothing. `eye` is the camera eye in the geocentric world
+    /// frame (km) for the Terra occlusion test; with a Terra target the
+    /// render-frame eye is exactly that.
+    fn tracked_bodies(&mut self, now: &Instant, eye: DVec3) -> Vec<TrackedBody>
+    where
+        Self: SceneOrbitalBodies + SceneKinematicBodies,
+    {
+        let count = self.orbital_bodies_mut().len() + self.kinematic_bodies_mut().len();
+        let mut tracked = Vec::with_capacity(count);
+        for body in self.orbital_bodies_mut() {
+            let state = body.state_at(now);
+            tracked.push(TrackedBody {
+                position_km: state.position_km,
+                visible: !body_occluded(eye, state.position_km),
+                trail: body.trail(now),
+            });
+        }
+        for body in self.kinematic_bodies_mut() {
+            let state = body.state_at(now);
+            tracked.push(TrackedBody {
+                position_km: state.position_km,
+                visible: !body_occluded(eye, state.position_km),
+                trail: body.trail(now),
+            });
+        }
+        tracked
     }
 }
 

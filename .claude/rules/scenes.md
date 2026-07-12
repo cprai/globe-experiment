@@ -23,10 +23,12 @@ paths:
   is the application's job (`tick_scene`), never the scene's.
 - Body scenes hold per-kind `Vec` fields (`orbital_bodies: Vec<OrbitalBody>`
   and/or `kinematic_bodies: Vec<KinematicBody>` — only the kinds the scene
-  tracks) and convert them per frame: `state_at`/`trail` + `body_occluded`
-  -> `TrackedBody` in `frame_state`, `state_at` -> `BodyTelemetry` in
-  `get_drawables`. Empty (no tracked bodies) scenes set the clock start
-  directly from the event datetime. A scene may seed a launch framing with
+  tracks). Every scene derives `SceneOrbitalBodies` + `SceneKinematicBodies`
+  (a missing field derives an empty-slice impl, not an error) and builds its
+  `TrackedBody`s in `frame_state` via the provided `Scene::tracked_bodies`;
+  the `state_at` -> `BodyTelemetry` loop in `get_drawables` stays
+  hand-written per scene. Empty (no tracked bodies) scenes set the clock
+  start directly from the event datetime. A scene may seed a launch framing with
   `PtzCamera::looking_toward`
   against a throwaway sphere at the epoch — seed `camera_target` with the
   same body so the first frame does not reframe.

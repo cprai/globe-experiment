@@ -22,9 +22,9 @@ headless (bin headless)     -> engine, offscreen (no scenes; compiles
 Both bin roots declare the shared `mod engine;` (no lib crate). The compiler
 enforces only the top level: `headless.rs` never declares `scenes`, `main.rs`
 never declares `offscreen`. One workspace member besides the root package:
-`macros/`, the proc-macro crate behind `#[derive(SceneClock)]` and
-`#[derive(ScenePtzCamera)]` (derives cannot live in the crate that uses
-them).
+`macros/`, the proc-macro crate behind the scene derives (`SceneClock`,
+`ScenePtzCamera`, `SceneOrbitalBodies`, `SceneKinematicBodies` — derives
+cannot live in the crate that uses them).
 
 Engine modules and their roles:
 
@@ -41,8 +41,9 @@ Engine modules and their roles:
 - **`scene`** — `Scene` trait, `RenderState`, `Clock`/`SceneClock`,
   `CameraTarget`, `CelestialBody` (`celestial_body.rs`), the celestial
   sphere, and the tracked-body pipeline (`body.rs`: `TrackedBody` + shared
-  state types/occlusion; `orbital_body.rs`: SGP4; `kinematic_body.rs`:
-  numerical + thrust). No winit/wgpu/egui/camera-type imports.
+  state types/occlusion; `orbital_body.rs`: SGP4 + `SceneOrbitalBodies`;
+  `kinematic_body.rs`: numerical + thrust + `SceneKinematicBodies`). No
+  winit/wgpu/egui/camera-type imports.
 - **`planet`** — every body's physical data (Terra + 7 planets + Luna, one
   table keyed by `CelestialBody`) + the WGS84 consts and surface helpers.
   satkit-free.
@@ -66,7 +67,14 @@ UIDrawable`; adding a scene never touches the application layer.
 
 - **`Scene`** — `advance()` (scene-specific per-frame work, usually empty)
   plus the provided `tick_scene` (clock tick + advance; for every
-  `Self: SceneClock`), the application's per-frame entry point.
+  `Self: SceneClock`), the application's per-frame entry point, and the
+  provided `tracked_bodies` (body -> `TrackedBody` conversion; for every
+  `Self: SceneOrbitalBodies + SceneKinematicBodies`).
+- **`SceneOrbitalBodies`/`SceneKinematicBodies`** — one `&mut`-slice
+  accessor each over the scene's per-kind body `Vec`, supplied per scene by
+  the same-named derives. Unlike the other scene derives, a missing field is
+  not an error: the derived impl returns the empty slice, so every scene
+  derives both and body-less scenes get an empty `tracked_bodies` for free.
 - **`SceneClock`** — the whole clock API as trait default methods over one
   required `clock_mut()`, supplied per scene by `#[derive(SceneClock)]` over
   the scene's `clock` field. `Clock` is plain data with private fields; only
@@ -90,9 +98,11 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
   precomputed trail, plain data).
 - **Scenes own their tracked bodies** as direct per-kind `Vec` fields
   (`Vec<OrbitalBody>` / `Vec<KinematicBody>`, only the kinds the scene
-  tracks) and convert them to plain-data `TrackedBody` in `frame_state` via
-  `state_at`/`trail` + `body_occluded`. The bodies' only mutation surface is
-  `KinematicBody::apply_thrust`.
+  tracks), exposed through the derived `SceneOrbitalBodies` /
+  `SceneKinematicBodies` accessors; `frame_state` converts them to
+  plain-data `TrackedBody` via the provided `Scene::tracked_bodies`
+  (`state_at`/`trail` + `body_occluded`). The bodies' only mutation surface
+  is `KinematicBody::apply_thrust`.
 - **All CPU-side computation is f64 end to end** (sphere, camera, tracked
   bodies, renderer `prepare`); f32 only at GPU upload and egui readouts. See
   `coordinates.md` for why.
@@ -102,9 +112,10 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
   be idempotent (write build-time snapshots, never read-modify-write) —
   egui's discard pass can fire one twice per frame.
 - **Deliberate duplication**: the Time-panel builder, the body ->
-  `TrackedBody`/`BodyTelemetry` conversion loops, the `set_camera_target`
-  helper, and the `ISS_TLE` literal are duplicated per scene on purpose so
-  scenes can diverge. Do not factor them out.
+  `BodyTelemetry` conversion loops (`get_drawables`; the `TrackedBody`
+  conversion is shared via `Scene::tracked_bodies` since 2026-07-12), the
+  `set_camera_target` helper, and the `ISS_TLE` literal are duplicated per
+  scene on purpose so scenes can diverge. Do not factor them out.
 - **The scene owns its `camera_target`**; `PtzCamera` stores no target and
   takes `&CameraTarget` in every call that depends on the orbited body.
 

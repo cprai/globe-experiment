@@ -205,6 +205,13 @@ fn numerical_settings() -> PropSettings {
     }
 }
 
+/// A scene's numerically-propagated bodies, supplied per scene by
+/// `#[derive(SceneKinematicBodies)]` - an empty slice when the scene has no
+/// `kinematic_bodies` field. `&mut` because each query re-anchors the state.
+pub trait SceneKinematicBodies {
+    fn kinematic_bodies_mut(&mut self) -> &mut [KinematicBody];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

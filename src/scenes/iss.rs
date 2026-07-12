@@ -3,11 +3,11 @@
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
-use crate::engine::scene::body::{TrackedBody, body_occluded};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::orbital_body::OrbitalBody;
 use crate::engine::scene::{
-    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock,
+    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    SceneOrbitalBodies,
 };
 use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
@@ -32,7 +32,7 @@ const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
 /// ISS-only simulation: clock plus a single tracked body.
-#[derive(SceneClock, ScenePtzCamera)]
+#[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssScene {
     clock: Clock,
     orbital_bodies: Vec<OrbitalBody>,
@@ -69,20 +69,9 @@ impl CameraView for IssScene {
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        let tracked_bodies = self
-            .orbital_bodies
-            .iter_mut()
-            .map(|body| {
-                let state = body.state_at(&now);
-                TrackedBody {
-                    position_km: state.position_km,
-                    // Terra target, so the render-frame eye is the absolute
-                    // eye.
-                    visible: !body_occluded(eye, state.position_km),
-                    trail: body.trail(&now),
-                }
-            })
-            .collect();
+        // Terra target, so the render-frame eye is the geocentric eye
+        // `tracked_bodies` needs.
+        let tracked_bodies = self.tracked_bodies(&now, eye);
 
         RenderState {
             time: now,

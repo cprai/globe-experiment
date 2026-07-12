@@ -3,12 +3,12 @@
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
-use crate::engine::scene::body::{TrackedBody, body_occluded};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::kinematic_body::KinematicBody;
 use crate::engine::scene::orbital_body::OrbitalBody;
 use crate::engine::scene::{
-    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock,
+    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    SceneOrbitalBodies,
 };
 use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
@@ -42,7 +42,7 @@ const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
 /// ISS + Hubble simulation: clock plus two tracked bodies.
-#[derive(SceneClock, ScenePtzCamera)]
+#[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssAndHubbleScene {
     clock: Clock,
     /// Deliberately mixed backends - ISS analytic SGP4, Hubble a
@@ -89,25 +89,9 @@ impl CameraView for IssAndHubbleScene {
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        let mut tracked_bodies =
-            Vec::with_capacity(self.orbital_bodies.len() + self.kinematic_bodies.len());
-        for body in &mut self.orbital_bodies {
-            let state = body.state_at(&now);
-            tracked_bodies.push(TrackedBody {
-                position_km: state.position_km,
-                // Terra target, so the render-frame eye is the absolute eye.
-                visible: !body_occluded(eye, state.position_km),
-                trail: body.trail(&now),
-            });
-        }
-        for body in &mut self.kinematic_bodies {
-            let state = body.state_at(&now);
-            tracked_bodies.push(TrackedBody {
-                position_km: state.position_km,
-                visible: !body_occluded(eye, state.position_km),
-                trail: body.trail(&now),
-            });
-        }
+        // Terra target, so the render-frame eye is the geocentric eye
+        // `tracked_bodies` needs.
+        let tracked_bodies = self.tracked_bodies(&now, eye);
 
         RenderState {
             time: now,

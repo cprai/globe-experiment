@@ -46,6 +46,62 @@ pub fn derive_scene_clock(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Derives `engine::scene::SceneOrbitalBodies`. Unlike the other scene
+/// derives, a missing `orbital_bodies` field is not an error: the impl then
+/// returns the empty slice - how a scene that tracks no orbital bodies
+/// still satisfies the trait. Same crate-internal-paths caveat as
+/// [`derive_scene_clock`].
+#[proc_macro_derive(SceneOrbitalBodies)]
+pub fn derive_scene_orbital_bodies(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let body = if has_named_field(&input, "orbital_bodies") {
+        quote! { &mut self.orbital_bodies }
+    } else {
+        quote! { &mut [] }
+    };
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        impl #impl_generics crate::engine::scene::SceneOrbitalBodies for #name #ty_generics #where_clause {
+            fn orbital_bodies_mut(
+                &mut self,
+            ) -> &mut [crate::engine::scene::orbital_body::OrbitalBody] {
+                #body
+            }
+        }
+    }
+    .into()
+}
+
+/// Derives `engine::scene::SceneKinematicBodies`; the exact
+/// missing-field-is-empty twin of [`derive_scene_orbital_bodies`] for the
+/// `kinematic_bodies` field.
+#[proc_macro_derive(SceneKinematicBodies)]
+pub fn derive_scene_kinematic_bodies(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let body = if has_named_field(&input, "kinematic_bodies") {
+        quote! { &mut self.kinematic_bodies }
+    } else {
+        quote! { &mut [] }
+    };
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        impl #impl_generics crate::engine::scene::SceneKinematicBodies for #name #ty_generics #where_clause {
+            fn kinematic_bodies_mut(
+                &mut self,
+            ) -> &mut [crate::engine::scene::kinematic_body::KinematicBody] {
+                #body
+            }
+        }
+    }
+    .into()
+}
+
 /// Derives `engine::camera::ScenePtzCamera` by pointing its three accessors
 /// at the struct's `camera` and `camera_target` fields. Same
 /// crate-internal-paths caveat as [`derive_scene_clock`].

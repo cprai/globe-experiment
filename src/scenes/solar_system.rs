@@ -12,7 +12,8 @@ use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::{
-    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock,
+    self, CameraTarget, CelestialBody, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    SceneOrbitalBodies,
 };
 use crate::engine::ui::{
     Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout, Slider, Toggle,
@@ -25,7 +26,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Empty solar-system simulation: just the clock; no tracked bodies. A
 /// one-key-per-body Camera Target panel writes `camera_target` directly.
-#[derive(SceneClock, ScenePtzCamera)]
+#[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct SolarSystemScene {
     clock: Clock,
     /// Written directly by the Camera Target keys via
@@ -83,7 +84,8 @@ impl CameraView for SolarSystemScene {
             camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
-            tracked_bodies: Vec::new(),
+            // No body fields, so the derived empty slices yield no bodies.
+            tracked_bodies: self.tracked_bodies(&now, eye),
         }
     }
 }

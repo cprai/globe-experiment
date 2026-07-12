@@ -107,6 +107,13 @@ impl OrbitalBody {
     }
 }
 
+/// A scene's SGP4-tracked bodies, supplied per scene by
+/// `#[derive(SceneOrbitalBodies)]` - an empty slice when the scene has no
+/// `orbital_bodies` field. `&mut` because propagation caches into the TLE.
+pub trait SceneOrbitalBodies {
+    fn orbital_bodies_mut(&mut self) -> &mut [OrbitalBody];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

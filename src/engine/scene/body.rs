@@ -1,10 +1,12 @@
 //! Tracked-body core: the shared state types, the flat per-frame render
 //! payload ([`TrackedBody`]), the Terra occlusion test, and the frame
 //! helpers both body kinds (`OrbitalBody`, `KinematicBody`) resolve
-//! through. Scenes hold their bodies directly and build one
-//! [`TrackedBody`] per body in `frame_state`. Position is never stored -
-//! it is a pure function of (elements/state, time), recomputed on demand,
-//! so nothing goes stale as the clock advances.
+//! through. Scenes hold their bodies directly, expose them through the
+//! derived `SceneOrbitalBodies`/`SceneKinematicBodies` accessors, and get
+//! one [`TrackedBody`] per body from the provided `Scene::tracked_bodies`
+//! in `frame_state`. Position is never stored - it is a pure function of
+//! (elements/state, time), recomputed on demand, so nothing goes stale as
+//! the clock advances.
 
 use glam::DVec3;
 use satkit::itrfcoord::ITRFCoord;
@@ -46,7 +48,7 @@ pub struct BodyState {
 
 /// One tracked body's render payload for one frame: everything the renderer
 /// needs to draw the dot and its predicted trail, as plain data. Built per
-/// body by each scene's `frame_state` from `state_at`/`trail` +
+/// body by the provided `Scene::tracked_bodies` from `state_at`/`trail` +
 /// [`body_occluded`].
 #[derive(Clone, Debug)]
 pub struct TrackedBody {

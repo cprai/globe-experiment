@@ -68,8 +68,10 @@ by the scenes as per-kind `Vec` fields: **`OrbitalBody`** (TLE + SGP4) and
 **`KinematicBody`** (GCRF `OrbitState` + epoch, numerical `orbitprop`,
 seedable once from a TLE, self-re-anchoring on every query, `orbit_shape`
 for apo/peri/speed — `None` for e >= 1). Each scene's `frame_state` converts
-its bodies to `TrackedBody` (dot from `state_at`, `trail`, visibility from
-`body_occluded`); the bodies' one mutator is `KinematicBody::apply_thrust`
+its bodies to `TrackedBody` through the provided `Scene::tracked_bodies`
+(over the derived `SceneOrbitalBodies`/`SceneKinematicBodies` accessors: dot
+from `state_at`, `trail`, visibility from `body_occluded`); the bodies' one
+mutator is `KinematicBody::apply_thrust`
 (advance + `vel += dir * accel * dt`; dt <= 0 = paused = no-op) — see
 `architecture.md` invariants.
 

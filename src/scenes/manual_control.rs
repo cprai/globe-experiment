@@ -8,10 +8,12 @@ use glam::DVec3;
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
-use crate::engine::scene::body::{TrackedBody, body_occluded};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
 use crate::engine::scene::kinematic_body::KinematicBody;
-use crate::engine::scene::{self, CameraTarget, Clock, RenderState, Scene, SceneClock};
+use crate::engine::scene::{
+    self, CameraTarget, Clock, RenderState, Scene, SceneClock, SceneKinematicBodies,
+    SceneOrbitalBodies,
+};
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
@@ -42,7 +44,7 @@ const MAX_MULTIPLIER: f32 = 100.0;
 
 /// Manually-controlled simulation: clock, the thrustable kinematic body,
 /// and the burn request flags.
-#[derive(SceneClock, ScenePtzCamera)]
+#[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct ManualControlScene {
     clock: Clock,
     /// Exactly one body; a `Vec` only to match the scene convention. It
@@ -149,22 +151,10 @@ impl CameraView for ManualControlScene {
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        let tracked_bodies = self
-            .kinematic_bodies
-            .iter_mut()
-            .map(|body| {
-                let state = body.state_at(&now);
-                TrackedBody {
-                    position_km: state.position_km,
-                    // Terra target, so the render-frame eye is the absolute
-                    // eye.
-                    visible: !body_occluded(eye, state.position_km),
-                    // The trail comes from the live post-burn state, so the
-                    // predicted orbit reshapes as the burn happens.
-                    trail: body.trail(&now),
-                }
-            })
-            .collect();
+        // Terra target, so the render-frame eye is the geocentric eye
+        // `tracked_bodies` needs. The trail comes from the live post-burn
+        // state, so the predicted orbit reshapes as the burn happens.
+        let tracked_bodies = self.tracked_bodies(&now, eye);
 
         RenderState {
             time: now,
