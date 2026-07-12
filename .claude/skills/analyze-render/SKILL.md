@@ -66,9 +66,9 @@ frame. This is the agent's responsibility - the tool will not warn you.
   non-sRGB LDR output (the offscreen target is non-sRGB `Rgba8Unorm` exactly so
   the bytes match the window), so colors are trustworthy.
 - **Does NOT:** interaction feel (pan/zoom/inertia) - that still needs a native
-  windowed run. Satellite markers are absent in the headless binary by design;
-  the egui UI is absent unless the scene supplies a `ui` section (mock panels
-  for layout debugging, no live data).
+  windowed run. Tracked-body dots/trails are absent in the headless binary by
+  design; the egui UI is absent unless the scene supplies a `ui` section (mock
+  panels for layout debugging, no live data).
 
 ## Cleanup
 Delete any temp images you created once you are done inspecting them - they are

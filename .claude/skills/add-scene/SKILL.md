@@ -18,10 +18,13 @@ time window) and wires it into the clap CLI.
      `concat!` of the three TLE lines (name + two element lines). TLE data is
      **deliberately duplicated** per scene — do not factor it into a
      shared const.
-   - defines a `pub struct <Name>Scene { clock: Clock, satellites:
-     Vec<Satellite>, camera: PtzCamera, camera_target: CameraTarget }`
+   - defines a `pub struct <Name>Scene { clock: Clock, orbital_bodies:
+     Vec<OrbitalBody>, camera: PtzCamera, camera_target: CameraTarget }`
      (direct fields; there is no shared core struct, and no stored
-     `CelestialSphere`).
+     `CelestialSphere`). Body fields are per kind — `orbital_bodies:
+     Vec<OrbitalBody>` (TLE + SGP4) and/or `kinematic_bodies:
+     Vec<KinematicBody>` (numerical, thrustable) — and a scene declares only
+     the kinds it tracks.
    - derives `SceneClock` (`#[derive(SceneClock)]`, from the `macros`
      proc-macro crate re-exported next to the trait; requires the field to
      be named `clock`). **All clock access goes through the
@@ -33,9 +36,10 @@ time window) and wires it into the clap CLI.
      pass), `crate::engine::camera::ScenePtzCamera` (three accessors -
      `camera()`/`camera_mut()`/`camera_target()` - whose blanket impl
      supplies the whole `CameraControl` surface), and `CameraView`
-     (`frame_state`: propagate `self.satellites` at `self.clock_now()` and
-     fill `RenderState`; use `marker_occluded` from `crate::scene` for
-     visibility testing).
+     (`frame_state`: build one `TrackedBody` per body — `state_at(&now)`
+     for the dot, `!body_occluded(eye, position)` for visibility,
+     `trail(&now)` for the predicted path — and fill `RenderState` with the
+     collected `tracked_bodies`; copy the loop from an existing scene).
    - implements `crate::ui::UIDrawable` for it (import `UIDrawable`,
      `UIDrawablePanel`, `Instrument`, `PanelAnchor`, and the instrument structs
      you use, from `crate::ui`): build the top-left **Time panel** first (copy
@@ -46,18 +50,18 @@ time window) and wires it into the clap CLI.
      snapshot, never a re-read flip, because egui's discard pass can fire a
      callback twice per frame — the panel code is deliberately
      duplicated per scene), then push **one** scene `UIDrawablePanel`
-     (e.g. `anchor: PanelAnchor::TopRight`) whose rows are per-satellite
+     (e.g. `anchor: PanelAnchor::TopRight`) whose rows are per-body
      readouts (e.g. `Box::new(Header { .. })`) built into an owned
-     `Vec<SatelliteTelemetry>` at the top of `get_drawables` by
-     re-propagating `self.satellites` at `self.clock_now()` — the same
-     instant `frame_state` used, so the values match the rendered markers.
+     `Vec<BodyTelemetry>` at the top of `get_drawables` by re-propagating
+     the bodies (`state_at`) at `self.clock_now()` — the same instant
+     `frame_state` used, so the values match the rendered dots.
    - has a `run()` function that: calls `scene::init()` (seeds satkit's
      globals — ephemeris + real EOP — before any ephemeris/frame-transform
      use), then calls
      `application::run(ApplicationState::new(<Name>Scene::new()))`.
-   - In `<Name>Scene::new()`: build `satellites` first (for the epoch),
-     take `satellites.first().expect(...).epoch()` as the clock start, then
-     `clock: Clock::new(epoch)`.
+   - In `<Name>Scene::new()`: build the primary body first, take its
+     `epoch()` as the clock start (`clock: Clock::new(epoch)`), then move it
+     into its body vec.
 2. **Wire the CLI**: give the scene module its own `#[derive(clap::Args)]
    pub struct Args {}` (empty until the scene needs flags; `run` takes it)
    and add a `SceneCommand` variant in `src/main.rs` wrapping it (use

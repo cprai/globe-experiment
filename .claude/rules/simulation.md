@@ -13,7 +13,7 @@ paths:
 | **GCRF/ICRF** | inertial; Z = celestial pole, X ~ vernal equinox | ephemeris output; star frame |
 | **ITRF** | standard Earth-fixed ECEF | output of GCRF/TEME->Terra rotations |
 | **world (heliocentric)** | project axes (Y = north, Z = prime meridian, X = 90°E); km; origin = Sol | `CelestialSphere` body centers (f64) |
-| **world (geocentric)** | same axes; origin = Terra center | satellites, WGS84 surface, Terra render frame |
+| **world (geocentric)** | same axes; origin = Terra center | tracked bodies, WGS84 surface, Terra render frame |
 | **celestial** | GCRF re-permuted to Y-up | camera inertial rig (`star_rot_inv`) |
 | **galactic** | celestial rotated by the static galactic->equatorial offset | star map sampling (`star_tex_rot_inv`) |
 
@@ -59,34 +59,41 @@ CIO locator), and the EGM96 gravity model from embedded bytes, once per
   (`w_dot` negative for retrograde Venus/Uranus). The planet<->`SolarSystem`
   map and IAU evaluation live here so `planet.rs` stays satkit-free.
 
-## Satellite pipeline (satellite.rs)
+## Tracked-body pipeline (body / orbital_body / kinematic_body)
 
 Element sets (TLEs) live in the scenes, not here. Position is never stored —
 propagated on demand (`sgp4` needs `&mut TLE`; the parsed TLE is retained
-because sgp4 caches its propagator inside it).
+because sgp4 caches its propagator inside it). Two body kinds, held directly
+by the scenes as per-kind `Vec` fields: **`OrbitalBody`** (TLE + SGP4) and
+**`KinematicBody`** (GCRF `OrbitState` + epoch, numerical `orbitprop`,
+seedable once from a TLE, self-re-anchoring on every query, `orbit_shape`
+for apo/peri/speed — `None` for e >= 1). Each scene's `frame_state` converts
+its bodies to `TrackedBody` (dot from `state_at`, `trail`, visibility from
+`body_occluded`); the bodies' one mutator is `KinematicBody::apply_thrust`
+(advance + `vel += dir * accel * dt`; dt <= 0 = paused = no-op) — see
+`architecture.md` invariants.
 
-Marker chain: SGP4 (m, TEME) -> `qteme2itrf` -> geodetic -> world via
-`surface_position + geodetic_normal * alt`. The geodetic round trip is
-deliberate: it guarantees the marker lands on the exact WGS84 ellipsoid the
-Terra impostor traces.
+Dot chain: SGP4 (m, TEME) -> `qteme2itrf` (kinematic: GCRF ->
+`qgcrf2itrf`) -> geodetic -> world via `surface_position + geodetic_normal *
+alt`. The geodetic round trip is deliberate: it guarantees the dot lands on
+the exact WGS84 ellipsoid the Terra impostor traces.
 
-**Predicted orbit path** (`orbit_path_inertial`, one period ahead, recomputed
-every frame — cheap: batch SGP4 ~65 us, numerical ~0.4 ms):
-- Both arms rotate ALL inertial samples through ONE current-time rotation
+**Predicted trail** (each body's `trail`, one period ahead, recomputed every
+frame into `TrackedBody.trail` — cheap: batch SGP4 ~65 us, numerical
+~0.4 ms):
+- Both kinds rotate ALL inertial samples through ONE current-time rotation
   (the star-fixed inertial ellipse, not a ground track), then map ITRF ->
   world by the plain `P` permutation — no geodetic round trip, which exists
-  on the marker only.
-- The `Numerical` arm gets its period from `Kepler::from_pv(..).period()`
+  on the dot only.
+- The kinematic kind gets its period from `Kepler::from_pv(..).period()`
   (semi-major axis only, so circular/equatorial singularities cannot bite);
-  e >= 1 (escape, reachable by burning) returns the empty path.
+  e >= 1 (escape, reachable by burning) returns the empty trail.
 - `PropSettings` keep `satprops: None` and no space weather — drag/SRP only
   run with `Some` satprops, keeping satkit's non-embedded space-weather
   loader unreachable; EGM96 + Sun/Moon third-body stay on.
 
-TLE-free helpers for manual control: `propagate_numerical` (one `orbitprop`
-step, the per-frame re-anchor), `resolve_orbit` (pure frame change; the state
-must already be at `time`), `orbit_shape` (osculating apo/peri/speed; `None`
-for e >= 1). Render-free test: `numerical_pipeline_holds_circular_leo`.
+Render-free tests: `numerical_pipeline_holds_circular_leo` & co. in
+kinematic_body.rs, `orbital_body_holds_leo` in orbital_body.rs.
 
 ## satkit API quick reference (verified against v0.18)
 

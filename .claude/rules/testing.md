@@ -4,8 +4,9 @@
   sign-off). Verification is the smoke test + manual interaction on native
   Windows.
 - A few **render-free unit tests** exist (`cargo test`) in
-  `celestial_sphere.rs`, `satellite.rs`, `ui/instruments/button.rs`, and
-  `ui/py.rs` — run them after touching those modules. Gotchas:
+  `celestial_sphere.rs`, `kinematic_body.rs`, `orbital_body.rs`,
+  `ui/instruments/button.rs`, and `ui/py.rs` — run them after touching those
+  modules. Gotchas:
   - Tests touching Python must call `engine::py::init()` **before** any
     `Python::attach` (no auto-initialize; the `Once` makes repeats safe).
   - Tests needing satkit globals must seed via the `Once`-guarded
@@ -21,8 +22,8 @@
   path works (pull diagnostics); its CLI subcommands are stubs that panic.
   Stricter than naga, produces false positives — naga stays authoritative.
 - **Manual pass after risky changes**: pan, flick, zoom to min/max, tilt to
-  clamp, play/pause + speed slider (Sol, stars, and satellites must advance
-  together), resize, minimize/restore. A paused scene stays frozen while
+  clamp, play/pause + speed slider (Sol, stars, and tracked bodies must
+  advance together), resize, minimize/restore. A paused scene stays frozen while
   still rendering; a minimized window stops rendering without pinning a core.
 
 ## Astronomical correctness verification (Sol + star backdrop)

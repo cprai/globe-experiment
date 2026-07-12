@@ -12,8 +12,8 @@ paths:
   engine traits; `CameraControl` normally via `ScenePtzCamera`), its own
   `#[derive(clap::Args)] Args` struct, and `run(args)`; add a `SceneCommand`
   variant in `src/main.rs`. Copy an existing scene as the template — the
-  Time-panel builder, propagation loop, and `set_camera_target` helper are
-  deliberately duplicated per scene (see `architecture.md`).
+  Time-panel builder and `set_camera_target` helper are deliberately
+  duplicated per scene (see `architecture.md`).
 - `run()` must call `scene::init()` (= `init_satkit`) before any satkit use;
   Python-paneled scenes then call `engine::py::init()` (inittab strictly
   before interpreter init) before constructing the scene.
@@ -21,16 +21,22 @@ paths:
   scene stores a `CelestialSphere` (evaluate `CelestialSphere::at` on the
   spot). Clock access only through the `SceneClock` trait API; the clock tick
   is the application's job (`tick_scene`), never the scene's.
-- Empty (no-satellite) scenes set the clock start directly from the event
-  datetime. A scene may seed a launch framing with `PtzCamera::looking_toward`
+- Body scenes hold per-kind `Vec` fields (`orbital_bodies: Vec<OrbitalBody>`
+  and/or `kinematic_bodies: Vec<KinematicBody>` — only the kinds the scene
+  tracks) and convert them per frame: `state_at`/`trail` + `body_occluded`
+  -> `TrackedBody` in `frame_state`, `state_at` -> `BodyTelemetry` in
+  `get_drawables`. Empty (no tracked bodies) scenes set the clock start
+  directly from the event datetime. A scene may seed a launch framing with
+  `PtzCamera::looking_toward`
   against a throwaway sphere at the epoch — seed `camera_target` with the
   same body so the first frame does not reframe.
 - Panel callbacks receive the scene as `&mut Self` at fire time and must be
   idempotent (see `architecture.md`); camera-target keys guard with
   `same_kind` and reframe before writing the target.
 - `manual_control`'s burn keys set per-key request flags instead of acting
-  directly — the burn is dt-scaled and only `advance()` knows the frame's
-  simulation dt (so a paused clock burns nothing).
+  directly — opposing held keys must cancel into one direction before the
+  single `apply_thrust` call in `advance()` (the body dt-scales it, so a
+  paused clock burns nothing).
 
 ## EOP valid time range (load-bearing accuracy constraint)
 

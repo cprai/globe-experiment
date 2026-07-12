@@ -10,7 +10,8 @@ paths:
 
 - **World space in km; +Y = north pole; lat0/lon0 -> +Z; +X = 90 deg E** —
   ITRF/ECEF with axes permuted so north is +Y. The geocentric variant (Terra
-  at origin) hosts satellites, WGS84 helpers, and the Terra render frame; the
+  at origin) hosts tracked bodies, WGS84 helpers, and the Terra render
+  frame; the
   `CelestialSphere` uses the same axes with a **heliocentric** origin (Sol at
   origin, Terra at `-sol_geo`). Full frames table in `simulation.md`.
 - **f64 everywhere; f32 only at the GPU/egui boundary.** Heliocentric

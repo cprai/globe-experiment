@@ -39,8 +39,10 @@ Engine modules and their roles:
   `ScenePtzCamera` (three accessors; a blanket impl supplies the whole
   `CameraControl` surface). See `camera.md`.
 - **`scene`** — `Scene` trait, `RenderState`, `Clock`/`SceneClock`,
-  `CameraTarget`, `CelestialBody` (`celestial_body.rs`), the celestial sphere, the
-  satellite pipeline. No winit/wgpu/egui/camera-type imports.
+  `CameraTarget`, `CelestialBody` (`celestial_body.rs`), the celestial
+  sphere, and the tracked-body pipeline (`body.rs`: `TrackedBody` + shared
+  state types/occlusion; `orbital_body.rs`: SGP4; `kinematic_body.rs`:
+  numerical + thrust). No winit/wgpu/egui/camera-type imports.
 - **`planet`** — every body's physical data (Terra + 7 planets + Luna, one
   table keyed by `CelestialBody`) + the WGS84 consts and surface helpers.
   satkit-free.
@@ -84,18 +86,25 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
 
 - **`CelestialSphere::at` is a pure function of time and is stored nowhere.**
   Scenes and the renderer evaluate it on the spot; `RenderState` carries only
-  time + resolved camera rig + `CameraTarget` + satellite markers.
-- **All CPU-side computation is f64 end to end** (sphere, camera, satellites,
-  renderer `prepare`); f32 only at GPU upload and egui readouts. See
+  time + resolved camera rig + `CameraTarget` + tracked bodies (dot +
+  precomputed trail, plain data).
+- **Scenes own their tracked bodies** as direct per-kind `Vec` fields
+  (`Vec<OrbitalBody>` / `Vec<KinematicBody>`, only the kinds the scene
+  tracks) and convert them to plain-data `TrackedBody` in `frame_state` via
+  `state_at`/`trail` + `body_occluded`. The bodies' only mutation surface is
+  `KinematicBody::apply_thrust`.
+- **All CPU-side computation is f64 end to end** (sphere, camera, tracked
+  bodies, renderer `prepare`); f32 only at GPU upload and egui readouts. See
   `coordinates.md` for why.
 - **All rendering is camera-target-local** (floating origin). See `camera.md`.
 - **UI panels are fully owned (`'static`)**: an interactive callback receives
   the scene as `&mut S` at fire time instead of capturing it. Callbacks MUST
   be idempotent (write build-time snapshots, never read-modify-write) —
   egui's discard pass can fire one twice per frame.
-- **Deliberate duplication**: the Time-panel builder, the propagation loop,
-  the `set_camera_target` helper, and the `ISS_TLE` literal are duplicated
-  per scene on purpose so scenes can diverge. Do not factor them out.
+- **Deliberate duplication**: the Time-panel builder, the body ->
+  `TrackedBody`/`BodyTelemetry` conversion loops, the `set_camera_target`
+  helper, and the `ISS_TLE` literal are duplicated per scene on purpose so
+  scenes can diverge. Do not factor them out.
 - **The scene owns its `camera_target`**; `PtzCamera` stores no target and
   takes `&CameraTarget` in every call that depends on the orbited body.
 

@@ -4,18 +4,15 @@ use wgpu::util::DeviceExt;
 use glam::{DMat4, DVec3, DVec4};
 
 use crate::engine::planet;
+use crate::engine::scene::body::TRAIL_SEGMENTS;
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::satellite;
 use crate::engine::scene::{CameraTarget, CelestialBody, RenderState};
 
-const MARKER_RADIUS_PX: f32 = 6.0;
+const BODY_DOT_RADIUS_PX: f32 = 6.0;
 
-/// Segments per predicted orbit path (one period). 1.4 deg per segment; the
-/// chord sagitta at LEO radius (~0.5 km) is sub-pixel at whole-Terra zoom.
-const PATH_SEGMENTS: usize = 256;
-
-/// Two satellites' worth: no first-frame realloc for the shipping scenes.
-const INITIAL_PATH_CAPACITY: u32 = 2 * PATH_SEGMENTS as u32;
+/// Two bodies' worth of trail: no first-frame realloc for the shipping
+/// scenes.
+const INITIAL_PATH_CAPACITY: u32 = 2 * TRAIL_SEGMENTS as u32;
 
 /// Fraction of the period at which the path alpha starts its smoothstep fade
 /// (zero at one full period, so the line ends sharply).
@@ -196,8 +193,8 @@ struct Uniforms {
     _pad0: f32,
     /// World -> galactic texture frame (star map lookup).
     star_rot_inv: [[f32; 4]; 3],
-    /// x,y = viewport px, z = marker radius px, w unused. Per-marker data is
-    /// in the instance buffer.
+    /// x,y = viewport px, z = dot radius px, w unused. Per-body data is in
+    /// the instance buffer.
     marker: [f32; 4],
     /// xyz = Luna center, w = radius km - for the atmosphere's occlusion
     /// check, the one pass that must know about Luna without drawing it.
@@ -273,21 +270,22 @@ struct PlanetGpu {
     bind_group: wgpu::BindGroup,
 }
 
-/// Marker instance data; layout must match `vs_marker` in scene.wgsl.
+/// Tracked-body dot instance data; layout must match `vs_marker` (the dot
+/// glyph) in scene.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct MarkerInstance {
+struct BodyInstance {
     position: [f32; 3],
     /// 1.0 = drawn, 0.0 = hidden (the vertex shader pushes it off-screen).
     visible: f32,
 }
 
-const INITIAL_MARKER_CAPACITY: u32 = 8;
+const INITIAL_BODY_CAPACITY: u32 = 8;
 
-fn make_marker_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+fn make_body_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("marker instances"),
-        size: u64::from(capacity) * std::mem::size_of::<MarkerInstance>() as u64,
+        label: Some("tracked-body instances"),
+        size: u64::from(capacity) * std::mem::size_of::<BodyInstance>() as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
@@ -304,7 +302,7 @@ struct PathInstance {
     prev: [f32; 3],
     _pad0: f32,
     p0: [f32; 3],
-    /// Fade alpha (1 at the satellite, 0 one period ahead).
+    /// Fade alpha (1 at the body, 0 one period ahead).
     alpha0: f32,
     p1: [f32; 3],
     alpha1: f32,
@@ -333,7 +331,7 @@ fn path_fade(t: f32) -> f32 {
 pub(crate) struct SceneRenderer {
     atmosphere_pipeline: wgpu::RenderPipeline,
     stars_pipeline: wgpu::RenderPipeline,
-    marker_pipeline: wgpu::RenderPipeline,
+    body_pipeline: wgpu::RenderPipeline,
     /// Depth-TESTED without write (`Greater`) so solids occlude the path's
     /// far side while the translucent line occludes nothing.
     path_pipeline: wgpu::RenderPipeline,
@@ -351,17 +349,17 @@ pub(crate) struct SceneRenderer {
     /// the pass's LUT math assumes the body at the origin, and from a planet
     /// orbit the Terra atmosphere is sub-pixel anyway.
     draw_atmosphere: bool,
-    /// True when the render origin is Terra: satellite positions are
+    /// True when the render origin is Terra: tracked-body positions are
     /// Terra-frame world coordinates, meaningless from a planet orbit.
-    draw_satellite_overlays: bool,
+    draw_body_overlays: bool,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    /// Marker instances; grows on demand (not in the bind group, so growth
-    /// never touches `bind_group`).
-    markers: wgpu::Buffer,
-    marker_capacity: u32,
-    marker_count: u32,
-    /// Orbit-path segment instances; same grow-on-demand pattern.
+    /// Tracked-body dot instances; grows on demand (not in the bind group,
+    /// so growth never touches `bind_group`).
+    bodies: wgpu::Buffer,
+    body_capacity: u32,
+    body_count: u32,
+    /// Trail segment instances; same grow-on-demand pattern.
     paths: wgpu::Buffer,
     path_capacity: u32,
     path_count: u32,
@@ -380,7 +378,7 @@ impl SceneRenderer {
             mapped_at_creation: false,
         });
 
-        let markers = make_marker_buffer(device, INITIAL_MARKER_CAPACITY);
+        let bodies = make_body_buffer(device, INITIAL_BODY_CAPACITY);
         let paths = make_path_buffer(device, INITIAL_PATH_CAPACITY);
 
         // Shader-module compilation (naga parse + validation) is independent
@@ -777,8 +775,8 @@ impl SceneRenderer {
         });
 
         // Per-pass reversed-Z depth policy: the body impostor writes + tests
-        // `Greater`; the orbit path tests without writing; backdrop,
-        // atmosphere, and markers do neither (pure draw-order layering).
+        // `Greater`; the trail tests without writing; backdrop, atmosphere,
+        // and dots do neither (pure draw-order layering).
         let depth_state =
             |write_enabled: bool, compare: wgpu::CompareFunction| wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
@@ -868,17 +866,17 @@ impl SceneRenderer {
             })
         };
 
-        // Markers: constant-pixel-size circles, one instanced draw.
-        let make_marker_pipeline = || {
+        // Tracked-body dots: constant-pixel-size circles, one instanced draw.
+        let make_body_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("marker pipeline"),
+                label: Some("tracked-body pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
                     entry_point: Some("vs_marker"),
                     compilation_options: Default::default(),
                     buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<MarkerInstance>() as u64,
+                        array_stride: std::mem::size_of::<BodyInstance>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32],
                     }],
@@ -898,7 +896,7 @@ impl SceneRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                // Markers are CPU-occluded, so no depth.
+                // Dots are CPU-occluded, so no depth.
                 depth_stencil: Some(depth_state(false, wgpu::CompareFunction::Always)),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
@@ -906,7 +904,7 @@ impl SceneRenderer {
             })
         };
 
-        // Orbit paths: one screen-space-expanded quad per segment.
+        // Trails: one screen-space-expanded quad per segment.
         let make_path_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("orbit path pipeline"),
@@ -948,10 +946,10 @@ impl SceneRenderer {
             })
         };
 
-        let (atmosphere_pipeline, (stars_pipeline, (marker_pipeline, path_pipeline))) =
+        let (atmosphere_pipeline, (stars_pipeline, (body_pipeline, path_pipeline))) =
             rayon::join(make_atmosphere_pipeline, || {
                 rayon::join(make_stars_pipeline, || {
-                    rayon::join(make_marker_pipeline, make_path_pipeline)
+                    rayon::join(make_body_pipeline, make_path_pipeline)
                 })
             });
 
@@ -989,18 +987,18 @@ impl SceneRenderer {
         Self {
             atmosphere_pipeline,
             stars_pipeline,
-            marker_pipeline,
+            body_pipeline,
             path_pipeline,
             planet_pipeline,
             planets,
             planet_draw_indices: Vec::new(),
             draw_atmosphere: true,
-            draw_satellite_overlays: true,
+            draw_body_overlays: true,
             uniforms,
             bind_group,
-            markers,
-            marker_capacity: INITIAL_MARKER_CAPACITY,
-            marker_count: 0,
+            bodies,
+            body_capacity: INITIAL_BODY_CAPACITY,
+            body_count: 0,
             paths,
             path_capacity: INITIAL_PATH_CAPACITY,
             path_count: 0,
@@ -1028,7 +1026,7 @@ impl SceneRenderer {
         // Everything uploaded is in the RENDER FRAME (camera-target-local);
         // the subtraction happens here, on the CPU, in f64.
         let origin = render.camera_target.render_origin(&celestial);
-        // Bridges the Terra-frame (geocentric) satellite overlays into the
+        // Bridges the Terra-frame (geocentric) tracked-body overlays into the
         // render frame: a Terra-relative point q sits at terra_center + q -
         // origin. Overlays only draw for a Terra-system target, where this is
         // a bit-exact no-op - kept for the render-frame convention.
@@ -1098,7 +1096,7 @@ impl SceneRenderer {
                     0.0,
                 ]
             }),
-            marker: [width as f32, height as f32, MARKER_RADIUS_PX, 0.0],
+            marker: [width as f32, height as f32, BODY_DOT_RADIUS_PX, 0.0],
             luna_occluder: {
                 let p = (luna_pos_world - origin).as_vec3();
                 [p.x, p.y, p.z, CelestialBody::LUNA.mean_radius_km() as f32]
@@ -1109,11 +1107,11 @@ impl SceneRenderer {
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
-        // Satellite positions are Terra-frame, so overlays draw only for a
-        // Terra-system target. Keyed off the target's identity, not
+        // Tracked-body positions are Terra-frame, so overlays draw only for
+        // a Terra-system target. Keyed off the target's identity, not
         // `origin == ZERO` - in the heliocentric frame Terra's center is not
         // zero.
-        self.draw_satellite_overlays = matches!(
+        self.draw_body_overlays = matches!(
             render.camera_target,
             CameraTarget::Body(CelestialBody::TerraSystem(_))
         );
@@ -1227,58 +1225,58 @@ impl SceneRenderer {
             self.planet_draw_indices.push(i);
         }
 
-        let instances: Vec<MarkerInstance> = render
-            .markers
+        let instances: Vec<BodyInstance> = render
+            .tracked_bodies
             .iter()
-            .map(|m| MarkerInstance {
-                position: (terra_center + m.position_km - origin).as_vec3().to_array(),
-                visible: if m.visible { 1.0 } else { 0.0 },
+            .map(|b| BodyInstance {
+                position: (terra_center + b.position_km - origin).as_vec3().to_array(),
+                visible: if b.visible { 1.0 } else { 0.0 },
             })
             .collect();
-        self.marker_count = instances.len() as u32;
-        if self.marker_count > self.marker_capacity {
-            self.marker_capacity = self.marker_count.next_power_of_two();
-            self.markers = make_marker_buffer(device, self.marker_capacity);
+        self.body_count = instances.len() as u32;
+        if self.body_count > self.body_capacity {
+            self.body_capacity = self.body_count.next_power_of_two();
+            self.bodies = make_body_buffer(device, self.body_capacity);
         }
         if !instances.is_empty() {
-            queue.write_buffer(&self.markers, 0, bytemuck::cast_slice(&instances));
+            queue.write_buffer(&self.bodies, 0, bytemuck::cast_slice(&instances));
         }
 
-        // Propagate each marker one period ahead. Recomputed every frame, no
-        // caching - cheap enough (~65 us SGP4 / ~0.4 ms numerical).
+        // Trails arrive precomputed (each scene's `frame_state`, one period
+        // ahead); here they are only lifted and mitered into segment
+        // instances.
         self.path_count = 0;
-        if self.draw_satellite_overlays && !render.markers.is_empty() {
-            // Circumscribe the orbit instead of inscribing it: a chord between
-            // samples sags up to r*(1 - cos(pi/N)) (~0.5 km) inside the true
-            // arc, and where the path grazes Terra's limb that dip fails the
-            // depth test at chord midpoints only - the line renders as dashes.
-            // Radially lifting every sample by sec(pi/N) puts the chord
-            // MIDPOINTS on the true curve (endpoints half a sagitta out,
-            // sub-pixel), so the polyline never falsely dips behind the limb.
-            let lift = 1.0 / (std::f64::consts::PI / PATH_SEGMENTS as f64).cos();
-            let mut segments = Vec::with_capacity(render.markers.len() * PATH_SEGMENTS);
-            for marker in &render.markers {
-                let points: Vec<glam::Vec3> = satellite::orbit_path_inertial(
-                    &marker.propagation,
-                    &render.time,
-                    PATH_SEGMENTS,
-                )
-                .into_iter()
-                .map(|p| (p * lift + terra_center - origin).as_vec3())
-                .collect();
+        if self.draw_body_overlays && !render.tracked_bodies.is_empty() {
+            let mut segments = Vec::with_capacity(render.tracked_bodies.len() * TRAIL_SEGMENTS);
+            for tracked in &render.tracked_bodies {
                 // Empty = an escape orbit (e >= 1, no period): no line.
-                if points.is_empty() {
+                let n = tracked.trail.len().saturating_sub(1);
+                if n == 0 {
                     continue;
                 }
-                for i in 0..PATH_SEGMENTS {
+                // Circumscribe the orbit instead of inscribing it: a chord
+                // between samples sags up to r*(1 - cos(pi/N)) (~0.5 km)
+                // inside the true arc, and where the trail grazes Terra's
+                // limb that dip fails the depth test at chord midpoints only
+                // - the line renders as dashes. Radially lifting every
+                // sample by sec(pi/N) puts the chord MIDPOINTS on the true
+                // curve (endpoints half a sagitta out, sub-pixel), so the
+                // polyline never falsely dips behind the limb.
+                let lift = 1.0 / (std::f64::consts::PI / n as f64).cos();
+                let points: Vec<glam::Vec3> = tracked
+                    .trail
+                    .iter()
+                    .map(|p| (*p * lift + terra_center - origin).as_vec3())
+                    .collect();
+                for i in 0..n {
                     segments.push(PathInstance {
                         prev: points[i.saturating_sub(1)].to_array(),
                         _pad0: 0.0,
                         p0: points[i].to_array(),
-                        alpha0: path_fade(i as f32 / PATH_SEGMENTS as f32),
+                        alpha0: path_fade(i as f32 / n as f32),
                         p1: points[i + 1].to_array(),
-                        alpha1: path_fade((i + 1) as f32 / PATH_SEGMENTS as f32),
-                        next: points[(i + 2).min(PATH_SEGMENTS)].to_array(),
+                        alpha1: path_fade((i + 1) as f32 / n as f32),
+                        next: points[(i + 2).min(n)].to_array(),
                         _pad1: 0.0,
                     });
                 }
@@ -1312,18 +1310,18 @@ impl SceneRenderer {
             render_pass.draw(0..6, 0..1);
         }
 
-        if self.draw_satellite_overlays {
-            // Paths before markers, so each marker dot sits on its own line.
+        if self.draw_body_overlays {
+            // Trails before dots, so each dot sits on its own line.
             if self.path_count > 0 {
                 render_pass.set_pipeline(&self.path_pipeline);
                 render_pass.set_vertex_buffer(0, self.paths.slice(..));
                 render_pass.draw(0..6, 0..self.path_count);
             }
 
-            if self.marker_count > 0 {
-                render_pass.set_pipeline(&self.marker_pipeline);
-                render_pass.set_vertex_buffer(0, self.markers.slice(..));
-                render_pass.draw(0..6, 0..self.marker_count);
+            if self.body_count > 0 {
+                render_pass.set_pipeline(&self.body_pipeline);
+                render_pass.set_vertex_buffer(0, self.bodies.slice(..));
+                render_pass.draw(0..6, 0..self.body_count);
             }
         }
     }

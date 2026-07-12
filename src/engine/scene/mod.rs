@@ -3,13 +3,14 @@
 //! a pure function of time - never stored). Deliberately free of any
 //! winit/wgpu/ui/camera dependency.
 
+pub mod body;
 pub mod celestial_body;
 pub mod celestial_sphere;
 pub mod clock;
-pub mod satellite;
+pub mod kinematic_body;
+pub mod orbital_body;
 
 use glam::DVec3;
-use pyo3::prelude::*;
 use satkit::Instant;
 
 pub use celestial_body::CelestialBody;
@@ -23,6 +24,7 @@ pub use clock::{Clock, SceneClock};
 pub use macros::SceneClock;
 
 use crate::engine::planet;
+use body::TrackedBody;
 use celestial_sphere::CelestialSphere;
 
 /// Fallback characteristic radius (km) for a free [`CameraTarget::Coordinate`]:
@@ -146,9 +148,9 @@ pub trait Scene {
 }
 
 /// The minimal render contract for one frame, as plain `glam` data (no GPU
-/// types). The renderer re-derives every body's placement from `time` via
-/// `CelestialSphere::at`, so this carries only what it cannot recompute:
-/// time, camera rig, target, and satellite markers.
+/// types). The renderer re-derives every celestial body's placement from
+/// `time` via `CelestialSphere::at`, so this carries only what it cannot
+/// recompute: time, camera rig, target, and tracked bodies.
 #[derive(Clone)]
 pub struct RenderState {
     /// The instant the frame depicts. Renderer and simulation evaluate the
@@ -168,38 +170,22 @@ pub struct RenderState {
     pub camera_look_at: DVec3,
     /// Camera up direction in the world frame (unit).
     pub camera_up: DVec3,
-    /// One marker per tracked satellite, in scene order - the one piece of
-    /// frame state not derivable from `time`.
-    pub markers: Vec<SatelliteMarker>,
+    /// One entry per tracked body, in scene order - the one piece of frame
+    /// state not derivable from `time` (dot + precomputed trail; see
+    /// [`body::TrackedBody`]).
+    pub tracked_bodies: Vec<TrackedBody>,
 }
 
-/// One satellite's on-screen marker for one frame.
+/// One tracked body's UI readout, rebuilt on demand by re-propagating at the
+/// frame's clock instant - deterministic, so it matches the rendered dots
+/// with no stashed state.
 #[derive(Clone, Debug)]
-pub struct SatelliteMarker {
-    /// Marker position in the world frame (km).
-    pub position_km: DVec3,
-    /// Whether the marker is visible (false when the solid Terra occludes it).
-    pub visible: bool,
-    /// How the renderer predicts the orbit path about one period ahead:
-    /// analytic SGP4 from a cloned element set, or numerical propagation
-    /// from a GCRF state (no TLE). Per object; a scene may mix both.
-    pub propagation: satellite::Propagation,
-}
-
-/// One tracked satellite's UI readout, rebuilt on demand by re-propagating
-/// at the frame's clock instant - deterministic, so it matches the rendered
-/// markers with no stashed state.
-///
-/// `pyclass` (`get_all`; `skip_from_py_object` - Python only ever receives
-/// one, never hands one back).
-#[derive(Clone, Debug)]
-#[pyclass(get_all, skip_from_py_object)]
-pub struct SatelliteTelemetry {
+pub struct BodyTelemetry {
     /// Object name (e.g. "ISS (ZARYA)").
     pub name: String,
-    /// Sub-satellite geodetic latitude, degrees.
+    /// Sub-body geodetic latitude, degrees.
     pub latitude_deg: f32,
-    /// Sub-satellite geodetic longitude, degrees.
+    /// Sub-body geodetic longitude, degrees.
     pub longitude_deg: f32,
     /// Height above the WGS84 ellipsoid, kilometers.
     pub altitude_km: f32,
@@ -209,26 +195,4 @@ pub struct SatelliteTelemetry {
 /// once at startup, before any `CelestialSphere` is built.
 pub fn init() {
     celestial_sphere::init_satkit();
-}
-
-/// Whether the solid Terra blocks the line of sight from `eye` to `target`
-/// (both world-space km). Approximates Terra as a mean-radius sphere -
-/// slightly conservative vs the WGS84 ellipsoid, fine for marker hiding.
-pub(crate) fn marker_occluded(eye: DVec3, target: DVec3) -> bool {
-    let to_target = target - eye;
-    let distance = to_target.length();
-    if distance <= 1e-3 {
-        return false;
-    }
-    let dir = to_target / distance;
-
-    // Ray-sphere intersection of the line of sight with the Terra sphere.
-    let b = dir.dot(eye);
-    let c = eye.length_squared() - planet::TERRA_MEAN_RADIUS_KM * planet::TERRA_MEAN_RADIUS_KM;
-    let disc = b * b - c;
-    if disc < 0.0 {
-        return false; // line of sight misses Terra entirely
-    }
-    let t = -b - disc.sqrt(); // nearest intersection along the ray
-    t > 0.0 && t < distance // Terra sits between the eye and the station
 }

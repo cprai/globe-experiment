@@ -188,7 +188,7 @@ fn run(params: Cli) {
     // celestial-sphere or instant math, exactly like a scene.
     scene::init();
 
-    // No clock, no satellites, no scene struct: the frame is built directly
+    // No clock, no tracked bodies, no scene struct: the frame is built directly
     // from the celestial sphere + camera.
     let celestial = CelestialSphere::at(&time);
     // Camera rig uses the equatorial frame (`star_rot_inv`); the star
@@ -212,8 +212,8 @@ fn run(params: Cli) {
         camera_pos: eye,
         camera_look_at: look_at,
         camera_up: up,
-        // Bodies only: render mode tracks no satellites, so no markers.
-        markers: Vec::new(),
+        // Celestial bodies only: render mode tracks no bodies.
+        tracked_bodies: Vec::new(),
     };
 
     let ui_frame =

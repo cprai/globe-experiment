@@ -34,7 +34,6 @@ pub fn set_class_module<T: PyTypeInfo>(py: Python<'_>) -> PyResult<()> {
 /// reach Python only as instances handed into the script.
 #[pymodule]
 fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    use crate::engine::scene;
     use crate::engine::ui;
 
     fn add<T: PyClass>(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -56,8 +55,6 @@ fn globe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     add::<ui::py::InteractiveHoldButton>(m)?;
     add::<ui::py::InteractiveToggle>(m)?;
     add::<ui::py::InteractiveSlider>(m)?;
-    add::<scene::SatelliteTelemetry>(m)?;
-    add::<scene::satellite::OrbitShape>(m)?;
     Ok(())
 }
 

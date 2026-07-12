@@ -23,7 +23,7 @@ const VIEW_DISTANCE_KM: f64 = 22000.0;
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Empty solar-eclipse simulation: just the clock; no satellites. A Terra /
+/// Empty solar-eclipse simulation: just the clock; no tracked bodies. A Terra /
 /// Luna Camera Target panel writes `camera_target` directly.
 #[derive(SceneClock, ScenePtzCamera)]
 pub struct SolarEclipseScene {
@@ -103,7 +103,7 @@ impl CameraView for SolarEclipseScene {
             camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
-            markers: Vec::new(),
+            tracked_bodies: Vec::new(),
         }
     }
 }

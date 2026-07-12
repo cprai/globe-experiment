@@ -40,7 +40,8 @@ use the `analyze-render` skill instead.
   mismatches, shader compile errors (naga runs at runtime) — anything wgpu
   validates at pipeline creation or first draw.
 - **Does NOT catch:** the winit/`Gfx` surface-swapchain path, the windowed
-  egui overlay, or satellite-marker draws (headless draws no markers) — those
+  egui overlay, or tracked-body dot/trail draws (headless tracks no bodies)
+  — those
   need a real windowed run on a machine with a display.
 - **Does NOT catch:** look/color/interaction-feel correctness — that needs a
   real interactive run, ideally a native Windows release build. For shader

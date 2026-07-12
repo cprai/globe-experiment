@@ -415,7 +415,7 @@ fn fs_stars(in: StarsOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color, 1.0);
 }
 
-// Satellite markers: constant-pixel-size circles at each tracked object's
+// Tracked-body markers: constant-pixel-size circles at each tracked body's
 // projected position, alpha-blended after everything else. One instanced
 // draw: the quad comes from the vertex index, per-marker position +
 // visibility from instance attributes. Occlusion behind the body is decided
@@ -454,7 +454,7 @@ fn vs_marker(@builtin(vertex_index) vertex_index: u32, inst: MarkerInstance) -> 
     var out: MarkerOutput;
     out.uv = corner;
 
-    // Hidden: emit an off-screen, clipped vertex. Terra-frame satellite
+    // Hidden: emit an off-screen, clipped vertex. Terra-frame tracked-body
     // positions are already render-frame (markers only draw with the render
     // origin at Terra).
     let clip = uniforms.view_proj * vec4<f32>(inst.position, 1.0);
@@ -519,7 +519,7 @@ struct PathInstance {
     // path start it duplicates seg0, degenerating the joint to a butt end.
     @location(0) prev: vec4<f32>,
     // Segment endpoints (xyz, render-frame km); w = fade alpha (1 at the
-    // satellite, 0 at one full period ahead).
+    // body, 0 at one full period ahead).
     @location(1) seg0: vec4<f32>,
     @location(2) seg1: vec4<f32>,
     // Neighboring sample AFTER this segment; duplicates seg1 at the end.

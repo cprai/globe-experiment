@@ -30,9 +30,10 @@ Keep comment volume low; a comment must earn its tokens.
 ## Conventions
 
 - Small focused structs, descriptive names; match surrounding code.
-- **TLE data**: inline `const`s in the scene files, never in `satellite.rs`;
-  the `ISS_TLE` literal is deliberately duplicated across scenes - do not
-  factor into a shared const.
+- **TLE data**: inline `const`s in the scene files, never in the engine body
+  modules (a `#[cfg(test)]` fixture is the one exception); the `ISS_TLE`
+  literal is deliberately duplicated across scenes - do not factor into a
+  shared const.
 - Look/feel/atmosphere constants have fixed homes: shader look knobs at the
   top of `scene.wgsl`, input feel at the top of `camera/ptz.rs`, body
   physical constants in `planet.rs`, projection consts in `renderer`,

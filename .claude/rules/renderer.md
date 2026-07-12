@@ -75,8 +75,8 @@ body (gas giant at max zoom-out) is never clipped; a beyond-far body's
 impostor depth is clamped instead of z-clipped.
 
 Per-pass policy: the body impostor is the ONLY depth-writing pass (via
-`frag_depth`); the orbit path is the only test-without-write pass; backdrop,
-atmosphere, and markers neither write nor test. egui's overlay pipeline must
+`frag_depth`); the trail is the only test-without-write pass; backdrop,
+atmosphere, and dots neither write nor test. egui's overlay pipeline must
 be built with the depth format to stay attachment-compatible.
 
 ## Impostor draw (all nine bodies, one pipeline)
@@ -92,20 +92,23 @@ center-anchored quad would carry the body off-screen with it. Draw order
 among bodies is irrelevant (depth-tested).
 
 Gates: the atmosphere draws only when a `has_atmosphere` body sits bit-exactly
-at the render origin; orbit paths + markers only when the render origin is
-Terra (their positions are Terra-frame). Everything else always draws.
+at the render origin; trails + dots only when the render origin is Terra
+(their positions are Terra-frame). Everything else always draws.
 
-## Orbit paths & markers
+## Trails & tracked-body dots
 
-- Paths are recomputed every frame, no caching (batch SGP4 ~65 us, numerical
-  ~0.4 ms per object).
-- Path segments carry neighbor samples for **mitered, watertight joints** —
+- Trails arrive **precomputed** in `TrackedBody.trail` (built in each
+  scene's `frame_state`, every frame, no caching — see `simulation.md`); the
+  renderer only lifts and miters the points. The segment-count constant is
+  scene-side (`body::TRAIL_SEGMENTS`); per trail the renderer derives
+  `n = trail.len() - 1` (empty trail = escape orbit = no line).
+- Trail segments carry neighbor samples for **mitered, watertight joints** —
   any alpha-blended quad overlap (even AA fringes) beads at every joint.
-- Sample points are radially lifted by `sec(pi/PATH_SEGMENTS)` so chord
-  midpoints sit ON the true arc — inscribed chords dip ~0.5 km inside it and
-  render as depth-test dashes where the path grazes the limb.
-- Marker/path quads multiply the corner offset by `clip.w` before emitting,
-  pre-compensating the perspective divide for constant pixel size; path
+- Sample points are radially lifted by `sec(pi/n)` so chord midpoints sit ON
+  the true arc — inscribed chords dip ~0.5 km inside it and render as
+  depth-test dashes where the trail grazes the limb.
+- Dot/trail quads multiply the corner offset by `clip.w` before emitting,
+  pre-compensating the perspective divide for constant pixel size; trail
   vertices keep the centerline endpoint's clip z/w so the fat quad
   depth-tests as the thin 3D line.
 
@@ -117,8 +120,8 @@ error) + `src/offscreen.rs` (surfaceless presenter + readback).
 - Offscreen format is **`Rgba8Unorm` (non-sRGB), on purpose** — the stored
   bytes already equal the sRGB-encoded on-screen pixels, written verbatim to
   PNG. Do not "fix" it.
-- **No EOP range check and no markers** — deliberate; out-of-range datetimes
-  render and silently degrade (the caller owns the time).
+- **No EOP range check and no tracked bodies** — deliberate; out-of-range
+  datetimes render and silently degrade (the caller owns the time).
 - Mock UI: **two egui passes are required** (a throwaway warmup, then the
   real pass) — egui builds its font atlas lazily, so a single pass
   tessellates to nothing; the warmup's texture deltas merge into the real

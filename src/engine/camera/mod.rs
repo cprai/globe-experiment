@@ -79,6 +79,6 @@ pub trait CameraControl {
 pub trait CameraView {
     /// Produce this frame's [`RenderState`]: resolve the scene-owned camera
     /// target and the rig against `CelestialSphere::at` evaluated at the
-    /// frame's clock instant, and pack it with the time and markers.
+    /// frame's clock instant, and pack it with the time and tracked bodies.
     fn frame_state(&mut self) -> RenderState;
 }

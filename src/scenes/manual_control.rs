@@ -1,20 +1,17 @@
-//! Manually-controlled satellite scene: one object seeded from the ISS TLE
-//! but propagated **numerically** (satkit `orbitprop`, no TLE retained). A
-//! bottom-center "Burns" panel holds six orbital-frame thrust keys; while
-//! held, the thrust integrates into the GCRF velocity and the marker,
-//! predicted path, and apsis readouts follow (CLI: `globe-experiment scene
-//! manual_control`).
+//! Manually-controlled scene: one `KinematicBody` seeded from the ISS TLE
+//! (satkit `orbitprop`, no TLE retained). A bottom-center "Burns" panel
+//! holds six orbital-frame thrust keys; while held, the thrust integrates
+//! into the GCRF velocity and the dot, predicted trail, and apsis readouts
+//! follow (CLI: `globe-experiment scene manual_control`).
 
 use glam::DVec3;
-use satkit::Instant;
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
+use crate::engine::scene::body::{TrackedBody, body_occluded};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::satellite::{self, OrbitState, Propagation, Satellite};
-use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, Scene, SceneClock, marker_occluded,
-};
+use crate::engine::scene::kinematic_body::KinematicBody;
+use crate::engine::scene::{self, CameraTarget, Clock, RenderState, Scene, SceneClock};
 use crate::engine::ui::{
     Button, DualReadout, Header, Instrument, InteractiveHoldButton, InteractiveSlider,
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
@@ -43,21 +40,18 @@ const BURN_ACCEL_M_S2: f64 = 10.0;
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Manually-controlled simulation: clock, the satellite's live GCRF state
-/// vector (re-anchored to the clock every frame), and the burn request flags.
+/// Manually-controlled simulation: clock, the thrustable kinematic body,
+/// and the burn request flags.
 #[derive(SceneClock, ScenePtzCamera)]
 pub struct ManualControlScene {
     clock: Clock,
-    /// Object name from the seed TLE, for the panel header.
-    name: String,
-    /// THE orbit - burns mutate its velocity, and each frame's numerical
-    /// propagation carries the result forward. No TLE behind it after seeding.
-    orbit: OrbitState,
-    /// The instant `orbit` is valid at; advanced to the clock each frame.
-    orbit_epoch: Instant,
+    /// Exactly one body; a `Vec` only to match the scene convention. It
+    /// re-anchors itself to the clock on every query; burns go through
+    /// `apply_thrust`.
+    kinematic_bodies: Vec<KinematicBody>,
     /// Burn request flags, one per key, set by the held keys' callbacks
-    /// during the egui pass. Flags (not direct edits) because the burn is
-    /// dt-scaled: only `advance` knows the frame's simulation dt.
+    /// during the egui pass. Flags (not direct edits) so held opposing keys
+    /// cancel before any dt-scaled thrust is applied in `advance`.
     burn_prograde: bool,
     burn_retrograde: bool,
     burn_normal: bool,
@@ -71,17 +65,11 @@ pub struct ManualControlScene {
 
 impl ManualControlScene {
     fn new() -> Self {
-        // The TLE lives exactly long enough to produce the initial
-        // conditions: one SGP4 sample at its own epoch, converted to a GCRF
-        // state vector (reads satkit globals - `scene::init` must have run).
-        let mut seed = Satellite::from_tle(ISS_TLE);
-        let epoch = seed.epoch();
-        let orbit = seed.state_at(&epoch).orbit;
+        let body = KinematicBody::from_tle(ISS_TLE);
+        let epoch = body.epoch();
         Self {
             clock: Clock::new(epoch),
-            name: seed.name,
-            orbit,
-            orbit_epoch: epoch,
+            kinematic_bodies: vec![body],
             burn_prograde: false,
             burn_retrograde: false,
             burn_normal: false,
@@ -97,13 +85,10 @@ impl ManualControlScene {
     /// velocity, radial = position, normal = r x v). Held opposing keys
     /// cancel; `None` when nothing is held or everything cancels.
     fn burn_direction(&self) -> Option<DVec3> {
-        let radial = self.orbit.pos_gcrf_m.normalize();
-        let prograde = self.orbit.vel_gcrf_m_s.normalize();
-        let normal = self
-            .orbit
-            .pos_gcrf_m
-            .cross(self.orbit.vel_gcrf_m_s)
-            .normalize();
+        let orbit = self.body().orbit();
+        let radial = orbit.pos_gcrf_m.normalize();
+        let prograde = orbit.vel_gcrf_m_s.normalize();
+        let normal = orbit.pos_gcrf_m.cross(orbit.vel_gcrf_m_s).normalize();
 
         let mut sum = DVec3::ZERO;
         if self.burn_prograde {
@@ -126,28 +111,22 @@ impl ManualControlScene {
         }
         sum.try_normalize()
     }
+
+    /// The one kinematic body.
+    fn body(&self) -> &KinematicBody {
+        &self.kinematic_bodies[0]
+    }
 }
 
 impl Scene for ManualControlScene {
     fn advance(&mut self) {
-        let now = self.clock_now();
-
-        // Re-anchor the state vector to the clock: one numerical step over
-        // this frame's simulation dt, so the stored initial conditions are
-        // always "now" and a burn's velocity change compounds into every
-        // later frame. Skipped when paused (dt = 0).
-        let dt = (now - self.orbit_epoch).as_seconds();
-        if dt > 0.0 {
-            self.orbit = satellite::propagate_numerical(&self.orbit, &self.orbit_epoch, &now);
-            self.orbit_epoch = now;
-
-            // Thrust as one impulse per frame (Euler integration of a
-            // continuous burn; frame dt keeps the chord error far below the
-            // game-like thrust's own fiction). dt-scaled, so a paused clock
-            // burns nothing.
-            if let Some(direction) = self.burn_direction() {
-                self.orbit.vel_gcrf_m_s += direction * (BURN_ACCEL_M_S2 * dt);
-            }
+        // The body re-anchors itself to the clock on every query; the
+        // scene's job is thrust only. `apply_thrust` scales by the frame's
+        // simulation dt and no-ops when paused, so a paused clock burns
+        // nothing.
+        if let Some(direction) = self.burn_direction() {
+            let now = self.clock_now();
+            self.kinematic_bodies[0].apply_thrust(&now, direction, BURN_ACCEL_M_S2);
         }
 
         // Held keys re-set their flags during the coming egui pass; clearing
@@ -170,17 +149,22 @@ impl CameraView for ManualControlScene {
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        // `advance` just re-anchored the state to `now`, so this is a pure
-        // frame change (GCRF -> world-frame marker), no propagation.
-        let state = satellite::resolve_orbit(&self.orbit, &now);
-        let markers = vec![SatelliteMarker {
-            position_km: state.position_km,
-            // Terra target, so the render-frame eye is the absolute eye.
-            visible: !marker_occluded(eye, state.position_km),
-            // Numerical propagation from the live post-burn state: the
-            // predicted orbit path reshapes as the burn happens.
-            propagation: Propagation::Numerical(self.orbit),
-        }];
+        let tracked_bodies = self
+            .kinematic_bodies
+            .iter_mut()
+            .map(|body| {
+                let state = body.state_at(&now);
+                TrackedBody {
+                    position_km: state.position_km,
+                    // Terra target, so the render-frame eye is the absolute
+                    // eye.
+                    visible: !body_occluded(eye, state.position_km),
+                    // The trail comes from the live post-burn state, so the
+                    // predicted orbit reshapes as the burn happens.
+                    trail: body.trail(&now),
+                }
+            })
+            .collect();
 
         RenderState {
             time: now,
@@ -188,7 +172,7 @@ impl CameraView for ManualControlScene {
             camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
-            markers,
+            tracked_bodies,
         }
     }
 }
@@ -196,13 +180,12 @@ impl CameraView for ManualControlScene {
 impl UIDrawable for ManualControlScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // Snapshot displayed values up front - the panels are owned and never
-        // borrow the scene. The readout re-derives from the live state at the
-        // same instant `frame_state` used (`advance` anchored `self.orbit` to
-        // it this redraw), so it matches the rendered marker. `shape` is
+        // borrow the scene. The readout re-derives at the same instant
+        // `frame_state` used, so it matches the rendered dot. `shape` is
         // `None` after a burn to escape (e >= 1: no apsides).
         let now = self.clock_now();
-        let state = satellite::resolve_orbit(&self.orbit, &now);
-        let shape = satellite::orbit_shape(&self.orbit);
+        let state = self.kinematic_bodies[0].state_at(&now);
+        let shape = self.body().orbit_shape();
 
         let datetime = self.clock_datetime_label();
         // Padded to the widest value (monospace font) so the digit window
@@ -264,11 +247,11 @@ impl UIDrawable for ManualControlScene {
         };
         let speed = match &shape {
             Some(shape) => format!("{:>7.1}", shape.speed_m_s),
-            None => format!("{:>7.1}", self.orbit.vel_gcrf_m_s.length()),
+            None => format!("{:>7.1}", self.body().orbit().vel_gcrf_m_s.length()),
         };
         let rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
-                title: self.name.clone(),
+                title: self.body().name.clone(),
             })],
             vec![Box::new(DualReadout {
                 left_label: "Lat".to_string(),

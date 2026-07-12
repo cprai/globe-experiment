@@ -8,7 +8,8 @@
 //! into Earth-fixed axes, then every body is shifted by `-sol_geo` so Sol
 //! sits at the origin (Terra at `-sol_geo`). Origin-only translation: the
 //! axes stay Earth-fixed, so orientations and the Terra-local render frame
-//! are unchanged. Satellites and WGS84 surface positions stay geocentric.
+//! are unchanged. Tracked bodies and WGS84 surface positions stay
+//! geocentric.
 //!
 //! Frame note: satkit uses standard ECEF/GCRF (Z = pole); the world frame is
 //! permuted (Y = north, Z = prime meridian, X = 90 deg E) via P: (x,y,z) ->
@@ -450,7 +451,7 @@ mod tests {
     #[test]
     fn luna_near_side_faces_terra() {
         // Satkit globals are read here; seed once via the shared test guard
-        // (the satellite tests seed the same process-wide globals).
+        // (the tracked-body tests seed the same process-wide globals).
         super::init_satkit_for_tests();
 
         let time = Instant::from_datetime(2024, 6, 15, 0, 0, 0.0).expect("valid datetime");

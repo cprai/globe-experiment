@@ -23,7 +23,7 @@ use crate::engine::ui::{
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Empty solar-system simulation: just the clock; no satellites. A
+/// Empty solar-system simulation: just the clock; no tracked bodies. A
 /// one-key-per-body Camera Target panel writes `camera_target` directly.
 #[derive(SceneClock, ScenePtzCamera)]
 pub struct SolarSystemScene {
@@ -83,7 +83,7 @@ impl CameraView for SolarSystemScene {
             camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
-            markers: Vec::new(),
+            tracked_bodies: Vec::new(),
         }
     }
 }

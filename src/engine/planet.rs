@@ -276,7 +276,7 @@ impl CelestialBody {
 /// Point on the body ellipsoid at latitude/longitude (radians), body frame
 /// (km). A spheroid (rx == rz) treats latitude as **geodetic** via the WGS84
 /// prime-vertical formulation - for Terra this is bit-for-bit the WGS84
-/// math, so satellite geodetic coordinates land on the exact same ellipsoid;
+/// math, so tracked-body geodetic coordinates land on the same ellipsoid;
 /// triaxial Luna uses the parametric form.
 pub fn surface_position(body: CelestialBody, latitude: f64, longitude: f64) -> DVec3 {
     let [rx, ry, rz] = body.body_data().radii_km;

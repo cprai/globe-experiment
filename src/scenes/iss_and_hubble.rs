@@ -3,11 +3,12 @@
 
 use crate::engine::application::{self, ApplicationState};
 use crate::engine::camera::{CameraView, PtzCamera, ScenePtzCamera};
+use crate::engine::scene::body::{TrackedBody, body_occluded};
 use crate::engine::scene::celestial_sphere::CelestialSphere;
-use crate::engine::scene::satellite::{Propagation, Satellite};
+use crate::engine::scene::kinematic_body::KinematicBody;
+use crate::engine::scene::orbital_body::OrbitalBody;
 use crate::engine::scene::{
-    self, CameraTarget, Clock, RenderState, SatelliteMarker, SatelliteTelemetry, Scene, SceneClock,
-    marker_occluded,
+    self, BodyTelemetry, CameraTarget, Clock, RenderState, Scene, SceneClock,
 };
 use crate::engine::ui::{
     DualReadout, Header, Instrument, InteractiveSlider, InteractiveToggle, PanelAnchor, Readout,
@@ -40,11 +41,16 @@ const HST_TLE: &str = concat!(
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// ISS + Hubble simulation: clock plus two tracked satellites.
+/// ISS + Hubble simulation: clock plus two tracked bodies.
 #[derive(SceneClock, ScenePtzCamera)]
 pub struct IssAndHubbleScene {
     clock: Clock,
-    satellites: Vec<Satellite>,
+    /// Deliberately mixed backends - ISS analytic SGP4, Hubble a
+    /// `KinematicBody` seeded once from its TLE (position AND trail
+    /// numerical from then on) - continuously exercising both body kinds in
+    /// one scene. Panel/marker order is orbital first, then kinematic.
+    orbital_bodies: Vec<OrbitalBody>,
+    kinematic_bodies: Vec<KinematicBody>,
     camera: PtzCamera,
     /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
@@ -52,13 +58,16 @@ pub struct IssAndHubbleScene {
 
 impl IssAndHubbleScene {
     fn new() -> Self {
-        // The clock starts at the FIRST satellite's TLE epoch - the primary
-        // object (ISS) must go first.
-        let satellites = vec![Satellite::from_tle(ISS_TLE), Satellite::from_tle(HST_TLE)];
-        let epoch = satellites.first().expect("TLE present").epoch();
+        // The clock starts at the primary object's (ISS) TLE epoch. Hubble
+        // seeds at its OWN TLE epoch, minutes earlier; the first frame's
+        // propagation bridges the gap numerically - do not seed at the ISS
+        // epoch.
+        let iss = OrbitalBody::from_tle(ISS_TLE);
+        let epoch = iss.epoch();
         Self {
             clock: Clock::new(epoch),
-            satellites,
+            orbital_bodies: vec![iss],
+            kinematic_bodies: vec![KinematicBody::from_tle(HST_TLE)],
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
         }
@@ -80,22 +89,23 @@ impl CameraView for IssAndHubbleScene {
         let target = self.camera_target;
         let (eye, look_at, up) = self.camera.world_rig(&target, &sphere, celestial_to_world);
 
-        let mut markers = Vec::with_capacity(self.satellites.len());
-        for (i, sat) in self.satellites.iter_mut().enumerate() {
-            let state = sat.state_at(&now);
-            // Deliberately mixed backends - ISS analytic SGP4, Hubble
-            // numerical from its current GCRF state - continuously exercising
-            // the mixed-propagation capability in one scene.
-            let propagation = if i == 0 {
-                Propagation::Sgp4(Box::new(sat.tle().clone()))
-            } else {
-                Propagation::Numerical(state.orbit)
-            };
-            markers.push(SatelliteMarker {
+        let mut tracked_bodies =
+            Vec::with_capacity(self.orbital_bodies.len() + self.kinematic_bodies.len());
+        for body in &mut self.orbital_bodies {
+            let state = body.state_at(&now);
+            tracked_bodies.push(TrackedBody {
                 position_km: state.position_km,
                 // Terra target, so the render-frame eye is the absolute eye.
-                visible: !marker_occluded(eye, state.position_km),
-                propagation,
+                visible: !body_occluded(eye, state.position_km),
+                trail: body.trail(&now),
+            });
+        }
+        for body in &mut self.kinematic_bodies {
+            let state = body.state_at(&now);
+            tracked_bodies.push(TrackedBody {
+                position_km: state.position_km,
+                visible: !body_occluded(eye, state.position_km),
+                trail: body.trail(&now),
             });
         }
 
@@ -105,7 +115,7 @@ impl CameraView for IssAndHubbleScene {
             camera_pos: eye,
             camera_look_at: look_at,
             camera_up: up,
-            markers,
+            tracked_bodies,
         }
     }
 }
@@ -114,22 +124,29 @@ impl UIDrawable for IssAndHubbleScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // Snapshot displayed values up front - the panels are owned and never
         // borrow the scene. Re-propagating at the frame's clock instant is
-        // deterministic, so readouts match the rendered markers with no
-        // stashed state.
+        // deterministic, so readouts match the rendered dots with no stashed
+        // state.
         let now = self.clock_now();
-        let telemetry: Vec<SatelliteTelemetry> = self
-            .satellites
-            .iter_mut()
-            .map(|sat| {
-                let state = sat.state_at(&now);
-                SatelliteTelemetry {
-                    name: sat.name.clone(),
-                    latitude_deg: state.latitude_deg as f32,
-                    longitude_deg: state.longitude_deg as f32,
-                    altitude_km: state.altitude_km as f32,
-                }
-            })
-            .collect();
+        let mut telemetry: Vec<BodyTelemetry> =
+            Vec::with_capacity(self.orbital_bodies.len() + self.kinematic_bodies.len());
+        for body in &mut self.orbital_bodies {
+            let state = body.state_at(&now);
+            telemetry.push(BodyTelemetry {
+                name: body.name.clone(),
+                latitude_deg: state.latitude_deg as f32,
+                longitude_deg: state.longitude_deg as f32,
+                altitude_km: state.altitude_km as f32,
+            });
+        }
+        for body in &mut self.kinematic_bodies {
+            let state = body.state_at(&now);
+            telemetry.push(BodyTelemetry {
+                name: body.name.clone(),
+                latitude_deg: state.latitude_deg as f32,
+                longitude_deg: state.longitude_deg as f32,
+                altitude_km: state.altitude_km as f32,
+            });
+        }
 
         let datetime = self.clock_datetime_label();
         // Padded to the widest value (monospace font) so the digit window
@@ -180,23 +197,23 @@ impl UIDrawable for IssAndHubbleScene {
             rows: time_rows,
         }];
         let mut rows: Vec<Vec<Box<dyn Instrument<Self>>>> = Vec::with_capacity(telemetry.len() * 3);
-        for sat in &telemetry {
+        for body in &telemetry {
             rows.push(vec![Box::new(Header {
-                title: sat.name.clone(),
+                title: body.name.clone(),
             })]);
             // Padded to the widest form ("-179.99" / "9999.9"; monospace) so
-            // the digit windows keep their size as the satellites move.
+            // the digit windows keep their size as the bodies move.
             rows.push(vec![Box::new(DualReadout {
                 left_label: "Lat".to_string(),
-                left_value: format!("{:>7.2}", sat.latitude_deg),
+                left_value: format!("{:>7.2}", body.latitude_deg),
                 left_unit: "deg".to_string(),
                 right_label: "Lon".to_string(),
-                right_value: format!("{:>7.2}", sat.longitude_deg),
+                right_value: format!("{:>7.2}", body.longitude_deg),
                 right_unit: "deg".to_string(),
             })]);
             rows.push(vec![Box::new(Readout {
                 label: "Alt".to_string(),
-                value: format!("{:>6.1}", sat.altitude_km),
+                value: format!("{:>6.1}", body.altitude_km),
                 unit: "km".to_string(),
             })]);
         }
