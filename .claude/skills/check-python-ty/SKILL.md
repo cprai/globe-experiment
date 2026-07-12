@@ -35,6 +35,5 @@ diagnostics and fix any *other* type error ty surfaces.
   pyright (serena's configured Python server) if you'd rather see diagnostics
   without leaving the tool loop — but `ty check` is the canonical CLI pass.
 - Like clippy for Rust, a clean type check is necessary but not sufficient:
-  the scripts only truly exercise through the app (`scene *_py --script ...`);
-  see the round-trip tests in `src/scenes/manual_control_py.rs` /
-  `solar_system_py.rs` (`testing.md`).
+  a scene script only truly exercises through the app (a Python-paneled
+  scene's `--script` argument — see `scenes.md`).

@@ -2,6 +2,9 @@
 //! module, and the runtime script loader (scripts are re-read every launch -
 //! edit + relaunch, no rebuild). The headless binary compiles but never
 //! calls this: it links libpython without initializing the interpreter.
+// Kept while no shipped scene is Python-paneled (the `*_py` scenes were
+// removed 2026-07-12; scripting will return) - do not delete.
+#![allow(dead_code)]
 
 use std::ffi::CString;
 use std::path::Path;

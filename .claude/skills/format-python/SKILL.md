@@ -5,10 +5,10 @@ description: Format the Python scene scripts (scenes/*.py) with ruff format, the
 
 # Format Python code (ruff)
 
-Format the runtime scene scripts under `scenes/` (`manual_control_py.py`,
-`solar_system_py.py`, and any future script). **`ruff format` is the sole
-formatting authority for Python** here — don't hand-format, and keep diffs
-limited to real changes.
+Format any Python in the repo — the runtime scene scripts under `scenes/`
+(none checked in right now; scripting returns later). **`ruff format` is the
+sole formatting authority for Python** here — don't hand-format, and keep
+diffs limited to real changes.
 
 ## Tools
 - `ruff` (`ruff format`)
@@ -23,9 +23,9 @@ ruff format --check scenes/
 ```
 
 ## Scope
-- Runs on the `scenes/*.py` scene scripts — the only hand-written Python in
-  the repo (everything else Python-side is embedded CPython driven from Rust in
-  `src/engine/py.rs`).
+- Runs on the `scenes/*.py` scene scripts, the only hand-written Python this
+  repo ever holds (everything else Python-side is embedded CPython driven
+  from Rust in `src/engine/py.rs`).
 - Formatting only. It does **not** type-check — verify types separately with
   the `check-python-ty` skill (`ty check`).
 - No `pyproject.toml`/`ruff.toml` is checked in, so ruff uses its built-in

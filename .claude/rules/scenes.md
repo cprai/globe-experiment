@@ -15,8 +15,8 @@ paths:
   Time-panel builder, propagation loop, and `set_camera_target` helper are
   deliberately duplicated per scene (see `architecture.md`).
 - `run()` must call `scene::init()` (= `init_satkit`) before any satkit use;
-  the `*_py` scenes then call `engine::py::init()` (inittab strictly before
-  interpreter init) before constructing the scene.
+  Python-paneled scenes then call `engine::py::init()` (inittab strictly
+  before interpreter init) before constructing the scene.
 - Scene structs hold `clock`, `camera`, `camera_target` as direct fields; no
   scene stores a `CelestialSphere` (evaluate `CelestialSphere::at` on the
   spot). Clock access only through the `SceneClock` trait API; the clock tick
@@ -40,11 +40,14 @@ EOP-All.csv entry]` (~build date); outside it satkit silently degrades (see
 rather than shipping. Exception: the `headless` binary deliberately does NOT
 enforce this (the caller owns the time; do not add a check).
 
-## Python-paneled scenes (manual_control_py, solar_system_py)
+## Python-paneled scenes (none shipped right now)
 
-Clones of their Rust siblings whose `get_drawables` delegates to the
-`--script` Python file, kept side by side so the two panel APIs can be
-compared — keep each pair's panels in sync.
+The `*_py` scene pair and its `scenes/*.py` scripts were removed 2026-07-12
+(owner: scripting returns later; recover them from git history). The engine's
+Python interfaces (`engine::py`, `ui::py`) stay alive for that return, and
+these rules bind any future Python-paneled scene: a clone of a Rust sibling
+whose `get_drawables` delegates to the `--script` Python file, kept side by
+side so the two panel APIs can be compared (keep the pair's panels in sync).
 
 - **Split struct**: scene state lives in an Inner `#[pyclass]` (reaches
   Python only as the instance handed to the script — not registered in the
@@ -58,8 +61,8 @@ compared — keep each pair's panels in sync.
   discard-pass fires of a callback read the same value — idempotent); setters
   record `requested_*` values the wrapper folds in before the next tick —
   the same one-frame timing as the Rust siblings' direct callbacks. The
-  wrapper overrides `tick_scene` to fold clock requests;
-  `solar_system_py`'s `frame_state` folds the requested body.
+  wrapper overrides `tick_scene` to fold clock requests; camera-target
+  requests fold in `frame_state`.
 - **The one borrow rule: never hold a pyclass borrow across a call into
   Python.** Trait bodies call no Python; `get_drawables` holds no Rust borrow
   at all — the script's property accesses each take their own transient
@@ -73,5 +76,5 @@ compared — keep each pair's panels in sync.
   importing from the embedded `globe` module; the clock is driven through the
   scene's own properties (nothing clock-shaped crosses into Python — each
   script owns its speed-slider min/max constants, like the Rust scenes own
-  theirs). The 9-key camera-target loop needs the `lambda i=i:` capture
+  theirs). A camera-target key loop needs the `lambda i=i:` capture
   (Python's late binding).

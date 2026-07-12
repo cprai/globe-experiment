@@ -19,8 +19,9 @@
   library** (pyo3 embeds the interpreter, unconditional — owner-approved
   2026-07-07; `PYO3_PYTHON` overrides the probed interpreter).
 - **No `assets/` dir** — everything in `OUT_DIR`, `include_bytes!`-ed. ONE
-  deliberate exception: the `*_py` scenes read their Python script at
-  runtime from the path given via `--script` (repo ships them in `scenes/`).
+  deliberate exception: Python-paneled scenes (none shipped right now — see
+  `scenes.md`) read their script at runtime from the path given via
+  `--script`.
 - **WSLg flakiness**: transient libEGL/MESA errors on launch — retry, not a
   code bug.
 - **Windows `cargo add`** can emit a bogus "found cargo.toml please rename"

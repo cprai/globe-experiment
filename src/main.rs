@@ -12,8 +12,7 @@ use clap::{Parser, Subcommand};
 enum Cli {
     /// Run a named scene, e.g. `scene iss_and_hubble`. Each scene is its own
     /// subcommand declaring exactly the arguments it takes (`scene <name>
-    /// --help` shows them; only the Python-paneled scenes take `--script`).
-    /// Omit the name to list the available scenes.
+    /// --help` shows them). Omit the name to list the available scenes.
     // arg_required_else_help: bare `scene` prints the scene list instead of
     // clap's terse missing-subcommand error.
     #[command(arg_required_else_help = true)]
@@ -24,9 +23,9 @@ enum Cli {
 }
 
 /// One subcommand per scene, so each declares its own arguments (the
-/// per-scene `Args` structs live beside their scenes; clap itself enforces
-/// which scenes take `--script`). Explicit `command(name = ...)` keeps the
-/// CLI tokens snake_case (clap would kebab-case the variant names).
+/// per-scene `Args` structs live beside their scenes). Explicit
+/// `command(name = ...)` keeps the CLI tokens snake_case (clap would
+/// kebab-case the variant names).
 #[derive(Subcommand)]
 enum SceneCommand {
     /// The International Space Station only.
@@ -42,10 +41,6 @@ enum SceneCommand {
     /// Burns panel keys to thrust and reshape the orbit.
     #[command(name = "manual_control")]
     ManualControl(scenes::manual_control::Args),
-    /// `manual_control` with its UI panels produced by the Python script at
-    /// `--script` (edit + relaunch, no rebuild).
-    #[command(name = "manual_control_py")]
-    ManualControlPy(scenes::manual_control_py::Args),
     /// The 2024-04-08 total solar eclipse (no satellites; framed on the day
     /// side).
     #[command(name = "solar_eclipse")]
@@ -54,10 +49,6 @@ enum SceneCommand {
     /// Luna, or the seven planets (no satellites).
     #[command(name = "solar_system")]
     SolarSystem(scenes::solar_system::Args),
-    /// `solar_system` with its UI panels produced by the Python script at
-    /// `--script` (edit + relaunch, no rebuild).
-    #[command(name = "solar_system_py")]
-    SolarSystemPy(scenes::solar_system_py::Args),
 }
 
 fn main() {
@@ -67,10 +58,8 @@ fn main() {
             SceneCommand::IssAndHubble(args) => scenes::iss_and_hubble::run(args),
             SceneCommand::LunarEclipse(args) => scenes::lunar_eclipse::run(args),
             SceneCommand::ManualControl(args) => scenes::manual_control::run(args),
-            SceneCommand::ManualControlPy(args) => scenes::manual_control_py::run(args),
             SceneCommand::SolarEclipse(args) => scenes::solar_eclipse::run(args),
             SceneCommand::SolarSystem(args) => scenes::solar_system::run(args),
-            SceneCommand::SolarSystemPy(args) => scenes::solar_system_py::run(args),
         },
     }
 }

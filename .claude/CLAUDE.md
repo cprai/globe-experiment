@@ -15,8 +15,8 @@ the currently uncommitted changes — as an example only. Do NOT commit.**
 The `codebase-search` skill has the routing table. In order:
 
 1. **serena** (LSP-backed, live — no index) for Rust, WGSL
-   (`src/engine/shaders/scene.wgsl`), and Python (`scenes/*.py`) symbol lookup,
-   references, and structure.
+   (`src/engine/shaders/scene.wgsl`), and Python symbol lookup, references,
+   and structure.
 2. **codebase-memory-mcp** for what serena cannot do: call-graph tracing,
    Cypher/aggregation queries, complexity hotspots, dependency-crate source.
    It is a snapshot — re-index before use.
@@ -40,10 +40,10 @@ only** (before build date) — what makes full EOP accuracy attainable.
 Saturn's rings are not yet rendered (deferred).
 
 Two binaries over one shared `src/engine/` (no lib crate): `globe-experiment`
-(windowed app + `src/scenes/`) and `headless` (single-frame PNG). The `*_py`
-scenes load their UI panels from a runtime Python script (the required
-`--script` argument; reference scripts in repo-root `scenes/`) — edit +
-relaunch, no rebuild. See `architecture.md`.
+(windowed app + `src/scenes/`) and `headless` (single-frame PNG). See
+`architecture.md`. No Python-paneled scene ships right now; the engine's
+Python scripting interfaces (`engine::py`, `ui::py`) are deliberately kept
+alive for their return (see `scenes.md`).
 
 ## Build & run
 
@@ -77,7 +77,7 @@ after every shader edit:
 naga --compact --capabilities none src/engine/shaders/scene.wgsl
 ```
 
-**Python scene scripts** (`scenes/*.py`): `ruff format` + `ty check` after
-edits (`format-python` / `check-python-ty` skills). `ty` reporting the
+**Python code** (none checked in right now): `ruff format` + `ty check`
+after edits (`format-python` / `check-python-ty` skills). `ty` reporting the
 embedded `globe` module as unresolved is expected (no stubs yet) — ignore
 that, fix anything else.

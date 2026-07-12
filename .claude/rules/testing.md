@@ -4,10 +4,8 @@
   sign-off). Verification is the smoke test + manual interaction on native
   Windows.
 - A few **render-free unit tests** exist (`cargo test`) in
-  `celestial_sphere.rs`, `satellite.rs`, `ui/instruments/button.rs`,
-  `ui/py.rs`, and the two `*_py` scene modules (which load the real
-  `scenes/*.py`, standing in for the edit-without-rebuild check) — run them
-  after touching those modules. Gotchas:
+  `celestial_sphere.rs`, `satellite.rs`, `ui/instruments/button.rs`, and
+  `ui/py.rs` — run them after touching those modules. Gotchas:
   - Tests touching Python must call `engine::py::init()` **before** any
     `Python::attach` (no auto-initialize; the `Once` makes repeats safe).
   - Tests needing satkit globals must seed via the `Once`-guarded

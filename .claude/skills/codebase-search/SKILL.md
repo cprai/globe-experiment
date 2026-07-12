@@ -39,7 +39,8 @@ LSP-accurate. It covers exactly the languages listed in
 
 - **rust** → rust-analyzer (the whole `src/` engine + `build.rs`).
 - **hlsl** → shader-language-server, which handles **`src/engine/shaders/scene.wgsl`**.
-- **python** → pyright, for the runtime scene scripts **`scenes/*.py`**.
+- **python** → pyright, for any `scenes/*.py` runtime scene scripts (none
+  checked in right now — see `scenes.md`).
 
 Core tools: `get_symbols_overview(relative_path)`,
 `find_symbol(name_path_pattern, relative_path=..., include_body=...)`,

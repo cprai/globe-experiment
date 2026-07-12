@@ -3,6 +3,9 @@
 //! and [`panels_from_python`]. The bare instruments need no twin - they are
 //! pyclasses themselves, so a script builds the very structs the Rust scenes
 //! do and the conversion clones them out inert.
+// Kept while no shipped scene is Python-paneled (the `*_py` scenes were
+// removed 2026-07-12; scripting will return) - do not delete.
+#![allow(dead_code)]
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
