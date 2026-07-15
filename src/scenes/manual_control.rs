@@ -45,6 +45,9 @@ const MAX_MULTIPLIER: f32 = 100.0;
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct ManualControlScene {
     clock: Clock,
+    camera: PtzCamera,
+    /// Fixed at Terra (no selector), so it never reframes.
+    camera_target: CameraTarget,
     /// Exactly one body; a `Vec` only to match the scene convention. It
     /// re-anchors itself to the clock on every query; burns go through
     /// `apply_thrust`.
@@ -58,9 +61,6 @@ pub struct ManualControlScene {
     burn_anti_normal: bool,
     burn_radial_out: bool,
     burn_radial_in: bool,
-    camera: PtzCamera,
-    /// Fixed at Terra (no selector), so it never reframes.
-    camera_target: CameraTarget,
 }
 
 impl ManualControlScene {
@@ -69,6 +69,8 @@ impl ManualControlScene {
         let epoch = body.epoch();
         Self {
             clock: Clock::new(epoch),
+            camera: PtzCamera::default(),
+            camera_target: CameraTarget::terra(),
             kinematic_bodies: vec![body],
             burn_prograde: false,
             burn_retrograde: false,
@@ -76,8 +78,6 @@ impl ManualControlScene {
             burn_anti_normal: false,
             burn_radial_out: false,
             burn_radial_in: false,
-            camera: PtzCamera::default(),
-            camera_target: CameraTarget::terra(),
         }
     }
 

@@ -44,15 +44,15 @@ const MAX_MULTIPLIER: f32 = 100.0;
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssAndHubbleScene {
     clock: Clock,
+    camera: PtzCamera,
+    /// Fixed at Terra (no selector), so it never reframes.
+    camera_target: CameraTarget,
     /// Deliberately mixed backends - ISS analytic SGP4, Hubble a
     /// `KinematicBody` seeded once from its TLE (position AND trail
     /// numerical from then on) - continuously exercising both body kinds in
     /// one scene. Panel/marker order is orbital first, then kinematic.
     orbital_bodies: Vec<OrbitalBody>,
     kinematic_bodies: Vec<KinematicBody>,
-    camera: PtzCamera,
-    /// Fixed at Terra (no selector), so it never reframes.
-    camera_target: CameraTarget,
 }
 
 impl IssAndHubbleScene {
@@ -65,10 +65,10 @@ impl IssAndHubbleScene {
         let epoch = iss.epoch();
         Self {
             clock: Clock::new(epoch),
-            orbital_bodies: vec![iss],
-            kinematic_bodies: vec![KinematicBody::from_tle(HST_TLE)],
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
+            orbital_bodies: vec![iss],
+            kinematic_bodies: vec![KinematicBody::from_tle(HST_TLE)],
         }
     }
 }

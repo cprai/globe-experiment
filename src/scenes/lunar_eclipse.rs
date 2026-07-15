@@ -30,10 +30,10 @@ const MAX_MULTIPLIER: f32 = 100.0;
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct LunarEclipseScene {
     clock: Clock,
+    camera: PtzCamera,
     /// Written directly by the Camera Target keys via
     /// [`Self::set_camera_target`] (reframes on a genuine switch).
     camera_target: CameraTarget,
-    camera: PtzCamera,
 }
 
 impl LunarEclipseScene {
@@ -65,8 +65,8 @@ impl LunarEclipseScene {
 
         Self {
             clock: Clock::new(epoch),
-            camera_target,
             camera,
+            camera_target,
         }
     }
 

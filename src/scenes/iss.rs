@@ -34,10 +34,10 @@ const MAX_MULTIPLIER: f32 = 100.0;
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssScene {
     clock: Clock,
-    orbital_bodies: Vec<OrbitalBody>,
     camera: PtzCamera,
     /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
+    orbital_bodies: Vec<OrbitalBody>,
 }
 
 impl IssScene {
@@ -46,9 +46,9 @@ impl IssScene {
         let epoch = iss.epoch();
         Self {
             clock: Clock::new(epoch),
-            orbital_bodies: vec![iss],
             camera: PtzCamera::default(),
             camera_target: CameraTarget::terra(),
+            orbital_bodies: vec![iss],
         }
     }
 }
