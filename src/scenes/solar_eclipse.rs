@@ -1,6 +1,13 @@
-//! Solar-eclipse scene: the 2024-04-08 total solar eclipse, no tracked
-//! objects - Luna's shadow sweeps the daylit Terra (CLI: `globe-experiment
-//! scene solar_eclipse`).
+//! Solar-eclipse scene: the 2024-04-08 total solar eclipse (CLI:
+//! `globe-experiment scene solar_eclipse`).
+//!
+//! No tracked objects - Luna's umbral shadow spot sweeps across the daylit
+//! Terra. The clock starts ~30 min before greatest eclipse (18:17 UTC), so
+//! the auto-playing simulation runs through the umbra's crossing of North
+//! America. The camera opens over the sunlit face (looking toward Sol) with
+//! the shadow spot near the subsolar point. Panels: Time (UTC readout,
+//! run/pause, 1x-100x speed slider) top-left; a Terra / Luna Camera Target
+//! selector top-right.
 
 use satkit::Instant;
 
@@ -17,38 +24,31 @@ use engine::ui::{
 };
 
 /// Eye distance for the day-side framing (km): Terra fills most of the
-/// frame with Luna's umbral shadow spot centered near the subsolar point.
+/// frame.
 const VIEW_DISTANCE_KM: f64 = 22000.0;
 
 /// Speed-slider range: real time to 100x.
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Empty solar-eclipse simulation: just the clock; no tracked bodies. A Terra /
-/// Luna Camera Target panel writes `camera_target` directly.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct SolarEclipseScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Written directly by the Camera Target keys via
-    /// [`Self::set_camera_target`] (reframes on a genuine switch).
     camera_target: CameraTarget,
 }
 
 impl SolarEclipseScene {
     fn new() -> Self {
-        // ~30 min before greatest eclipse (18:17 UTC), so the auto-playing
-        // clock runs through the umbra's crossing of North America. Well
-        // inside the bundled EOP range (1962-01-01 .. build date).
+        // Well inside the bundled EOP range (1962-01-01 .. build date).
         let epoch =
             Instant::from_datetime(2024, 4, 8, 17, 47, 0.0).expect("valid solar-eclipse datetime");
         // Throwaway sphere at the epoch for the launch framing (the clock has
         // not ticked yet); `scene::init` must already have run.
         let celestial_sphere = CelestialSphere::at(&epoch);
 
-        // Frame the sunlit face by looking toward Sol. The sphere is
-        // heliocentric, so the Terra->Sol direction is Sol's position minus
-        // Terra's center (not just the Sol position).
+        // The sphere is heliocentric, so the Terra->Sol direction is Sol's
+        // position minus Terra's center (not just the Sol position).
         let terra_to_sol =
             celestial_sphere.sol_pos_world - celestial_sphere.center_world(CelestialBody::TERRA);
         // Seed camera_target with the body the framing orbits, so the first
@@ -142,9 +142,7 @@ impl UIDrawable for SolarEclipseScene {
             rows: time_rows,
         }];
 
-        // Terra / Luna Camera Target keys: each writes its fixed body through
-        // `set_camera_target` (no-op on re-select - idempotent); the scene
-        // holds no selection state beyond `camera_target` itself.
+        // The scene holds no selection state beyond `camera_target` itself.
         let luna_active = self
             .camera_target
             .same_kind(&CameraTarget::Body(CelestialBody::LUNA));
@@ -185,8 +183,6 @@ impl UIDrawable for SolarEclipseScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the solar-eclipse scene (camera seeded on the daylit face in
-/// `new`) and runs the winit event loop.
 pub fn run(_args: Args) {
     // Seed satkit's globals before the celestial sphere is built in `new`.
     scene::init();

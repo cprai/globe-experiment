@@ -1,5 +1,10 @@
-//! ISS-only scene: track the International Space Station from its
-//! ~2024-001.5 TLE epoch (CLI: `globe-experiment scene iss`).
+//! ISS tracking scene (CLI: `globe-experiment scene iss`).
+//!
+//! Follows the International Space Station around Terra from its 2024-001.5
+//! TLE epoch, propagated by SGP4, with its dot and predicted orbit path
+//! drawn over the globe. The camera orbits Terra (no target selector).
+//! Panels: Time (UTC readout, run/pause, 1x-100x speed slider) top-left;
+//! live ISS latitude / longitude / altitude top-right.
 
 use engine::application::{self, ApplicationState};
 use engine::camera::{PtzCamera, ScenePtzCamera};
@@ -13,13 +18,10 @@ use engine::ui::{
     Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
-// Column-sensitive TLE format: each element line is exactly 69 chars - keep
-// the exact spacing (satkit parses by column; the trailing checksum digit is
-// unverified). Deliberately duplicated per scene - do not factor into a
-// shared const.
-
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
-/// element set.
+/// element set. Column-sensitive format: each element line is exactly 69
+/// chars - keep the exact spacing (satkit parses by column). Deliberately
+/// duplicated per scene - do not factor into a shared const.
 const ISS_TLE: &str = concat!(
     "ISS (ZARYA)\n",
     "1 25544U 98067A   24001.50000000  .00016717  00000-0  10270-3 0  9003\n",
@@ -30,12 +32,10 @@ const ISS_TLE: &str = concat!(
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// ISS-only simulation: clock plus a single tracked body.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
     orbital_bodies: Vec<OrbitalBody>,
 }
@@ -63,8 +63,7 @@ impl UIDrawable for IssScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // Snapshot displayed values up front - the panels are owned and never
         // borrow the scene. Re-propagating at the frame's clock instant is
-        // deterministic, so readouts match the rendered dots with no stashed
-        // state.
+        // deterministic, so readouts match the rendered dots.
         let now = self.clock_now();
         let telemetry: Vec<BodyTelemetry> = self
             .orbital_bodies
@@ -161,7 +160,6 @@ impl UIDrawable for IssScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the ISS simulation and runs the winit event loop until close.
 pub fn run(_args: Args) {
     // Seed satkit's globals (embedded ephemeris + EOP) before any
     // propagation or CelestialSphere use.

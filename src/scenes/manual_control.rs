@@ -1,8 +1,18 @@
-//! Manually-controlled scene: one `KinematicBody` seeded from the ISS TLE
-//! (satkit `orbitprop`, no TLE retained). A bottom-center "Burns" panel
-//! holds six orbital-frame thrust keys; while held, the thrust integrates
-//! into the GCRF velocity and the dot, predicted trail, and apsis readouts
-//! follow (CLI: `globe-experiment scene manual_control`).
+//! Manual-control scene: fly a satellite by hand (CLI: `globe-experiment
+//! scene manual_control`).
+//!
+//! One numerically propagated body (satkit `orbitprop`) starts on the ISS
+//! orbit, seeded once from its TLE - after that the orbit belongs to the
+//! user. Six hold-to-fire keys in a bottom-center Burns panel thrust along
+//! the orbital frame in opposing pairs (prograde/retrograde,
+//! normal/anti-normal, radial out/in); while held, the thrust integrates
+//! into the GCRF velocity and the dot, predicted trail, and readouts follow.
+//! The burn strength is deliberately game-like (~1 g, vastly stronger than
+//! any real station thruster): ~10 s of held prograde adds ~100 m/s of
+//! delta-v, enough to visibly reshape the predicted orbit. The camera orbits
+//! Terra (no target selector). Panels: Time (UTC readout, run/pause,
+//! 1x-100x speed slider) top-left; lat/lon/alt/speed/apsis telemetry
+//! top-right; Burns bottom-center.
 
 use glam::DVec3;
 
@@ -17,40 +27,31 @@ use engine::ui::{
     InteractiveToggle, PanelAnchor, Readout, Slider, Toggle, UIDrawable, UIDrawablePanel,
 };
 
-// Seed TLE - see `iss.rs` for the column-sensitive format notes.
-// Deliberately duplicated per scene - do not factor into a shared const.
-// Used ONCE to bootstrap the initial GCRF state; after that the orbit
-// belongs to the user.
-
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
-/// element set - the starting orbit only.
+/// element set - the starting orbit only. Column-sensitive format: each
+/// element line is exactly 69 chars - keep the exact spacing (satkit parses
+/// by column). Deliberately duplicated per scene - do not factor into a
+/// shared const.
 const ISS_TLE: &str = concat!(
     "ISS (ZARYA)\n",
     "1 25544U 98067A   24001.50000000  .00016717  00000-0  10270-3 0  9003\n",
     "2 25544  51.6432 351.4697 0007417 130.5364 329.6482 15.48915330299357\n",
 );
 
-/// Thrust while a burn key is held, m/s^2. Deliberately game-like (~1 g,
-/// vastly stronger than any real station thruster): ~10 s of held prograde
-/// adds ~100 m/s of delta-v, enough to visibly reshape the predicted orbit.
-/// Scaled by simulation dt, so time-warp burns harder in wall time.
+/// Thrust while a burn key is held, m/s^2. Scaled by simulation dt, so
+/// time-warp burns harder in wall time.
 const BURN_ACCEL_M_S2: f64 = 10.0;
 
 /// Speed-slider range: real time to 100x.
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Manually-controlled simulation: clock, the thrustable kinematic body,
-/// and the burn request flags.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct ManualControlScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
-    /// Exactly one body; a `Vec` only to match the scene convention. It
-    /// re-anchors itself to the clock on every query; burns go through
-    /// `apply_thrust`.
+    /// Exactly one body; a `Vec` only to match the scene convention.
     kinematic_bodies: Vec<KinematicBody>,
     /// Burn request flags, one per key, set by the held keys' callbacks
     /// during the egui pass. Flags (not direct edits) so held opposing keys
@@ -112,7 +113,6 @@ impl ManualControlScene {
         sum.try_normalize()
     }
 
-    /// The one kinematic body.
     fn body(&self) -> &KinematicBody {
         &self.kinematic_bodies[0]
     }
@@ -120,10 +120,8 @@ impl ManualControlScene {
 
 impl Scene for ManualControlScene {
     fn advance(&mut self) {
-        // The body re-anchors itself to the clock on every query; the
-        // scene's job is thrust only. `apply_thrust` scales by the frame's
-        // simulation dt and no-ops when paused, so a paused clock burns
-        // nothing.
+        // `apply_thrust` scales by the frame's simulation dt and no-ops when
+        // paused, so a paused clock burns nothing.
         if let Some(direction) = self.burn_direction() {
             let now = self.clock_now();
             self.kinematic_bodies[0].apply_thrust(&now, direction, BURN_ACCEL_M_S2);
@@ -143,8 +141,8 @@ impl Scene for ManualControlScene {
 impl UIDrawable for ManualControlScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // Snapshot displayed values up front - the panels are owned and never
-        // borrow the scene. The readout re-derives at the same instant
-        // `frame_state` used, so it matches the rendered dot. `shape` is
+        // borrow the scene. Re-deriving at the same instant `frame_state`
+        // used keeps the readouts matching the rendered dot. `shape` is
         // `None` after a burn to escape (e >= 1: no apsides).
         let now = self.clock_now();
         let state = self.kinematic_bodies[0].state_at(&now);
@@ -199,8 +197,9 @@ impl UIDrawable for ManualControlScene {
             rows: time_rows,
         }];
 
-        // Values padded to their widest form (monospace) - see iss.rs. Apsis
-        // windows show dashes on an escape orbit (no apsides).
+        // Values padded to their widest form (monospace) so the digit
+        // windows keep their size. Apsis windows show dashes on an escape
+        // orbit (no apsides).
         let (apo, peri) = match &shape {
             Some(shape) => (
                 format!("{:>7.1}", shape.apoapsis_alt_km),
@@ -250,9 +249,6 @@ impl UIDrawable for ManualControlScene {
             rows,
         });
 
-        // Burns panel: six hold-to-fire keys in opposing pairs. A held key
-        // sets its request flag every frame; `advance` turns flags into
-        // thrust.
         let rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![
             vec![Box::new(Header {
                 title: "Burns".to_string(),
@@ -313,8 +309,6 @@ impl UIDrawable for ManualControlScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the manual-control simulation and runs the winit event loop until
-/// close.
 pub fn run(_args: Args) {
     // Seed satkit's globals (ephemeris + EOP + IERS tables + EGM96 gravity)
     // before the TLE parse and the per-frame numerical propagation.

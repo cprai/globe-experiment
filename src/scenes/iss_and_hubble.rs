@@ -1,5 +1,14 @@
-//! ISS + Hubble scene: track both from their shared ~2024-001.5 TLE epoch.
-//! The original default scene (CLI: `globe-experiment scene iss_and_hubble`).
+//! ISS + Hubble scene, the original default (CLI: `globe-experiment scene
+//! iss_and_hubble`).
+//!
+//! Tracks both satellites around Terra from their ~2024-001.5 TLE epochs,
+//! dots and predicted orbit paths over the globe. The two deliberately run
+//! on different backends - the ISS analytic SGP4, Hubble seeded once from
+//! its TLE and numerically propagated from then on - continuously
+//! exercising both body kinds in one scene; panel and marker order is
+//! orbital first, then kinematic. The camera orbits Terra (no target
+//! selector). Panels: Time (UTC readout, run/pause, 1x-100x speed slider)
+//! top-left; per-body latitude / longitude / altitude top-right.
 
 use engine::application::{self, ApplicationState};
 use engine::camera::{PtzCamera, ScenePtzCamera};
@@ -15,9 +24,8 @@ use engine::ui::{
 };
 
 // Column-sensitive TLE format: each element line is exactly 69 chars - keep
-// the exact spacing (satkit parses by column; the trailing checksum digit is
-// unverified). Deliberately duplicated per scene - do not factor into a
-// shared const.
+// the exact spacing (satkit parses by column). Deliberately duplicated per
+// scene - do not factor into a shared const.
 
 /// The International Space Station (ISS / ZARYA), epoch 2024-001.5. Real
 /// element set.
@@ -40,17 +48,11 @@ const HST_TLE: &str = concat!(
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// ISS + Hubble simulation: clock plus two tracked bodies.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct IssAndHubbleScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Fixed at Terra (no selector), so it never reframes.
     camera_target: CameraTarget,
-    /// Deliberately mixed backends - ISS analytic SGP4, Hubble a
-    /// `KinematicBody` seeded once from its TLE (position AND trail
-    /// numerical from then on) - continuously exercising both body kinds in
-    /// one scene. Panel/marker order is orbital first, then kinematic.
     orbital_bodies: Vec<OrbitalBody>,
     kinematic_bodies: Vec<KinematicBody>,
 }
@@ -83,8 +85,7 @@ impl UIDrawable for IssAndHubbleScene {
     fn get_drawables(&mut self) -> Vec<UIDrawablePanel<Self>> {
         // Snapshot displayed values up front - the panels are owned and never
         // borrow the scene. Re-propagating at the frame's clock instant is
-        // deterministic, so readouts match the rendered dots with no stashed
-        // state.
+        // deterministic, so readouts match the rendered dots.
         let now = self.clock_now();
         let mut telemetry: Vec<BodyTelemetry> =
             Vec::with_capacity(self.orbital_bodies.len() + self.kinematic_bodies.len());
@@ -188,8 +189,6 @@ impl UIDrawable for IssAndHubbleScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the ISS + Hubble simulation and runs the winit event loop until
-/// close.
 pub fn run(_args: Args) {
     // Seed satkit's globals (embedded ephemeris + EOP) before any
     // propagation or CelestialSphere use.

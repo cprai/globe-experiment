@@ -1,10 +1,13 @@
-//! Solar-system scene: a free tour with no tracked objects - a one-key-per-
-//! body Camera Target panel orbits any of the nine bodies at true position
-//! and scale (CLI: `globe-experiment scene solar_system`).
+//! Solar-system scene: a free tour with no tracked objects (CLI:
+//! `globe-experiment scene solar_system`).
 //!
-//! The outer planets sit billions of km out, past f32 precision in world-km,
-//! so a planet target renders with a floating origin (drawn relative to the
-//! orbited body's center; see `CameraTarget::render_origin`).
+//! A one-key-per-body Camera Target panel (top-right) orbits any of the
+//! nine bodies at true position and scale, at a fixed recent past epoch
+//! (2025-06-01); a Time panel (UTC readout, run/pause, 1x-100x speed
+//! slider) sits top-left. The outer planets sit billions of km out, past
+//! f32 precision in world-km, so a planet target renders with a floating
+//! origin (drawn relative to the orbited body's center; see
+//! `CameraTarget::render_origin`).
 
 use satkit::Instant;
 
@@ -24,21 +27,16 @@ use engine::ui::{
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Empty solar-system simulation: just the clock; no tracked bodies. A
-/// one-key-per-body Camera Target panel writes `camera_target` directly.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct SolarSystemScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Written directly by the Camera Target keys via
-    /// [`Self::set_camera_target`] (reframes on a genuine switch).
     camera_target: CameraTarget,
 }
 
 impl SolarSystemScene {
     fn new() -> Self {
-        // A fixed recent past date, well inside the bundled EOP range
-        // (1962-01-01 .. build date), so every body's position is accurate.
+        // Well inside the bundled EOP range (1962-01-01 .. build date).
         let epoch =
             Instant::from_datetime(2025, 6, 1, 0, 0, 0.0).expect("valid solar-system datetime");
         Self {
@@ -123,9 +121,8 @@ impl UIDrawable for SolarSystemScene {
         }];
 
         // One latching key per body in `CelestialBody::ALL` order (distance
-        // from Sol). Each key writes its fixed body through
-        // `set_camera_target` (no-op on re-select - idempotent); the scene
-        // holds no selection state beyond `camera_target` itself.
+        // from Sol); the scene holds no selection state beyond
+        // `camera_target` itself.
         let mut target_rows: Vec<Vec<Box<dyn Instrument<Self>>>> = vec![vec![Box::new(Header {
             title: "Camera Target".to_string(),
         })]];
@@ -151,8 +148,6 @@ impl UIDrawable for SolarSystemScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the solar-system scene and runs the winit event loop. Starts on
-/// the default whole-Terra view.
 pub fn run(_args: Args) {
     scene::init();
     application::run(ApplicationState::new(SolarSystemScene::new()));

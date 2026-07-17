@@ -1,6 +1,13 @@
-//! Lunar-eclipse scene: the 2025-03-14 total lunar eclipse, no tracked
-//! objects - Terra's shadow turns Luna blood-red (CLI: `globe-experiment
-//! scene lunar_eclipse`).
+//! Lunar-eclipse scene: the 2025-03-14 total lunar eclipse (CLI:
+//! `globe-experiment scene lunar_eclipse`).
+//!
+//! No tracked objects - the show is Terra's shadow turning Luna blood-red.
+//! The clock starts ~30 min before greatest eclipse (06:58 UTC), at the
+//! start of totality, so the auto-playing simulation runs through the deep
+//! umbral phase. The camera opens orbiting Luna, framed on its Terra-facing
+//! (eclipsed) side with Terra behind the camera, so nothing occludes the
+//! disc. Panels: Time (UTC readout, run/pause, 1x-100x speed slider)
+//! top-left; a Terra / Luna Camera Target selector top-right.
 
 use satkit::Instant;
 
@@ -25,21 +32,15 @@ const VIEW_DISTANCE_KM: f64 = 3500.0;
 const MIN_MULTIPLIER: f32 = 1.0;
 const MAX_MULTIPLIER: f32 = 100.0;
 
-/// Empty lunar-eclipse simulation: just the clock; no tracked bodies. A Terra /
-/// Luna Camera Target panel writes `camera_target` directly.
 #[derive(SceneClock, ScenePtzCamera, SceneOrbitalBodies, SceneKinematicBodies)]
 pub struct LunarEclipseScene {
     clock: Clock,
     camera: PtzCamera,
-    /// Written directly by the Camera Target keys via
-    /// [`Self::set_camera_target`] (reframes on a genuine switch).
     camera_target: CameraTarget,
 }
 
 impl LunarEclipseScene {
     fn new() -> Self {
-        // ~30 min before greatest eclipse (06:58 UTC) - the start of totality
-        // - so the auto-playing clock runs through the deep umbral phase.
         // Well inside the bundled EOP range (1962-01-01 .. build date).
         let epoch =
             Instant::from_datetime(2025, 3, 14, 6, 28, 0.0).expect("valid lunar-eclipse datetime");
@@ -47,10 +48,8 @@ impl LunarEclipseScene {
         // not ticked yet); `scene::init` must already have run.
         let celestial_sphere = CelestialSphere::at(&epoch);
 
-        // Looking *toward* Luna puts the eye on its Terra-facing (eclipsed)
-        // side, so Terra is behind the camera and never occludes the disc -
-        // no limb nudge needed. The sphere is heliocentric, so the direction
-        // is Luna's center minus Terra's center, not Luna's raw position.
+        // The sphere is heliocentric, so the Terra->Luna direction is Luna's
+        // center minus Terra's center, not Luna's raw position.
         let center = celestial_sphere.luna().placement.pos_world
             - celestial_sphere.center_world(CelestialBody::TERRA);
         // Seed camera_target with the body the framing orbits, so the first
@@ -144,9 +143,7 @@ impl UIDrawable for LunarEclipseScene {
             rows: time_rows,
         }];
 
-        // Terra / Luna Camera Target keys: each writes its fixed body through
-        // `set_camera_target` (no-op on re-select - idempotent); the scene
-        // holds no selection state beyond `camera_target` itself.
+        // The scene holds no selection state beyond `camera_target` itself.
         let luna_active = self
             .camera_target
             .same_kind(&CameraTarget::Body(CelestialBody::LUNA));
@@ -187,9 +184,8 @@ impl UIDrawable for LunarEclipseScene {
 #[derive(clap::Args)]
 pub struct Args {}
 
-/// Builds the lunar-eclipse scene (camera seeded orbiting Luna in `new`) and
-/// runs the winit event loop.
 pub fn run(_args: Args) {
+    // Seed satkit's globals before the celestial sphere is built in `new`.
     scene::init();
 
     application::run(ApplicationState::new(LunarEclipseScene::new()));
