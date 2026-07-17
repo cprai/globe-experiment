@@ -1,8 +1,6 @@
 FROM archlinux:base-devel
 
 ARG REMOTE_USER
-ARG GIT_AUTHOR_NAME
-ARG GIT_AUTHOR_EMAIL
 
 ENV LIBGL_ALWAYS_SOFTWARE=1
 
@@ -31,8 +29,6 @@ USER $REMOTE_USER
 ENV HOME=/home/$REMOTE_USER
 ENV PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
 
-RUN git config --global user.name "$GIT_AUTHOR_NAME"
-RUN git config --global user.email "$GIT_AUTHOR_EMAIL"
 RUN git config --global --add safe.directory "*"
 
 RUN rustup toolchain install stable
