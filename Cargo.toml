@@ -12,9 +12,9 @@ edition = "2024"
 [workspace]
 members = [
     "crates/engine",
+    "crates/engine/macros",
     "crates/engine-astrodynamics",
     "crates/engine-astrodynamics/tests",
-    "crates/engine-macros",
 ]
 
 [dependencies]

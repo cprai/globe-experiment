@@ -2,7 +2,7 @@
 paths:
   - "src/**/*.rs"
   - "crates/engine/src/**/*.rs"
-  - "crates/engine-macros/src/**/*.rs"
+  - "crates/engine/macros/src/**/*.rs"
   - "crates/engine/build.rs"
   - "crates/engine/src/shaders/scene.wgsl"
   - "scenes/**/*.py"

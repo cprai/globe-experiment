@@ -26,7 +26,7 @@ egui-winit = "0.34.3"
 # The scene-trait derives (SceneClock, ScenePtzCamera, SceneOrbitalBodies,
 # SceneKinematicBodies) - re-exported from scene/mod.rs and camera/mod.rs so
 # consumers never depend on the proc-macro crate directly.
-engine-macros = { path = "../engine-macros" }
+engine-macros = { path = "macros" }
 glam = "0.33.1"
 # RFC3339 datetime parsing for the single-frame `headless` binary.
 humantime = "2"

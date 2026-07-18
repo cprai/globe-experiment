@@ -17,7 +17,9 @@ globe-experiment (root pkg, bin)  -> engine        src/main.rs + src/scenes/
 engine (lib + bin headless)       -> engine-macros crates/engine/src/ (lib.rs), owns
                                                    offscreen.rs + headless.rs
                                                    + build.rs (assets/OUT_DIR)
-engine-macros (proc-macro)                         the scene derives
+engine-macros (proc-macro)                         nested member
+                                                   (crates/engine/macros/),
+                                                   the scene derives
 engine-astrodynamics (lib)                         standalone, no app consumers yet;
                                                    own build.rs (satkit data only);
                                                    the planned satkit replacement
