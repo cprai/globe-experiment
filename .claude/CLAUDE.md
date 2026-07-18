@@ -42,9 +42,9 @@ Saturn's rings are not yet rendered (deferred).
 Four crates: the `engine` lib (`crates/engine/src/`, also owns the offscreen
 presenter + the `headless` single-frame-PNG bin and the asset-embedding
 `build.rs`), `engine-macros` (the scene derives), `engine-astrodynamics`
-(standalone ephemeris lib over its own embedded DE440 — the planned home of
-all orbit math and eventual satkit replacement; not yet consumed by
-anything), and the root `globe-experiment` bin (windowed app: `src/main.rs`
+(standalone orbit-math lib — DE440 ephemeris + numerical propagation over
+its own embedded data; the planned home of all orbit math and eventual
+satkit replacement, not yet consumed by anything), and the root `globe-experiment` bin (windowed app: `src/main.rs`
 + `src/scenes/`). See `architecture.md`. No Python-paneled scene ships right now; the engine's
 Python scripting interfaces (`engine::py`, `ui::py`) are deliberately kept
 alive for their return (see `scenes.md`).
