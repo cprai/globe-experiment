@@ -1,8 +1,8 @@
 ---
 paths:
   - "src/**/*.rs"
-  - "engine/src/**/*.rs"
-  - "engine/src/shaders/scene.wgsl"
+  - "crates/engine/src/**/*.rs"
+  - "crates/engine/src/shaders/scene.wgsl"
 ---
 
 # Coordinate system & mapping
@@ -20,7 +20,7 @@ paths:
   render origin back to a local offset — an f32 subtraction cancels
   catastrophically (Luna would shift ~16 km). Do not introduce intermediate
   f32 casts into computation paths.
-- Body constants + surface helpers: `engine/src/planet.rs` (single source of
+- Body constants + surface helpers: `crates/engine/src/planet.rs` (single source of
   truth; Terra is a table row, no terra/luna modules).
 
 ## Axis permutation P (world <-> ECEF)

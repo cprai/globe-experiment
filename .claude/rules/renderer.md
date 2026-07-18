@@ -1,9 +1,9 @@
 ---
 paths:
-  - "engine/src/renderer/**/*.rs"
-  - "engine/src/application/mod.rs"
-  - "engine/src/application/gfx.rs"
-  - "engine/src/offscreen.rs"
+  - "crates/engine/src/renderer/**/*.rs"
+  - "crates/engine/src/application/mod.rs"
+  - "crates/engine/src/application/gfx.rs"
+  - "crates/engine/src/offscreen.rs"
 ---
 
 # Renderer & application shell rules
@@ -114,8 +114,8 @@ at the render origin; trails + dots only when the render origin is Terra
 
 ## The `headless` binary
 
-`engine/src/headless.rs` (CLI + `--scene` JSON spec, `deny_unknown_fields` so typos
-error) + `engine/src/offscreen.rs` (surfaceless presenter + readback).
+`crates/engine/src/headless.rs` (CLI + `--scene` JSON spec, `deny_unknown_fields` so typos
+error) + `crates/engine/src/offscreen.rs` (surfaceless presenter + readback).
 
 - Offscreen format is **`Rgba8Unorm` (non-sRGB), on purpose** — the stored
   bytes already equal the sRGB-encoded on-screen pixels, written verbatim to

@@ -14,7 +14,7 @@ unconditional), rayon (parallel init), image, ktx2, clap. Build-only: ureq
 
 ```
 globe-experiment (root pkg, bin)  -> engine        src/main.rs + src/scenes/
-engine (lib + bin headless)       -> engine-macros engine/src/ (lib.rs), owns
+engine (lib + bin headless)       -> engine-macros crates/engine/src/ (lib.rs), owns
                                                    offscreen.rs + headless.rs
                                                    + build.rs (assets/OUT_DIR)
 engine-macros (proc-macro)                         the scene derives
@@ -136,6 +136,6 @@ Per-frame order: camera `tick` -> `tick_scene` -> `frame_state` ->
   `scene` types — `RenderState`, `CameraTarget`, and, for the `CameraView`
   blanket impl in `ptz.rs`, the scene traits + `CelestialSphere`.)
 - `camera` and `renderer` are winit-free; the windowed presenter (`Gfx`)
-  lives in `application/gfx.rs`, its headless twin in `engine/src/offscreen.rs`.
+  lives in `application/gfx.rs`, its headless twin in `crates/engine/src/offscreen.rs`.
 - `application` never touches the `CelestialSphere`; it consumes only the
   finished `RenderState`.

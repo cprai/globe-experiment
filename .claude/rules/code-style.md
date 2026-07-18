@@ -1,10 +1,10 @@
 ---
 paths:
   - "src/**/*.rs"
-  - "engine/src/**/*.rs"
-  - "engine-macros/src/**/*.rs"
-  - "engine/build.rs"
-  - "engine/src/shaders/scene.wgsl"
+  - "crates/engine/src/**/*.rs"
+  - "crates/engine-macros/src/**/*.rs"
+  - "crates/engine/build.rs"
+  - "crates/engine/src/shaders/scene.wgsl"
   - "scenes/**/*.py"
 ---
 

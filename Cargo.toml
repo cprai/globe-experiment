@@ -8,11 +8,11 @@ edition = "2024"
 # The root package plus the engine library and its proc-macro helper; keeps
 # fmt/clippy/test covering all three.
 [workspace]
-members = ["engine", "engine-macros"]
+members = ["crates/engine", "crates/engine-macros"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
-engine = { path = "engine" }
+engine = { path = "crates/engine" }
 glam = "0.33.1"
 # Scene setup (TLE epochs, `Instant` scene times). default-features off as in
 # `engine` - the ephemeris/EOP data is embedded there, satkit must not fetch.

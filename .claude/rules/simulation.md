@@ -1,6 +1,6 @@
 ---
 paths:
-  - "engine/src/scene/**/*.rs"
+  - "crates/engine/src/scene/**/*.rs"
 ---
 
 # Simulation & satkit rules

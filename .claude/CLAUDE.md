@@ -15,7 +15,7 @@ the currently uncommitted changes — as an example only. Do NOT commit.**
 The `codebase-search` skill has the routing table. In order:
 
 1. **serena** (LSP-backed, live — no index) for Rust, WGSL
-   (`engine/src/shaders/scene.wgsl`), and Python symbol lookup, references,
+   (`crates/engine/src/shaders/scene.wgsl`), and Python symbol lookup, references,
    and structure.
 2. **codebase-memory-mcp** for what serena cannot do: call-graph tracing,
    Cypher/aggregation queries, complexity hotspots, dependency-crate source.
@@ -39,7 +39,7 @@ orbiting a selectable target; simulation clock (1x–100x). **Past scenes
 only** (before build date) — what makes full EOP accuracy attainable.
 Saturn's rings are not yet rendered (deferred).
 
-Three crates: the `engine` lib (`engine/src/`, also owns the offscreen
+Three crates: the `engine` lib (`crates/engine/src/`, also owns the offscreen
 presenter + the `headless` single-frame-PNG bin and the asset-embedding
 `build.rs`), `engine-macros` (the scene derives), and the root
 `globe-experiment` bin (windowed app: `src/main.rs` + `src/scenes/`). See
@@ -76,7 +76,7 @@ file in `OUT_DIR` to refresh it. VRAM is ~1.5 GB (see `constraints.md`).
 after every shader edit:
 
 ```sh
-naga --compact --capabilities none engine/src/shaders/scene.wgsl
+naga --compact --capabilities none crates/engine/src/shaders/scene.wgsl
 ```
 
 **Python code** (none checked in right now): `ruff format` + `ty check`

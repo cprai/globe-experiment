@@ -1,11 +1,11 @@
 ---
 name: lint-wgsl-analyzer
-description: Get a secondary, spec-strict second opinion on engine/src/shaders/scene.wgsl via the wgsl-analyzer LSP server (pull diagnostics). Use when you want an editor-grade recheck; it is stricter than naga so expect false positives. The naga CLI remains authoritative.
+description: Get a secondary, spec-strict second opinion on crates/engine/src/shaders/scene.wgsl via the wgsl-analyzer LSP server (pull diagnostics). Use when you want an editor-grade recheck; it is stricter than naga so expect false positives. The naga CLI remains authoritative.
 ---
 
 # Lint WGSL with wgsl-analyzer (secondary)
 
-A **secondary**, spec-strict second opinion on `engine/src/shaders/scene.wgsl`. The
+A **secondary**, spec-strict second opinion on `crates/engine/src/shaders/scene.wgsl`. The
 naga CLI (the `validate-wgsl-naga` skill) is the authoritative check (it's
 the real compiler); reach for wgsl-analyzer only when you want an
 editor-grade recheck. It is **spec-stricter than naga**, so expect false
