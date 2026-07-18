@@ -729,6 +729,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-astrodynamics"
+version = "0.0.0"
+dependencies = [
+ "glam",
+ "satkit",
+ "ureq",
+]
+
+[[package]]
 name = "engine-macros"
 version = "0.0.0"
 dependencies = [

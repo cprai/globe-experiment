@@ -1,0 +1,16 @@
+# Long-term home of all orbit math (the eventual satkit replacement). Today:
+# ephemeris interfaces over an embedded JPL DE440, with satkit as a hidden
+# backend. Standalone workspace member - not yet consumed by `engine` or the
+# root bin. Path-only, never published.
+[package]
+name = "engine-astrodynamics"
+edition = "2024"
+
+[dependencies]
+glam = "0.33.1"
+# default-features off drops satkit's runtime data fetch; build.rs downloads
+# the data and `init` seeds it from embedded bytes.
+satkit = { version = "0.18", default-features = false }
+
+[build-dependencies]
+ureq = "3.3.0"

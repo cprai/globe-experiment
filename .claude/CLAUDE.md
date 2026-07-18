@@ -39,11 +39,13 @@ orbiting a selectable target; simulation clock (1x–100x). **Past scenes
 only** (before build date) — what makes full EOP accuracy attainable.
 Saturn's rings are not yet rendered (deferred).
 
-Three crates: the `engine` lib (`crates/engine/src/`, also owns the offscreen
+Four crates: the `engine` lib (`crates/engine/src/`, also owns the offscreen
 presenter + the `headless` single-frame-PNG bin and the asset-embedding
-`build.rs`), `engine-macros` (the scene derives), and the root
-`globe-experiment` bin (windowed app: `src/main.rs` + `src/scenes/`). See
-`architecture.md`. No Python-paneled scene ships right now; the engine's
+`build.rs`), `engine-macros` (the scene derives), `engine-astrodynamics`
+(standalone ephemeris lib over its own embedded DE440 — the planned home of
+all orbit math and eventual satkit replacement; not yet consumed by
+anything), and the root `globe-experiment` bin (windowed app: `src/main.rs`
++ `src/scenes/`). See `architecture.md`. No Python-paneled scene ships right now; the engine's
 Python scripting interfaces (`engine::py`, `ui::py`) are deliberately kept
 alive for their return (see `scenes.md`).
 

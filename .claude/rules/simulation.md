@@ -38,6 +38,10 @@ CIO locator), and the EGM96 gravity model from embedded bytes, once per
    on every propagation; a late seed fails with `AlreadyInitialized`, so it
    is seeded unconditionally.
 
+`engine-astrodynamics::init` seeds the same set-once stores from its own
+embedded copies — the two initializers must never run in one process
+(nothing links both crates today).
+
 ## Ephemeris-driven bodies (celestial_sphere.rs)
 
 - Position chain per body: `geocentric_pos` (GCRF, m) -> ITRF via

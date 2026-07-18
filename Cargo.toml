@@ -5,10 +5,10 @@
 name = "globe-experiment"
 edition = "2024"
 
-# The root package plus the engine library and its proc-macro helper; keeps
-# fmt/clippy/test covering all three.
+# The root package plus the engine library, the astrodynamics library, and
+# the proc-macro helper; keeps fmt/clippy/test covering all four.
 [workspace]
-members = ["crates/engine", "crates/engine-macros"]
+members = ["crates/engine", "crates/engine-astrodynamics", "crates/engine-macros"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
