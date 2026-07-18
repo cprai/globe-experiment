@@ -24,10 +24,11 @@ engine-astrodynamics (lib)                         standalone, no consumers yet;
 ```
 
 `engine-astrodynamics` is the future home of all orbit math: today it wraps
-satkit's ephemeris and numerical propagation behind a crate-owned,
-satkit-shaped module API, and `engine` keeps calling satkit directly until
-it is ready (the two crates' satkit initializers must never share a process
-— see `simulation.md`).
+satkit (ephemeris, SGP4/TLE, numerical propagation, frame transforms,
+Keplerian elements, geodetic conversion) behind a crate-owned, satkit-shaped
+module API covering every satkit call the engine makes, and `engine` keeps
+calling satkit directly until it is ready (the two crates' satkit
+initializers must never share a process — see `simulation.md`).
 
 The crate boundary enforces the dependency direction: engine never sees
 `scenes`, and the windowed app pulls in no offscreen/headless code (those
