@@ -10,7 +10,7 @@ UI), satkit (SGP4 + ephemeris + EOP), glam (math), pyo3 (embedded CPython,
 unconditional), rayon (parallel init), image, ktx2, clap. Build-only: ureq
 (asset download), half (f16 LUT bake). Versions in `Cargo.toml`.
 
-## Four crates: engine lib, windowed app, proc macros, astrodynamics
+## Crates: engine lib, windowed app, proc macros, astrodynamics + its harness
 
 ```
 globe-experiment (root pkg, bin)  -> engine        src/main.rs + src/scenes/
@@ -18,9 +18,14 @@ engine (lib + bin headless)       -> engine-macros crates/engine/src/ (lib.rs), 
                                                    offscreen.rs + headless.rs
                                                    + build.rs (assets/OUT_DIR)
 engine-macros (proc-macro)                         the scene derives
-engine-astrodynamics (lib)                         standalone, no consumers yet; own
-                                                   build.rs (satkit data only); the
-                                                   planned satkit replacement
+engine-astrodynamics (lib)                         standalone, no app consumers yet;
+                                                   own build.rs (satkit data only);
+                                                   the planned satkit replacement
+engine-astrodynamics-tests (lib)  -> engine-astrodynamics
+                                                   nested verification member
+                                                   (crates/engine-astrodynamics/tests/);
+                                                   leaf — reference astro deps live
+                                                   only here (see testing.md)
 ```
 
 `engine-astrodynamics` is the future home of all orbit math: today it wraps

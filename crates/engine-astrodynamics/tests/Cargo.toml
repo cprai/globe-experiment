@@ -1,0 +1,14 @@
+# Verification harness: compares engine-astrodynamics against reference
+# implementations (raw satkit today, other astrodynamics crates later).
+# Leaf crate — nothing depends on it, so its reference deps are never
+# compiled into shipped builds; they live only here.
+[package]
+name = "engine-astrodynamics-tests"
+edition = "2024"
+
+[dependencies]
+engine-astrodynamics = { path = ".." }
+glam = "0.33.1"
+# Must mirror the parent's `default-features = false` (workspace feature
+# unification would otherwise re-enable satkit's runtime data fetch).
+satkit = { version = "0.18", default-features = false }

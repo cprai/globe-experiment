@@ -15,6 +15,15 @@
   - Run `cargo test --workspace` from the root (bare `cargo test` covers
     only the root package, which has no tests; the unit tests live in the
     `engine` lib harness).
+- **`engine-astrodynamics-tests`** (`crates/engine-astrodynamics/tests/`, a
+  nested workspace-member test-only lib crate) compares
+  `engine-astrodynamics` against reference implementations — raw satkit
+  today, other astrodynamics crates later. Reference deps go ONLY there
+  (leaf crate, never reaches shipped builds). Covered by `cargo test
+  --workspace`, or alone via `cargo test -p engine-astrodynamics-tests`.
+  Seed satkit data only through `engine_astrodynamics::init()`; keep its
+  sources under `src/` with no `main.rs` (the parent auto-discovers
+  `tests/*.rs` and `tests/*/main.rs` as bogus integration-test targets).
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none
   crates/engine/src/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing

@@ -738,6 +738,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-astrodynamics-tests"
+version = "0.0.0"
+dependencies = [
+ "engine-astrodynamics",
+ "glam",
+ "satkit",
+]
+
+[[package]]
 name = "engine-macros"
 version = "0.0.0"
 dependencies = [
