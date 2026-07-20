@@ -1,0 +1,369 @@
+# engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
+
+**Status: plan only — no code has changed. Open owner decisions in §9.**
+
+Companion spec: `deep-space-propagator-spec-revised.md` (Rev C) governs the
+propagator internals (formulations, force models, integrator policy,
+validation thresholds — not restated here). This plan covers the whole
+crate: every module's backend swap, the data pipeline, sequencing, and the
+verification harness. Crate versions, APIs, URLs, and sizes below were
+verified live on 2026-07-20.
+
+## 0. Mandate and end state
+
+- Replace every satkit code path in `engine-astrodynamics` with crate-owned
+  implementations over **hifitime** (time), **anise** (ephemeris, frames,
+  body constants), and **differential-equations** (numerical integration),
+  building the spec's deep-space propagator as the new `propagation` core.
+- **Standalone**: `engine`, `engine-macros`, and the root bin are untouched
+  and keep calling satkit directly. Nothing here changes their builds.
+- **Breaking this crate's API is sanctioned** (owner, 2026-07-20): the time
+  re-exports become `hifitime::{Epoch, Duration, TimeScale}` (satkit
+  `Instant` gone), and signatures may change shape. The engine migrates to
+  hifitime later, against whatever surface this refactor lands.
+- End state: `satkit` appears nowhere in the shipped crate. It survives only
+  inside `engine-astrodynamics-tests` as a reference implementation (that is
+  the harness's whole job), alongside future non-satkit references.
+- The *"`init` must never share a process with the engine's `init_satkit`"*
+  constraint dissolves for this crate: anise has no process-global state
+  (`Almanac` is a plain `Clone` struct; verified — no statics). The
+  constraint lives on only inside the test harness while it references raw
+  satkit (§7).
+
+## 1. Target stack (verified against crates.io/docs.rs/repos, 2026-07-20)
+
+| Crate | Version | Role |
+|---|---|---|
+| `hifitime` | 4.3.0 | `Epoch`/`Duration`/`TimeScale`, re-exported as the crate's time types. Integer-backed (centuries + ns). Leap-second table embedded by default; TDB/TT/UTC/TAI built in. The `ut1` feature is NOT needed — Earth rotation comes from the binary PCK, not from UT1 math. |
+| `anise` | 0.10 (0.10.4) | DE440 ephemeris, GCRF↔ITRF93 and TEME rotations, per-body μ/radii/flattening from `pck11.pca`. Requires hifitime ^4.3. No process globals. |
+| `differential-equations` | =0.6.1 (pin exact) | DOP853 (`ExplicitRungeKutta::dop853()`), adaptive, event detection (Brent–Dekker on the interpolant), backward integration (`tf < t0`) supported. API churned 0.5→0.6 (`ODEProblem` → `IVP` builder) — pin exact and firewall all imports in one internal module. |
+| `sgp4` | 2.4 | SGP4/TLE backend (pure Rust, Celestrak/Vallado-validated: <2e-7 km vs the reference C++ at 3.5 y past epoch). Brings a mandatory `chrono` dep (default-features off). |
+| `tobari` | =0.2.0 (pin exact) | NRLMSISE-00 for Earth drag. Pure Rust clean-room, validated against pymsis (official Fortran) fixtures + an Orekit oracle; space weather injected via a provider trait (fits our embedded table). Young crate — risk + fallback in §8. |
+| `glam` | 0.33.1 (kept) | Public-API vector/quat types, unchanged: `DVec3`/`DQuat`, meters. |
+| `nalgebra` | 0.35 (via anise), 0.34 (via d-e) | Internal math only. **The two target crates disagree**: anise pins `=0.35`, differential-equations wants `^0.34.2` — two nalgebra copies compile. Acceptable: neither type reaches our public API (glam there), and the only crossings are explicit component copies at the anise/integrator boundaries. Revisit when d-e bumps to 0.35. |
+
+Facts that shaped the design (each verified):
+
+- **anise ships TEME natively** — `EARTH_TEME_LEGACY_FRAME` (IAU-76/FK5
+  precession + 1980 nutation, the SGP4-matching convention; use THIS one,
+  not the IAU2006-class `EARTH_TEME_FRAME`) as an analytic dynamic frame,
+  no kernel needed. The feared hand-rolled TEME chain is unnecessary.
+- **anise has no SGP4** (and neither does nyx) — hence the `sgp4` crate.
+- **`Orbit::period()` returns `Ok(Duration::ZERO)` for hyperbolic states**,
+  it does NOT error. The kepler module must gate on `ecc()`/`sma_km()`
+  itself to preserve the e ≥ 1 → `Err` contract the engine's
+  `orbit_shape()` `None` fallback relies on.
+- **differential-equations retains no interpolant after `solve()`** —
+  `Solution` is discrete `(Vec<t>, Vec<y>)`; dense output exists only
+  *during* the solve (`.dense(n)` / `.even(dt)` / `.t_eval(times)` solout
+  modes). Post-hoc `interp`/`interp_batch` (which the engine's trail
+  sampling requires) must be crate-owned — §5, `Trajectory`.
+- **anise DAF-from-bytes requires an 8-byte-aligned base** (zerocopy
+  `Ref<[u8],[f64]>` cast, errors on misalignment, no copy fallback). Our
+  existing `Align8` static wrapper is exactly right — keep it for the
+  `.bsp`/`.bpc` embeds and use `SPK::from_static` / `BPC::from_static`
+  (zero-copy). `.pca` is DER-encoded, no alignment need
+  (`PlanetaryDataSet::try_from_bytes`).
+- **No NRLMSISE-00 crate exists under any obvious name** (`nrlmsise00` et
+  al. are all 404 — the spec's §9 suggestion doesn't exist). Real options:
+  `tobari`, satkit's pure-Rust port (disqualified: the point is removing
+  satkit), or an in-crate port of the public-domain C reference. §9.
+
+## 2. Embedded data pipeline (`build.rs`)
+
+Same mechanics as today (download once into `OUT_DIR`, `include_bytes!`,
+delete-to-refresh, `cargo::rerun-if-changed` per file), new asset table:
+
+| Asset | Source | Size | Replaces |
+|---|---|---|---|
+| `de440s.bsp` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp` | 31 MiB | `linux_p1550p2650.440` (98 MiB) |
+| `earth_1962_250826_2125_combined.bpc` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/…` | 30 MiB | `EOP-All.csv` + `tab5.2a/b/d.txt` |
+| `pck11.pca` | `http://public-data.nyxspace.com/anise/v0.10/pck11.pca` | 38 KiB | (new — body constants) |
+| EGM2008, packed | ICGEM `https://icgem.gfz.de/getmodel/gfc/…/EGM2008.gfc`, truncated | ~1 MiB embedded | `EGM96.gfc` |
+| `SW-All.csv` | `https://celestrak.org/SpaceData/SW-All.csv` | ~3 MiB | (new — drag space weather, added in P6) |
+
+Notes, all verified:
+
+- **`de440s.bsp` carries the exact same 14 segments as the 114 MiB full
+  `de440.bsp`** (barycenters 1–9, Sun 10, Mercury 199, Venus 299, Moon 301,
+  Earth 399 — outer planets exist only as system barycenters, same as the
+  `.440` satkit reads today), span 1849–2150. Scenes are EOP-gated to
+  1962→build date, so the short file loses nothing and saves 66 MiB of
+  download + embed. §9-Q1 confirms the span choice.
+- **`earth_latest_high_prec.bpc` starts at 2000-01-01 — it cannot serve
+  this app.** The combined kernel spans 1962→2125 (historical accuracy
+  <3 µrad ≈ 0.6″; low-accuracy predict tail past its last datum) and is the
+  only single kernel covering 1962→build date. Type-2 binary PCK, frame
+  class 3000 = ITRF93 (parsed from the file and confirmed). Caveat: **NAIF
+  renames it roughly annually** (`earth_1962_<lastdatum>_2125_combined`).
+  Pin the filename as a const with a comment documenting the bump
+  procedure; a stale kernel still covers old scenes (only the predict-tail
+  quality of very recent epochs staled), so this is maintenance, not
+  breakage. The 12 MiB historical-only variant (`earth_620120_*.bpc`) was
+  rejected: it ends at its last datum, leaving scenes between the annual
+  refresh and the build date with NO coverage (anise errors outside a
+  BPC's span — no extrapolation).
+- **EGM2008 streams-then-truncates**: the ICGEM `.gfc` is 252 MB text, but
+  records are sorted ascending by degree (verified), so `build.rs` streams
+  the response and aborts after degree 360 (~7 MB transferred), then packs
+  fully-normalized C̄/S̄ into a little-endian f64 binary (~1.05 MiB) with a
+  header carrying the model's own defining constants (verified from the
+  file header: GM = 3.986004415e14, a = 6 378 136.3 m, tide-free,
+  fully normalized) — which the gravity model must use instead of the
+  canonical-unit μ, per spec §4.1. ICGEM's hash-URL has no permanence
+  guarantee (it survived their domain move to `icgem.gfz.de`) — §8.
+- **`SW-All.csv`** (1957→present + predictions) verifiedly carries every
+  NRLMSISE-00 input: daily F10.7 (`F10.7_OBS`), centered 81-day mean
+  (`F10.7_OBS_CENTER81`), daily Ap (`AP_AVG`), and the 3-hourly `AP1..AP8`,
+  plus an OBS/PRD flag for the observed-only policy (spec §4.7: fail
+  loudly outside observed data).
+- The nyxspace mirror is HTTP-only (its HTTPS cert mismatches); prefer the
+  NAIF/ICGEM/CelesTrak HTTPS URLs, use HTTP for the tiny `pck11.pca` (or
+  pin its published crc32 `0x1edb3eac` via `check_then_parse`).
+- The satkit-format downloads (`.440`, `tab5.2*`, `EGM96.gfc`,
+  `EOP-All.csv`) **move to a new `tests/build.rs`** when satkit leaves the
+  shipped crate (P4) — the harness still embeds and seeds them for its
+  reference side. Until P4 they stay in the parent `build.rs` beside the
+  new assets (both stacks coexist; ~160 MiB OUT_DIR peak, transient).
+- Net shipped-crate embed size: ~62 MiB vs ~100 MiB today.
+
+## 3. Initialization: from set-once globals to a lazy context
+
+satkit's four process-wide one-shot stores forced today's `init()`-first
+API and the process-exclusivity rule. anise needs none of that.
+
+- `data.rs` becomes the embed site plus a crate-internal
+  `static CONTEXT: LazyLock<Context>` where `Context` holds the composed
+  `Almanac` (SPK + BPC + PCA, built via the `from_static`/`try_from_bytes`
+  parsers over `Align8` statics) and the unpacked EGM2008 table; the space
+  weather table gets its own `LazyLock` (only drag touches it).
+- Query modules keep their **free-function API** (recommended, §9-Q4):
+  call sites stay `ephemeris::geocentric_pos(body, epoch)`-shaped, which
+  keeps the eventual engine migration mechanical. Functions reach the
+  context internally.
+- `pub fn init()` survives as an eager warm-up (parse kernels now, not at
+  first frame) and stays the documented entry point, but is no longer
+  *required* before queries, is idempotent, and carries no process
+  constraint. Panics on parse failure = broken build, same as today.
+
+## 4. Module-by-module mapping
+
+Public types stay glam + SI meters; anise speaks km — convert once at the
+anise boundary (and once more into canonical units inside the propagator,
+spec §1). nalgebra never appears in a public signature.
+
+| Module | Today | After |
+|---|---|---|
+| `lib.rs` re-exports | `satkit::{Duration, Instant, TimeScale}` | `hifitime::{Duration, Epoch, TimeScale}`; every API takes `Epoch` by value (it is `Copy`) |
+| `ephemeris` | `satkit::jplephem` | `almanac.translate(target, observer, epoch, Aberration::NONE)`; geocentric = observer `EARTH_J2000`, barycentric = observer `SSB_J2000` (anise treats J2000 orientation ≡ GCRF/ICRF, matching satkit's output frame). `Body` enum unchanged; NAIF mapping Sol→10, Mercury→199, Venus→299, EMB→3, Luna→301, Mars…Pluto→4…9 (system barycenters — same semantics as today's satkit/DE440 lookups, documented). km→m at the boundary. |
+| `frametransform` | satkit IERS-2010 + EOP | `almanac.rotate(from, to, epoch)` → DCM → `DQuat`. GCRF↔ITRF from the 1962 combined BPC (ITRF93); TEME from `EARTH_TEME_LEGACY_FRAME` (the SGP4 convention — not the IAU2006 variant). Positions-only contract unchanged (DCM's `rot_mat_dt` is there if velocity transforms are ever wanted). |
+| `itrfcoord` | satkit `ITRFCoord` | In-crate WGS84 geodetic conversion (Heikkinen/Vermeille closed form, ~30 lines, existing unit tests carry over). Deliberately NOT anise's `latlongalt()`: that uses the pca ellipsoid (a = 6 378 136.6 m, IAU) — the engine's `planet.rs` and the current API are WGS84 (a = 6 378 137). |
+| `kepler` | `satkit::Kepler` | anise `Orbit` (`CartesianState::new(…, EARTH_J2000)` with μ from the pca): read `ecc()`/`sma_km()`, **err when `ecc ≥ 1` or `sma ≤ 0` before touching `period()`** (which silently returns `ZERO` for hyperbolic — the satkit-era `Err` contract must be re-imposed by us). |
+| `tle` | `satkit::tle::TLE` | `sgp4::Elements::from_tle(name?, l1, l2)` + `Constants::from_elements` **built at parse time** (element errors surface at load, strictly earlier than satkit's propagate-time). Epoch: `elements.datetime` (UTC) → `Epoch` once at parse. `mean_motion_rev_day` from the parsed elements. |
+| `sgp4` | `satkit::sgp4` | `constants.propagate(MinutesSinceEpoch((t − epoch) in minutes))` per instant; TEME km→m. **`&mut Tle` disappears** (the sgp4 crate's `Constants` is immutable — satkit's cached-propagator quirk is gone; engine note for later). Reinstate the reference implementation's decay check ourselves (radius < 1 Earth radius → `Err`): the sgp4 crate propagates sub-surface states without complaint, and the module's contract is "never a silently garbage state". |
+| `propagation` | `satkit::orbitprop` | The spec's propagator (§5 below) plus a compat facade preserving today's surface. |
+| `data` | seeds 4 satkit stores | §3 context. |
+
+## 5. The propagator (spec Rev C) — crate-integration decisions
+
+The spec is authoritative for formulations, force models, switching policy,
+and validation thresholds. Decisions the spec left to the implementer, now
+made:
+
+- **Module layout**: `propagation/` grows submodules — `units` (canonical
+  units + newtypes, spec §1), `forces/` (`ForceModel` trait; central
+  gravity point-mass + EGM2008-Pines with degree-2 solid tides; third-body
+  Battin; SRP; conical shadow; albedo/IR; drag; Schwarzschild), `bodies`
+  (the `NaifId → GravityField/AtmosphereModel` registries with universal
+  point-mass/vacuum defaults, spec §4.0), `formulation/` (`Formulation`
+  trait, `cowell`, `ks`, hysteresis switching), `integrator` (the ONLY
+  module importing differential-equations — its 0.x API churn stays
+  contained), `segment` + `trajectory`, `spacecraft` (cannonball).
+- **State types**: `SVector<f64, 6>` (Cowell) / `SVector<f64, 10>` (KS)
+  via differential-equations' `nalgebra` feature (0.34). Force-model math
+  in glam `DVec3` (the crate convention); explicit converts at the
+  integrator and anise (0.35) boundaries only.
+- **Time plumbing**: integrator variable = canonical time offset from the
+  segment-anchor `Epoch` (spec §5); every ephemeris query converts offset →
+  `Epoch` (TDB handled by hifitime/anise internally).
+- **Dense output / `Trajectory`** — the differential-equations gap (§1)
+  makes this crate-owned by necessity, which spec §5 wanted anyway
+  ("stitches segments and interpolates for arbitrary-epoch queries"):
+  capture knots during the solve with a dense solout (the crate's own
+  7th-order interpolant supplies intermediate points per accepted step),
+  store `(t, y, ẏ)` knots per segment (ẏ from the derivative function),
+  interpolate quintic-Hermite (position) / cubic-Hermite (velocity)
+  between knots. Gate: interpolated states vs a direct `t_eval` solve of
+  the same arc must sit well below the §0 accuracy target; knot density is
+  the tuning knob if not.
+- **Events**: shadow boundary, formulation-switch triggers (with hysteresis
+  bands), and SOI central-body switches as differential-equations `Event`s
+  (sign-change + precise location) that terminate the segment; the segment
+  driver converts state, re-anchors, restarts — never integrates through a
+  discontinuity (spec §5).
+- **Atmosphere co-rotation** (`v_rel = v − ω×r`, spec §4.7): take the body
+  rotation from the anise DCM time derivative (`rot_mat_dt`) rather than a
+  scalar ω — same source, no hand-rolled rate constant.
+- **Bond albedo**: NOT in the pca (verified — anise has no albedo anywhere),
+  so spec §4.0's "albedo from ANISE" is unsatisfiable as written. Deviation:
+  one in-crate `NaifId → Bond albedo` const table next to the registry,
+  documented as the sanctioned exception.
+- **EGM2008 tide system**: the ICGEM file is tide-free; the frequency-
+  independent degree-2 solid-tide correction (spec §4.1) is applied
+  consistently on that baseline.
+- **Compat facade** (what the engine will migrate onto, kept thin over the
+  real propagator): `OrbitState` (GCRF m, m/s), `Settings`
+  { gravity_degree/order (now EGM2008, ≤360), abs/rel_error,
+  use_sun_gravity, use_moon_gravity, use_relativistic_correction,
+  **new** `spacecraft: Option<SpacecraftModel>` }, and
+  `propagate(&state, begin, end, &settings) -> Propagation` with
+  `state_end`/`interp`/`interp_batch`/`time_begin`/`time_end` intact
+  (backward spans stay supported — d-e handles `tf < t0`).
+  `spacecraft: None` (default) = SRP/drag/albedo skipped, matching today's
+  behavior for the engine's parameter-less tracked satellites; geocentric
+  canonical units; Cowell only (LEO never trips the §3a triggers).
+- **Switch telemetry** (spec §3a "log every switch"): recorded on the
+  `Trajectory` as segment boundaries with cause — no logging dep.
+
+## 6. Phases and gates
+
+Each phase lands green (`cargo test --workspace`, clippy warning-free,
+nightly fmt) and is a natural commit/PR boundary. Spec §7 test numbers in
+parentheses. Modules swap one at a time, so satkit and the new stack
+coexist inside the crate until P4 — that is deliberate.
+
+- **P0 — foundations.** New deps; `build.rs` gains the anise-format assets
+  (keeps satkit's); `data.rs` grows the `Context` beside the satkit seeds;
+  one inline sanity test (Luna geocentric via Almanac vs satkit, loose
+  bound). Public API untouched.
+- **P1 — time + ephemeris.** Re-exports flip to hifitime (**the breaking
+  moment** for the harness); `ephemeris` moves to anise. Harness ephemeris
+  comparisons re-tolerance per §7.
+- **P2 — frames + geodesy + kepler.** `frametransform` → `almanac.rotate`
+  (ITRF93 + TEME-legacy); `itrfcoord` → in-crate WGS84; `kepler` → anise
+  `Orbit` with the e ≥ 1 gate. Harness grows all three comparisons.
+- **P3 — TLE/SGP4.** `sgp4` crate backend, `&mut` dropped, decay check
+  reinstated. Harness: satkit-vs-crate SGP4 over a ±1-week grid.
+- **P4 — propagator core + facade; satkit exits the crate.** Spec build
+  order §8 steps 1–5 reordered for this repo's needs: `units` (12) →
+  registries/traits → Cowell on DOP853 (1, 2, 7) → third-body Battin →
+  Schwarzschild (11) → EGM2008 loader + Pines + solid tides (13, 14) →
+  `Trajectory` dense layer → facade. (SRP/shadow — spec step 6 — moves
+  after: the facade doesn't need it, and satkit's exit shouldn't wait on
+  the riskiest force model.) Then: satkit leaves `Cargo.toml`, the seeds
+  leave `data.rs`, satkit-format assets move to `tests/build.rs`, the
+  harness seeds satkit itself (§7). Gate: facade-vs-`orbitprop` bounds
+  (§7), plus a two-body-config cross-check at near-machine agreement.
+- **P5 — SRP + conical shadow + events; albedo/IR** (8; spec §4.4–4.6).
+  Bond-albedo table lands here.
+- **P6 — drag** (15): `SW-All.csv` download + parse, observed-only policy,
+  tobari behind the `AtmosphereModel` registry, geodetic + co-rotation via
+  `rot_mat_dt`, altitude cutoff. Co-rotation A/B check per §7.15.
+- **P7 — KS + switching + segments** (3, 4, 5, 6, 9, 10, 16): KS
+  round-trip before any KS integration (spec §8.10), hysteresis + dwell,
+  SOI central-body switch with acceleration-continuity check, multi-body
+  genericity run (Earth/Mars/Jupiter/small body), long-arc ephemeris
+  cross-check with Schwarzschild on.
+- **P8 — polish.** Tighten harness tolerances to measured; profile the
+  ephemeris hot path (caching only if a profile demands — spec §9); prune
+  the transitional doc comments; update the crate-describing lines in
+  `.claude/` docs (`CLAUDE.md`, `architecture.md`, `testing.md`,
+  `simulation.md`'s two-initializers note, `build.md`'s "satkit-only twin")
+  — source wins over stale rules in the interim.
+
+P5–P7 are independently deferrable (spec §8); P0–P4 are the
+satkit-replacement critical path.
+
+## 7. Verification harness (`engine-astrodynamics-tests`)
+
+The harness's job inverts: today it proves the wrappers delegate faithfully
+(tolerance 1e-12); after, it proves independent implementations agree
+within honest physical bounds.
+
+- **Sequencing constraint (satkit is process-set-once):** while the parent
+  crate still seeds satkit (P0–P3), the harness MUST keep initializing via
+  `engine_astrodynamics::init()` — a second seeder in the same test process
+  panics `AlreadyInitialized`. Only at P4 (crate init no longer touches
+  satkit) does the harness gain its own embedded copies (`tests/build.rs`)
+  and seeder. The lib.rs warning about sharing a process moves into the
+  harness at that point.
+- The harness's satkit stays at the workspace's 0.18 line (matching
+  `engine`) — bumping to 0.20 as an additional reference is P8-optional.
+- Starting tolerances (tighten to measured once running; a miss means a
+  mapping/frame/unit bug until proven otherwise):
+
+| Comparison | Bound | Rationale |
+|---|---|---|
+| Ephemeris pos/vel | 1e-9 relative | same DE440 coefficients both sides (`de440s` ⊂ `.440`); expected agreement ~1e-13 — headroom catches body-mapping/unit errors |
+| `qgcrf2itrf` | 0.2″ rotation angle (1″ pre-1972) | ITRF93 BPC vs IERS-2010+CelesTrak EOP: different EOP sources/realizations; kernel's own historical claim is <3 µrad |
+| `qteme2gcrf` / `qteme2itrf` | 0.5″ | both equinox-based IAU-76/FK5-class chains |
+| geodetic, kepler | 1e-9 | same closed-form math + constants |
+| SGP4 | 10 m over ±1 week from epoch | both Vallado-reference-validated |
+| propagation facade | ~50 m over a 1-day LEO arc | EGM2008-vs-EGM96 + integrator differences; plus a matched two-body config at near-machine precision |
+
+- The spec's §7 battery (1–16) lives as reference-free unit tests inside
+  the crate itself (thresholds derived from the §0 target, recorded in the
+  test code per spec); the harness only holds cross-implementation
+  comparisons.
+
+## 8. Risks and mitigations
+
+- **differential-equations 0.x churn** (proven: 0.5→0.6 renamed the core
+  type): exact pin + all usage confined to `propagation/integrator.rs`.
+- **No post-solve interpolant** in d-e: crate-owned `Trajectory` (§5) —
+  also the spec-required design anyway. Validated against `t_eval` truth.
+- **tobari youth** (0.2.0, ~3 months old, single maintainer): exact pin;
+  it sits behind the `AtmosphereModel` registry so the blast radius is one
+  adapter. Fallback: in-crate port of the public-domain Brodowski C
+  reference with its vendor test cases (bounded, ~1.5 kloc). NRLMSISE-00
+  vendor cases run against whichever backend ships (spec §7.15).
+- **Annual NAIF rename** of the 1962 combined BPC: pinned const +
+  documented bump; staleness degrades only the predict tail, never
+  breaks existing past scenes older than the kernel's last datum.
+- **ICGEM hash-URL permanence unverified**: cached-once in `OUT_DIR`
+  (existing refresh workflow); if it moves, re-locate via the
+  `icgem.gfz.de` model listing — build-time-only exposure. (NGA's official
+  mirror sits behind a WAF that 403s non-browser clients — unusable for
+  builds.)
+- **Two nalgebra versions** (0.34/0.35): compile-time cost only; no shared
+  types cross the boundary. Watch d-e for a 0.35 bump.
+- **Facade performance** vs satkit `orbitprop` (the engine samples trails
+  per frame): measure at the P4 gate; spec §6/§9 sanctions third-body
+  caching only off a profile.
+- **`chrono` enters the tree** via sgp4 (mandatory dep, default-features
+  off): boundary-only (TLE epoch extraction, converted to `Epoch`
+  immediately); no chrono type in any signature.
+
+## 9. Decisions needed from the owner
+
+1. **DE440 span**: plan says `de440s.bsp` (1849–2150, 31 MiB) replacing the
+   98 MiB full-span `.440`. The old file was kept "for headroom" — confirm
+   1849–2150 is headroom enough for a past-scenes-only app (EOP-gated to
+   ≥1962 regardless).
+2. **`sgp4` crate as the SGP4 backend** — outside the named
+   hifitime/anise/differential-equations trio (none of which does SGP4,
+   verified). The alternative is porting SGP4 in-crate; not recommended.
+3. **NRLMSISE-00 backend**: `tobari` now (recommended; §8 risk) vs
+   in-crate C-reference port from the start. Also: is drag/SRP fidelity
+   actually wanted for the app's satellites (engine bodies carry no
+   area/mass today — the facade defaults them off), or is
+   propagator-completeness the goal? Affects P5/P6 priority only.
+4. **API shape**: free functions over a lazy embedded context (recommended,
+   keeps engine call sites mechanical) vs an explicit context object
+   threaded through every call.
+5. **Module renames** while breakage is free: `itrfcoord` → `geodetic`,
+   `frametransform` → `frames`? Cosmetic; default is keeping today's names.
+6. **Scope confirmation**: full spec through P7 (KS, switching, segments,
+   albedo/IR) — or stop at P4 facade parity + P5/P6 and defer
+   close-approach robustness until a scene needs it.
+
+## 10. Explicitly out of scope here
+
+- Any change to `engine`, `engine-macros`, or the root bin (their satkit
+  usage, `init_satkit`, `Instant`-based clock — all future work, to be
+  planned against the surface this refactor lands).
+- Publishing, Python bindings, lunar PA/ME frames via
+  `moon_pa_de440_200625.bpc` + `moon_fk_de440.epa` (natural follow-up: the
+  engine hand-rolls IAU lunar orientation today; anise could own it —
+  12.9 MiB kernel, deferred until the engine migration).
+- Saturn's rings, and anything in `backlog.md`.
