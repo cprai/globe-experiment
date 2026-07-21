@@ -155,6 +155,7 @@ mod tests {
         let units = CanonicalUnits::new(mu, 6.678e6);
         let model = DynamicsModel {
             units,
+            center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
                 field: Box::new(PointMass {
                     mu_m3_s2: mu,
@@ -216,6 +217,7 @@ mod tests {
         let units = CanonicalUnits::new(mu, 6.678e6);
         let model = DynamicsModel {
             units,
+            center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
                 field: Box::new(PointMass {
                     mu_m3_s2: mu,

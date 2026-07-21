@@ -221,6 +221,7 @@ pub fn propagate(
     };
     let model = DynamicsModel {
         units,
+        center: crate::ephemeris::Body::Terra,
         central: CentralGravity {
             field: forces::harmonics::field_for(
                 &central,

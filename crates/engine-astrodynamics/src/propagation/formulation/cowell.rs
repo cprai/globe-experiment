@@ -64,6 +64,7 @@ mod tests {
         let units = CanonicalUnits::new(mu_m3_s2, du_m);
         DynamicsModel {
             units,
+            center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
                 field: Box::new(PointMass {
                     mu_m3_s2,
@@ -214,6 +215,7 @@ mod tests {
         let advance = |with_relativity: bool| {
             let mut model = DynamicsModel {
                 units,
+                center: crate::ephemeris::Body::Terra,
                 central: CentralGravity {
                     field: Box::new(PointMass {
                         mu_m3_s2: MU_SUN_M3_S2,

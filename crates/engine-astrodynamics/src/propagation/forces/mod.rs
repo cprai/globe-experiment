@@ -31,18 +31,30 @@ use central::CentralGravity;
 pub(crate) struct EvalContext {
     pub units: CanonicalUnits,
     pub epoch: Epoch,
-    sun_geocentric_m: OnceCell<Result<DVec3, String>>,
-    moon_geocentric_m: OnceCell<Result<DVec3, String>>,
+    /// The segment's central body: the observer of every ephemeris lookup
+    /// below (spec §4.0 - no Earth assumptions in shared code).
+    pub central: crate::ephemeris::Body,
+    sun_relative_m: OnceCell<Result<DVec3, String>>,
+    moon_relative_m: OnceCell<Result<DVec3, String>>,
     earth_rotation: OnceCell<Result<(DQuat, DVec3), String>>,
 }
 
 impl EvalContext {
     pub(crate) fn new(units: CanonicalUnits, epoch: Epoch) -> Self {
+        Self::about(units, epoch, crate::ephemeris::Body::Terra)
+    }
+
+    pub(crate) fn about(
+        units: CanonicalUnits,
+        epoch: Epoch,
+        central: crate::ephemeris::Body,
+    ) -> Self {
         Self {
             units,
             epoch,
-            sun_geocentric_m: OnceCell::new(),
-            moon_geocentric_m: OnceCell::new(),
+            central,
+            sun_relative_m: OnceCell::new(),
+            moon_relative_m: OnceCell::new(),
             earth_rotation: OnceCell::new(),
         }
     }
@@ -78,15 +90,18 @@ impl EvalContext {
             .clone()
     }
 
-    /// Geocentric position of `body`, meters - cached for Sol/Luna.
+    /// Position of `body` relative to the segment's central body, meters
+    /// - cached for Sol/Luna (the hot lookups).
     pub(crate) fn geocentric_pos_m(&self, body: crate::ephemeris::Body) -> Result<DVec3, String> {
         use crate::ephemeris::Body;
         let fetch = || {
-            crate::ephemeris::geocentric_pos(body, self.epoch).map_err(|error| error.to_string())
+            crate::ephemeris::relative_state(body, self.central, self.epoch)
+                .map(|(position, _)| position)
+                .map_err(|error| error.to_string())
         };
         match body {
-            Body::Sol => self.sun_geocentric_m.get_or_init(fetch).clone(),
-            Body::Luna => self.moon_geocentric_m.get_or_init(fetch).clone(),
+            Body::Sol => self.sun_relative_m.get_or_init(fetch).clone(),
+            Body::Luna => self.moon_relative_m.get_or_init(fetch).clone(),
             _ => fetch(),
         }
     }
@@ -107,6 +122,9 @@ pub(crate) trait ForceModel {
 /// field, and the enabled perturbations.
 pub(crate) struct DynamicsModel {
     pub units: CanonicalUnits,
+    /// The ephemeris identity of the central body - the observer of every
+    /// third-body/SRP/tide lookup (spec §4.0).
+    pub center: crate::ephemeris::Body,
     pub central: CentralGravity,
     pub perturbations: Vec<Box<dyn ForceModel>>,
 }
@@ -118,7 +136,7 @@ impl DynamicsModel {
         r_can: DVec3,
         v_can: DVec3,
     ) -> Result<DVec3, String> {
-        let ctx = EvalContext::new(self.units, epoch);
+        let ctx = EvalContext::about(self.units, epoch, self.center);
         let mut total = self.central.acceleration_can(&ctx, r_can, v_can)?;
         for force in &self.perturbations {
             total += force.acceleration_can(&ctx, r_can, v_can)?;

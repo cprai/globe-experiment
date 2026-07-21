@@ -1,6 +1,21 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: P0–P6 landed (2026-07-21). P6: NRLMSISE-00 drag via the pinned
+**Status: P0–P7 landed (2026-07-21). P7: full KS regularization
+(10-component state, Stiefel-Scheifele sign convention, machine-precision
+round trip proven FIRST per spec §8.10; KS beats Cowell's step count >2x
+at e = 0.95); hysteresis formulation switching with dwell + telemetry
+(§7.5 flyby-three-ways and §7.6 no-chatter pass); ephemeris generalized to
+arbitrary observers (`relative_state`, `Body::Terra`) and the force
+context to any central body; §7.9 physical-acceleration continuity across
+an Earth<->Sun re-expression at machine precision; §7.16 multi-body
+genericity (Earth harmonics / Mars / Jupiter / small body, one code
+path); §7.10 Mercury tracks the ephemeris over 30 days (reduced-mass
+central term mu_Sun + mu_Mercury required; Schwarzschild demonstrably
+matters). Upstream finding: the arrival event on the KS time component
+roots on the flawed interpolant and can undershoot tf by ~1% of a step -
+drivers must loop until PHYSICAL time arrives (epsilon-closed), never
+trust a single event. Next: P8 (polish + docs). Earlier: P0–P6 landed
+(2026-07-21). P6: NRLMSISE-00 drag via the pinned
 tobari crate, driven through its low-level numeric input (no arika types
 enter the crate); crate-owned space-weather table parsed from the embedded
 `SW-All.csv` (header-indexed columns, contiguity-checked, OBS/INT rows

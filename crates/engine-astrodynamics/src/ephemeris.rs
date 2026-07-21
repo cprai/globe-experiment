@@ -13,6 +13,10 @@ use crate::data::context;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Body {
     Sol,
+    /// Terra's center (NAIF 399) - the implicit observer of the
+    /// `geocentric_*` queries, listed so it can also be a TARGET (or a
+    /// third body of a non-Earth-centric propagation segment).
+    Terra,
     Mercury,
     Venus,
     /// The Terra-Luna barycenter (DE440's EMB point).
@@ -33,6 +37,7 @@ impl Body {
     fn naif_id(self) -> i32 {
         match self {
             Body::Sol => 10,
+            Body::Terra => 399,
             Body::Mercury => 199,
             Body::Venus => 299,
             Body::TerraLunaBarycenter => 3,
@@ -83,6 +88,13 @@ pub fn geocentric_state(body: Body, epoch: Epoch) -> Result<(DVec3, DVec3)> {
 /// ICRF (position m, velocity m/s) of `body` relative to the barycenter.
 pub fn barycentric_state(body: Body, epoch: Epoch) -> Result<(DVec3, DVec3)> {
     state(body, SSB_J2000, epoch)
+}
+
+/// J2000-orientation (position m, velocity m/s) of `target` relative to
+/// `observer` - the general form behind the geocentric/barycentric
+/// specializations, for propagation segments centered on other bodies.
+pub fn relative_state(target: Body, observer: Body, epoch: Epoch) -> Result<(DVec3, DVec3)> {
+    state(target, observer.frame(), epoch)
 }
 
 /// Geometric (no aberration) state of `body` seen from `observer`, converted
