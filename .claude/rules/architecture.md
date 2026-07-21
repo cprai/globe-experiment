@@ -21,8 +21,9 @@ engine-macros (proc-macro)                         nested member
                                                    (crates/engine/macros/),
                                                    the scene derives
 engine-astrodynamics (lib)                         standalone, no app consumers yet;
-                                                   own build.rs (satkit data only);
-                                                   the planned satkit replacement
+                                                   own build.rs (anise kernels,
+                                                   EGM2008, space weather);
+                                                   satkit fully replaced
 engine-astrodynamics-tests (lib)  -> engine-astrodynamics
                                                    nested verification member
                                                    (crates/engine-astrodynamics/tests/);
@@ -30,12 +31,14 @@ engine-astrodynamics-tests (lib)  -> engine-astrodynamics
                                                    only here (see testing.md)
 ```
 
-`engine-astrodynamics` is the future home of all orbit math: today it wraps
-satkit (ephemeris, SGP4/TLE, numerical propagation, frame transforms,
-Keplerian elements, geodetic conversion) behind a crate-owned, satkit-shaped
-module API covering every satkit call the engine makes, and `engine` keeps
-calling satkit directly until it is ready (the two crates' satkit
-initializers must never share a process — see `simulation.md`).
+`engine-astrodynamics` is the home of all orbit math, fully off satkit
+(hifitime time, anise ephemeris/frames/constants, the `sgp4` crate, and a
+crate-owned deep-space propagator per its `deep-space-propagator-spec-
+revised.md`: Cowell + KS on DOP853, EGM2008 + solid tides, third-body,
+SRP/shadow/albedo, NRLMSISE-00 drag, relativity). `engine` still calls
+satkit directly until its migration; the crates may share a process freely
+(no globals in the new stack — only the tests harness still seeds satkit,
+as the reference).
 
 The crate boundary enforces the dependency direction: engine never sees
 `scenes`, and the windowed app pulls in no offscreen/headless code (those

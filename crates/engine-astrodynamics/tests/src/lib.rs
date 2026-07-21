@@ -89,9 +89,10 @@ mod ephemeris {
 
     /// Relative tolerance against satkit. Both sides read the same DE440
     /// integration (anise `.bsp` vs satkit `.440` carry identical Chebyshev
-    /// coefficients), so agreement should be ~1e-13; the headroom exists to
-    /// catch body-mapping, unit, and time-scale bugs, not precision drift.
-    const EPHEMERIS_REL_TOL: f64 = 1e-9;
+    /// coefficients). Measured worst 2026-07-21: ~2.3e-12 (geocentric Sol,
+    /// 1980 - the Earth-split difference dominates); ~40x headroom catches
+    /// body-mapping, unit, and time-scale bugs, not precision drift.
+    const EPHEMERIS_REL_TOL: f64 = 1e-10;
 
     /// DE440's Earth/Moon mass ratio, from the ephemeris header (EMRAT).
     /// Used to assemble the true-barycentric Luna reference below.
@@ -246,10 +247,12 @@ mod frames {
     /// realizations; the kernel's own historical accuracy claim is
     /// < 3 urad, and in practice the realizations sit within ~0.2 arcsec
     /// of each other post-1972 (looser before, when EOP data thins out).
-    const GCRF_ITRF_ARCSEC: f64 = 0.2;
+    /// Measured worst 2026-07-21: 0.015 arcsec (1980 epoch).
+    const GCRF_ITRF_ARCSEC: f64 = 0.05;
     /// Width of the pinned pre-1972 divergence window (see the test doc).
     const GCRF_ITRF_PRE_1972_WINDOW_ARCSEC: f64 = 2.0;
     /// TEME: both sides are equinox-based IAU-76/FK5-class chains.
+    /// Measured worst 2026-07-21: 0.22 arcsec (1980 epoch).
     const TEME_ARCSEC: f64 = 0.5;
 
     fn epochs() -> [Epoch; 4] {
@@ -545,11 +548,14 @@ mod propagation {
     /// solid tides (satkit has none), different integrators at 1e-8
     /// tolerances, satkit's TT-as-TDB third-body positions, and different
     /// Earth-orientation realizations for the harmonic rotation.
-    const FULL_MODEL_TOL_M: f64 = 50.0;
+    /// Measured 2026-07-21: 1.63 m (1-day full model), 0.72 m (6 h
+    /// backward).
+    const FULL_MODEL_TOL_M: f64 = 10.0;
     /// Reduced configuration (degree 2, no third bodies, no relativity):
     /// nearly the same physics on both sides - J2-coefficient and
     /// orientation-realization differences remain.
-    const REDUCED_MODEL_TOL_M: f64 = 10.0;
+    /// Measured 2026-07-21: 1.09 m.
+    const REDUCED_MODEL_TOL_M: f64 = 5.0;
 
     /// An inclined circular-ish LEO, deliberately not equatorial so J2
     /// secular terms act on the node.

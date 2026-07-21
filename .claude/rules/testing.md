@@ -21,8 +21,10 @@
   today, other astrodynamics crates later. Reference deps go ONLY there
   (leaf crate, never reaches shipped builds). Covered by `cargo test
   --workspace`, or alone via `cargo test -p engine-astrodynamics-tests`.
-  Seed satkit data only through `engine_astrodynamics::init()`; keep its
-  sources under `src/` with no `main.rs` (the parent auto-discovers
+  Seed reference satkit only through the harness's own `Once`-guarded
+  `data::seed_satkit()` (the crate itself no longer touches satkit); keep
+  its sources under `src/` with no `main.rs`, and its build script at
+  `src/build.rs` via the manifest `build` key (the parent auto-discovers
   `tests/*.rs` and `tests/*/main.rs` as bogus integration-test targets).
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none

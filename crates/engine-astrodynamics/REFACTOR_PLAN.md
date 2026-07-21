@@ -1,6 +1,19 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: P0–P7 landed (2026-07-21). P7: full KS regularization
+**Status: COMPLETE — P0–P8 all landed (2026-07-21). P8: harness bounds
+tightened to measured (ephemeris 1e-10 vs ~2.3e-12 worst; GCRF-ITRF 0.05"
+vs 0.015" measured; propagation 10 m/5 m vs ~1.6 m/1.1 m measured; dated
+comments at each constant); the five `.claude` docs updated for the
+post-satkit crate (CLAUDE.md, architecture.md, testing.md, simulation.md's
+two-initializer note now scoped to the tests harness, build.md's asset
+tables). Hot-path profile conclusion (spec §9: caching only off a
+profile): warm `propagate` ~75 ms vs satkit ~0.5 ms, dominated by anise
+per-evaluation `translate`/`rotate` frame resolution (3 calls/derivative);
+`interp_batch` — the engine's actual per-frame path — is FASTER than
+satkit (26 us vs 31 us). Decision: no caching now; revisit with a real
+profile when the engine migration makes propagate cost user-visible
+(per-step Chebyshev caching of third-body states is the anticipated
+remedy, spec §6). Earlier: P7 landed (2026-07-21). P7: full KS regularization
 (10-component state, Stiefel-Scheifele sign convention, machine-precision
 round trip proven FIRST per spec §8.10; KS beats Cowell's step count >2x
 at e = 0.95); hysteresis formulation switching with dwell + telemetry

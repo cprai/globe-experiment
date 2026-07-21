@@ -38,9 +38,11 @@ CIO locator), and the EGM96 gravity model from embedded bytes, once per
    on every propagation; a late seed fails with `AlreadyInitialized`, so it
    is seeded unconditionally.
 
-`engine-astrodynamics::init` seeds the same set-once stores from its own
-embedded copies — the two initializers must never run in one process
-(nothing links both crates today).
+`engine-astrodynamics` no longer uses satkit (its backend is hifitime +
+anise + differential-equations, with no process-global state), so its
+`init` may share a process with `init_satkit`. The set-once constraint
+lives on ONLY inside `engine-astrodynamics-tests`, whose own
+`data::seed_satkit` seeds reference satkit for comparisons.
 
 ## Ephemeris-driven bodies (celestial_sphere.rs)
 

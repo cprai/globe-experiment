@@ -42,10 +42,10 @@ Saturn's rings are not yet rendered (deferred).
 Four app crates: the `engine` lib (`crates/engine/src/`, also owns the
 offscreen presenter + the `headless` single-frame-PNG bin and the
 asset-embedding `build.rs`), `engine-macros` (the scene derives),
-`engine-astrodynamics` (standalone orbit-math lib — DE440 ephemeris,
-SGP4/TLE, numerical propagation, frame transforms, and geodesy over its own
-embedded data; the planned home of all orbit math and eventual satkit
-replacement, not yet consumed by the app), and the root `globe-experiment`
+`engine-astrodynamics` (standalone orbit-math lib, fully off satkit —
+hifitime/anise/sgp4-crate backends plus a crate-owned deep-space
+propagator (Cowell + KS, EGM2008, SRP/shadow, drag) over its own embedded
+data; the engine migrates onto it later, not yet consumed by the app), and the root `globe-experiment`
 bin (windowed app: `src/main.rs` + `src/scenes/`); plus the test-only
 `engine-astrodynamics-tests` member (see `testing.md`). See
 `architecture.md`. No Python-paneled scene ships right now; the engine's
