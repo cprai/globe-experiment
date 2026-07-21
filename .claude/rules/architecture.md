@@ -33,8 +33,8 @@ engine-astrodynamics-tests (lib)  -> engine-astrodynamics
 
 `engine-astrodynamics` is the home of all orbit math, fully off satkit
 (hifitime time, anise ephemeris/frames/constants, the `sgp4` crate, and a
-crate-owned deep-space propagator per its `deep-space-propagator-spec-
-revised.md`: Cowell + KS on DOP853, EGM2008 + solid tides, third-body,
+crate-owned deep-space propagator (see the crate's own
+`crates/engine-astrodynamics/.claude/CLAUDE.md` for the full record): Cowell + KS on DOP853, EGM2008 + solid tides, third-body,
 SRP/shadow/albedo, NRLMSISE-00 drag, relativity). `engine` still calls
 satkit directly until its migration; the crates may share a process freely
 (no globals in the new stack — only the tests harness still seeds satkit,
