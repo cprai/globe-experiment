@@ -1,6 +1,7 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: plan only — no code has changed. Open owner decisions in §9.**
+**Status: plan only — no code has changed. All §9 owner decisions were
+resolved 2026-07-21; §9 records the answers.**
 
 Companion spec: `deep-space-propagator-spec-revised.md` (Rev C) governs the
 propagator internals (formulations, force models, integrator policy,
@@ -76,7 +77,8 @@ delete-to-refresh, `cargo::rerun-if-changed` per file), new asset table:
 
 | Asset | Source | Size | Replaces |
 |---|---|---|---|
-| `de440s.bsp` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp` | 31 MiB | `linux_p1550p2650.440` (98 MiB) |
+| `de440s.bsp` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp` | 31 MiB | (with `de440.bsp`) `linux_p1550p2650.440` (98 MiB) |
+| `de440.bsp` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440.bsp` | 114 MiB | (with `de440s.bsp`) full 1550–2650 span |
 | `earth_1962_250826_2125_combined.bpc` | `https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/…` | 30 MiB | `EOP-All.csv` + `tab5.2a/b/d.txt` |
 | `pck11.pca` | `http://public-data.nyxspace.com/anise/v0.10/pck11.pca` | 38 KiB | (new — body constants) |
 | EGM2008, packed | ICGEM `https://icgem.gfz.de/getmodel/gfc/…/EGM2008.gfc`, truncated | ~1 MiB embedded | `EGM96.gfc` |
@@ -87,9 +89,13 @@ Notes, all verified:
 - **`de440s.bsp` carries the exact same 14 segments as the 114 MiB full
   `de440.bsp`** (barycenters 1–9, Sun 10, Mercury 199, Venus 299, Moon 301,
   Earth 399 — outer planets exist only as system barycenters, same as the
-  `.440` satkit reads today), span 1849–2150. Scenes are EOP-gated to
-  1962→build date, so the short file loses nothing and saves 66 MiB of
-  download + embed. §9-Q1 confirms the span choice.
+  `.440` satkit reads today), span 1849–2150. **Owner decision (§9-Q1):
+  embed BOTH files** and select by epoch at query time in the context —
+  within 1849–2150 the two are byte-identical (de440s is an excerpt of
+  de440), so selection is pure coverage: `de440s` serves the overlap, full
+  `de440` (1550–2650) serves everything outside it — headroom for the
+  future deep-space scenes committed in §9-Q6. Scenes stay EOP-gated to
+  1962→build date regardless; the wide span is for non-scene propagation.
 - **`earth_latest_high_prec.bpc` starts at 2000-01-01 — it cannot serve
   this app.** The combined kernel spans 1962→2125 (historical accuracy
   <3 µrad ≈ 0.6″; low-accuracy predict tail past its last datum) and is the
@@ -125,7 +131,9 @@ Notes, all verified:
   shipped crate (P4) — the harness still embeds and seeds them for its
   reference side. Until P4 they stay in the parent `build.rs` beside the
   new assets (both stacks coexist; ~160 MiB OUT_DIR peak, transient).
-- Net shipped-crate embed size: ~62 MiB vs ~100 MiB today.
+- Net shipped-crate embed size: ~180 MiB vs ~100 MiB today — the
+  dual-ephemeris embed (§9-Q1) dominates; owner-accepted for the wider
+  usable span.
 
 ## 3. Initialization: from set-once globals to a lazy context
 
@@ -134,9 +142,11 @@ API and the process-exclusivity rule. anise needs none of that.
 
 - `data.rs` becomes the embed site plus a crate-internal
   `static CONTEXT: LazyLock<Context>` where `Context` holds the composed
-  `Almanac` (SPK + BPC + PCA, built via the `from_static`/`try_from_bytes`
-  parsers over `Align8` statics) and the unpacked EGM2008 table; the space
-  weather table gets its own `LazyLock` (only drag touches it).
+  `Almanac` (both SPKs + BPC + PCA, built via the
+  `from_static`/`try_from_bytes` parsers over `Align8` statics — with the
+  §9-Q1 epoch-based de440/de440s selection at the query boundary) and the
+  unpacked EGM2008 table; the space weather table gets its own `LazyLock`
+  (only drag touches it).
 - Query modules keep their **free-function API** (recommended, §9-Q4):
   call sites stay `ephemeris::geocentric_pos(body, epoch)`-shaped, which
   keeps the eventual engine migration mechanical. Functions reach the
@@ -224,6 +234,13 @@ made:
   canonical units; Cowell only (LEO never trips the §3a triggers).
 - **Switch telemetry** (spec §3a "log every switch"): recorded on the
   `Trajectory` as segment boundaries with cause — no logging dep.
+- **Spacecraft params** (owner, §9-Q3b): nullable end to end — a scene
+  defines a `SpacecraftModel` per body at creation, or passes `None` and
+  gets today's parameter-less behavior (SRP/drag/albedo skipped). Keep
+  spec §4.3's direction-taking `fn area(&self, direction) -> f64`
+  signature even though the cannonball ignores the argument: the stated
+  future is a wgpu-computed projected-area model for SRP/drag/albedo,
+  which slots in behind exactly that interface.
 
 ## 6. Phases and gates
 
@@ -240,8 +257,10 @@ coexist inside the crate until P4 — that is deliberate.
   moment** for the harness); `ephemeris` moves to anise. Harness ephemeris
   comparisons re-tolerance per §7.
 - **P2 — frames + geodesy + kepler.** `frametransform` → `almanac.rotate`
-  (ITRF93 + TEME-legacy); `itrfcoord` → in-crate WGS84; `kepler` → anise
-  `Orbit` with the e ≥ 1 gate. Harness grows all three comparisons.
+  (ITRF93 + TEME-legacy), renamed `frames`; `itrfcoord` → in-crate WGS84,
+  renamed `geodetic` (§9-Q5 — renames land here, while each module is
+  being rewritten anyway); `kepler` → anise `Orbit` with the e ≥ 1 gate.
+  Harness grows all three comparisons.
 - **P3 — TLE/SGP4.** `sgp4` crate backend, `&mut` dropped, decay check
   reinstated. Harness: satkit-vs-crate SGP4 over a ±1-week grid.
 - **P4 — propagator core + facade; satkit exits the crate.** Spec build
@@ -271,8 +290,9 @@ coexist inside the crate until P4 — that is deliberate.
   `simulation.md`'s two-initializers note, `build.md`'s "satkit-only twin")
   — source wins over stale rules in the interim.
 
-P5–P7 are independently deferrable (spec §8); P0–P4 are the
-satkit-replacement critical path.
+P0–P4 are the satkit-replacement critical path. P5–P7 remain natural
+pause points, but they are committed work, not optional: the owner chose
+the full spec through P7 (§9-Q6) — deep-space scenes are planned.
 
 ## 7. Verification harness (`engine-astrodynamics-tests`)
 
@@ -287,8 +307,10 @@ within honest physical bounds.
   satkit) does the harness gain its own embedded copies (`tests/build.rs`)
   and seeder. The lib.rs warning about sharing a process moves into the
   harness at that point.
-- The harness's satkit stays at the workspace's 0.18 line (matching
-  `engine`) — bumping to 0.20 as an additional reference is P8-optional.
+- The harness's satkit starts at the workspace's 0.18 line (matching
+  `engine`); the owner (2026-07-21) sanctioned bumping it (e.g. to 0.20)
+  whenever a newer reference helps — the harness is a leaf, so the bump
+  never touches the engine's own satkit.
 - Starting tolerances (tighten to measured once running; a miss means a
   mapping/frame/unit bug until proven otherwise):
 
@@ -333,29 +355,39 @@ within honest physical bounds.
 - **`chrono` enters the tree** via sgp4 (mandatory dep, default-features
   off): boundary-only (TLE epoch extraction, converted to `Epoch`
   immediately); no chrono type in any signature.
+- **Stale `SW-All.csv`** (downloaded once, cached in `OUT_DIR`): under the
+  observed-only policy, drag at an epoch past the cached file's last
+  observed datum fails loudly rather than silently extrapolating. Owner-
+  accepted (2026-07-21) — delete-to-refresh is the remedy for now; revisit
+  (e.g. an age check in `build.rs`) only if a scene actually trips it.
 
-## 9. Decisions needed from the owner
+## 9. Owner decisions — resolved 2026-07-21
 
-1. **DE440 span**: plan says `de440s.bsp` (1849–2150, 31 MiB) replacing the
-   98 MiB full-span `.440`. The old file was kept "for headroom" — confirm
-   1849–2150 is headroom enough for a past-scenes-only app (EOP-gated to
-   ≥1962 regardless).
-2. **`sgp4` crate as the SGP4 backend** — outside the named
-   hifitime/anise/differential-equations trio (none of which does SGP4,
-   verified). The alternative is porting SGP4 in-crate; not recommended.
-3. **NRLMSISE-00 backend**: `tobari` now (recommended; §8 risk) vs
-   in-crate C-reference port from the start. Also: is drag/SRP fidelity
-   actually wanted for the app's satellites (engine bodies carry no
-   area/mass today — the facade defaults them off), or is
-   propagator-completeness the goal? Affects P5/P6 priority only.
-4. **API shape**: free functions over a lazy embedded context (recommended,
-   keeps engine call sites mechanical) vs an explicit context object
-   threaded through every call.
-5. **Module renames** while breakage is free: `itrfcoord` → `geodetic`,
-   `frametransform` → `frames`? Cosmetic; default is keeping today's names.
-6. **Scope confirmation**: full spec through P7 (KS, switching, segments,
-   albedo/IR) — or stop at P4 facade parity + P5/P6 and defer
-   close-approach robustness until a scene needs it.
+1. **DE440 span → embed BOTH `de440.bsp` and `de440s.bsp`**, selecting by
+   epoch so every date gets the best available coverage. The two are
+   byte-identical inside 1849–2150 (de440s is an excerpt), so the rule is
+   pure coverage: `de440s` in the overlap, full `de440` (1550–2650)
+   outside it. §2 table and embed-size note updated.
+2. **`sgp4` crate confirmed** as the SGP4 backend (no in-crate port).
+3. **`tobari` confirmed** for NRLMSISE-00; the in-crate port of the
+   public-domain C reference stays the documented fallback (§8).
+   **Spacecraft params are nullable and scene-defined**: each scene may
+   supply a `SpacecraftModel` per body at creation or leave it `None`
+   (SRP/drag/albedo skipped). Recorded future direction: a wgpu-computed
+   projected-area model will replace the cannonball area for
+   SRP/drag/albedo — the §5 facade and spec §4.3's direction-taking
+   `area()` signature are shaped for it.
+4. **Free functions confirmed** (over the lazy embedded context, §3).
+5. **Renames sanctioned** — rename whatever makes sense while breakage is
+   free: `itrfcoord` → `geodetic`, `frametransform` → `frames` (landing in
+   P2); apply the same judgment to any other name the rewrite touches.
+6. **Full spec through P7 confirmed** — deep-space scenes are planned, so
+   KS, switching, segments, SOI handling, and albedo/IR all ship.
+
+Also decided in the same round: a stale `SW-All.csv` is acceptable for now
+(§8); the harness may bump its reference satkit past 0.18 whenever useful
+(§7); segment/trajectory persistence (the spec's §9 serialization
+question) stays out of scope until a use case appears (§10).
 
 ## 10. Explicitly out of scope here
 
@@ -366,4 +398,7 @@ within honest physical bounds.
   `moon_pa_de440_200625.bpc` + `moon_fk_de440.epa` (natural follow-up: the
   engine hand-rolls IAU lunar orientation today; anise could own it —
   12.9 MiB kernel, deferred until the engine migration).
+- Trajectory/segment persistence (spec §9's serialization-format
+  question): nothing in the app stores propagated trajectories; deferred
+  until a use case appears (owner, 2026-07-21).
 - Saturn's rings, and anything in `backlog.md`.
