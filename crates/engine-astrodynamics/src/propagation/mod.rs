@@ -26,7 +26,9 @@ use crate::data::context;
 use crate::ephemeris::Body;
 use bodies::CentralBody;
 use forces::albedo_ir::{PlanetaryRadiation, bond_albedo};
+use forces::atmosphere::atmosphere_for;
 use forces::central::CentralGravity;
+use forces::drag::AtmosphericDrag;
 use forces::relativity::Schwarzschild;
 use forces::srp::{Occulter, SolarRadiationPressure};
 use forces::third_body::ThirdBodyGravity;
@@ -145,8 +147,11 @@ impl Propagation {
 
 /// Numerically propagates `state` from `begin` to `end` (either
 /// direction): EGM2008 + solid tides + optional Sun/Moon third-body +
-/// relativity; adaptive dense-output integrator. The returned
-/// [`Propagation`] carries the end state and interpolation over the span.
+/// relativity, plus - with a [`SpacecraftModel`] - SRP behind the conical
+/// shadow, planetary albedo/IR, and NRLMSISE-00 drag (observed space
+/// weather only; epochs past the embedded snapshot's observed span fail
+/// loudly). Adaptive dense-output integrator. The returned [`Propagation`]
+/// carries the end state and interpolation over the span.
 pub fn propagate(
     state: &OrbitState,
     begin: Epoch,
@@ -205,6 +210,10 @@ pub fn propagate(
                 spacecraft,
                 body_radius_m: central.reference_radius_m,
                 bond_albedo: bond_albedo(central.naif_id).unwrap_or(0.3),
+            }));
+            perturbations.push(Box::new(AtmosphericDrag {
+                spacecraft,
+                atmosphere: atmosphere_for(&central),
             }));
             Some(srp)
         }
@@ -461,10 +470,9 @@ mod tests {
         assert_eq!(end, state);
     }
 
-    /// A spacecraft model activates SRP: over a day, the arc must be
-    /// displaced by a physically plausible amount versus the
-    /// parameter-less run (order 1e-7 m/s^2 acting over ~86400 s, minus
-    /// eclipse and cancellation).
+    /// A spacecraft model activates the non-gravitational forces (SRP +
+    /// albedo/IR + drag): over a day at 400 km they must displace the arc
+    /// by a physically plausible amount versus the parameter-less run.
     #[test]
     fn srp_displaces_a_day_long_arc() {
         init();
@@ -489,6 +497,50 @@ mod tests {
         assert!(
             (10.0..100_000.0).contains(&displacement),
             "SRP displaced the day arc by {displacement:.1} m"
+        );
+    }
+
+    /// Spec §7.15: drag decays a low orbit - six hours at 300 km must
+    /// lower the osculating semi-major axis measurably versus the
+    /// parameter-less run (the other non-gravitational terms move it by
+    /// meters at most; the shrink is drag's signature).
+    #[test]
+    fn drag_decays_a_low_orbit() {
+        init();
+        let radius = 6_378_137.0 + 300e3;
+        let speed = (MU_M3_S2 / radius).sqrt();
+        let inclination = 51.6_f64.to_radians();
+        let state = OrbitState {
+            pos_gcrf_m: DVec3::new(radius, 0.0, 0.0),
+            vel_gcrf_m_s: DVec3::new(0.0, speed * inclination.cos(), speed * inclination.sin()),
+        };
+        let t0 = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
+        let t1 = t0 + Duration::from_seconds(6.0 * 3600.0);
+        let semi_major = |state: &OrbitState| {
+            crate::kepler::Kepler::from_pv(state.pos_gcrf_m, state.vel_gcrf_m_s)
+                .expect("bound orbit")
+                .semi_major_axis_m
+        };
+
+        let without = propagate(&state, t0, t1, &Settings::default())
+            .expect("drag-free propagation")
+            .state_end();
+        let with_spacecraft = Settings {
+            spacecraft: Some(SpacecraftModel {
+                mass_kg: 157.0,
+                radius_m: 1.0,
+                c_r: 1.3,
+                c_d: 2.2,
+            }),
+            ..Settings::default()
+        };
+        let with = propagate(&state, t0, t1, &with_spacecraft)
+            .expect("dragged propagation")
+            .state_end();
+        let shrink = semi_major(&without) - semi_major(&with);
+        assert!(
+            (50.0..20_000.0).contains(&shrink),
+            "drag shrank the semi-major axis by {shrink:.1} m over 6 h"
         );
     }
 

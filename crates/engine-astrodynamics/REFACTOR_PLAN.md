@@ -1,6 +1,20 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: P0–P5 landed (2026-07-21). P5: SRP with conical-penumbra shadow
+**Status: P0–P6 landed (2026-07-21). P6: NRLMSISE-00 drag via the pinned
+tobari crate, driven through its low-level numeric input (no arika types
+enter the crate); crate-owned space-weather table parsed from the embedded
+`SW-All.csv` (header-indexed columns, contiguity-checked, OBS/INT rows
+only - the first PRD row ends the usable span and later epochs FAIL LOUDLY
+per the observed-only policy); previous-day F10.7 + centered 81-day mean +
+7-element 3-hourly Ap history per the model's conventions; geodetic inputs
+via the crate's own WGS84; co-rotation `v_rel = v - omega x r` with omega
+from the skew of `Rdot^T R` (the same BPC-driven rotation the harmonic
+field uses, shared once per evaluation through the EvalContext); 1000 km
+ceiling skips the term entirely. AtmosphereModel registry: vacuum default,
+Earth -> NRLMSISE-00. Verified: |omega| = sidereal rate about +Z,
+retro/prograde drag asymmetry ~1.29, solar max/min density contrast > 3x,
+6 h at 300 km shrinks the semi-major axis in the predicted envelope.
+Next: P7 (KS + switching + segments). Earlier: P0–P5 landed (2026-07-21). P5: SRP with conical-penumbra shadow
 (spec §4.4/4.5; spherical occulters, oblateness deferred as documented),
 albedo + thermal IR single-disk model with the sanctioned in-crate Bond
 albedo table (§4.6), and shadow-boundary event detection - two separate

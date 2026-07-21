@@ -52,6 +52,32 @@ pub(crate) trait GravityField {
     }
 }
 
+/// A body's neutral atmosphere (spec §4.7): returns mass density at a
+/// BODY-FIXED position, or `None` where the model does not apply (above
+/// its validity ceiling, or a body with no registered model) - the drag
+/// term is then SKIPPED entirely, never evaluated and multiplied by zero.
+pub(crate) trait AtmosphereModel {
+    fn density_kg_m3(
+        &self,
+        body_fixed_m: glam::DVec3,
+        epoch: hifitime::Epoch,
+    ) -> Result<Option<f64>, String>;
+}
+
+/// The universal atmosphere default: vacuum. Mars/Venus/Titan models are
+/// registry entries away (spec §4.7), no changes to the drag force.
+pub(crate) struct Vacuum;
+
+impl AtmosphereModel for Vacuum {
+    fn density_kg_m3(
+        &self,
+        _body_fixed_m: glam::DVec3,
+        _epoch: hifitime::Epoch,
+    ) -> Result<Option<f64>, String> {
+        Ok(None)
+    }
+}
+
 /// The universal default: `-mu r / |r|^3` (spec §4.1). Sufficient for
 /// every body without a registered harmonic model.
 pub(crate) struct PointMass {

@@ -45,6 +45,12 @@ static PCK11: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pck11.pca"));
 pub(crate) static EGM2008_PACKED: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/egm2008_n360.le64"));
 
+/// CelesTrak `SW-All.csv` space weather (F10.7, Ap, observed/predicted
+/// flags), parsed lazily by the drag model's space-weather table - only
+/// drag touches it.
+pub(crate) static SPACE_WEATHER_CSV: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/SW-All.csv"));
+
 /// The crate-internal anise query context.
 pub(crate) struct Context {
     pub(crate) almanac: Almanac,

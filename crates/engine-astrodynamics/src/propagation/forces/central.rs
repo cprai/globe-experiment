@@ -15,17 +15,6 @@ pub(crate) struct CentralGravity {
     pub field: Box<dyn GravityField>,
 }
 
-impl CentralGravity {
-    fn body_fixed_rotation(&self, epoch: hifitime::Epoch) -> Result<glam::DQuat, String> {
-        use anise::constants::frames::{EARTH_ITRF93, EARTH_J2000};
-        let dcm = crate::data::context()
-            .almanac
-            .rotate(EARTH_J2000, EARTH_ITRF93, epoch)
-            .map_err(|error| format!("body-fixed rotation at {epoch}: {error}"))?;
-        Ok(crate::frames::dquat(&dcm))
-    }
-}
-
 impl ForceModel for CentralGravity {
     fn acceleration_can(
         &self,
@@ -41,7 +30,7 @@ impl ForceModel for CentralGravity {
             ));
         }
         let a_m_s2 = if self.field.needs_body_fixed() {
-            let q = self.body_fixed_rotation(ctx.epoch)?;
+            let (q, _) = ctx.earth_rotation()?;
             if self.field.is_time_dependent() {
                 let sun_m = ctx.geocentric_pos_m(crate::ephemeris::Body::Sol)?;
                 let moon_m = ctx.geocentric_pos_m(crate::ephemeris::Body::Luna)?;

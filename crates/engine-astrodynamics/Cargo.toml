@@ -28,6 +28,12 @@ hifitime = "4.3"
 # - anise carries its own 0.35 internally); never in a public signature.
 nalgebra = "0.34"
 sgp4 = "2.4"
+# NRLMSISE-00 for Earth drag: pure-Rust clean-room, validated upstream
+# against pymsis fixtures + an Orekit oracle. Young crate - pinned exactly;
+# it sits behind the AtmosphereModel registry so the blast radius of any
+# problem is one adapter (the documented fallback is an in-crate port of
+# the public-domain Brodowski C reference).
+tobari = "=0.2.0"
 
 [build-dependencies]
 ureq = "3.3.0"

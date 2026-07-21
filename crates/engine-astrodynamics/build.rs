@@ -36,6 +36,15 @@ const EMBEDS: &[Embed] = &[
         url: "http://public-data.nyxspace.com/anise/v0.10/pck11.pca",
         limit: 1024 * 1024,
     },
+    // CelesTrak space weather (1957 -> present + predictions): F10.7 daily
+    // and centered 81-day mean, Ap daily and 3-hourly - every NRLMSISE-00
+    // input, plus the OBS/PRD flag for the observed-only policy. A stale
+    // snapshot makes drag FAIL LOUDLY at epochs past its last observed
+    // datum (owner-accepted); delete the cached file to refresh.
+    Embed {
+        url: "https://celestrak.org/SpaceData/SW-All.csv",
+        limit: 64 * 1024 * 1024,
+    },
 ];
 
 struct Embed {
