@@ -3,10 +3,16 @@
 //! Terms that do not apply in a regime are SKIPPED (not evaluated and
 //! multiplied by zero) - ephemeris queries are the hot path.
 
+pub(crate) mod albedo_ir;
 pub(crate) mod central;
 pub(crate) mod harmonics;
 pub(crate) mod relativity;
+pub(crate) mod shadow;
+pub(crate) mod srp;
 pub(crate) mod third_body;
+
+/// Shared physical constant for the radiation and relativity terms.
+pub(crate) const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
 use std::cell::OnceCell;
 

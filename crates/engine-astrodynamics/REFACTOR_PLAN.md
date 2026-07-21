@@ -1,6 +1,19 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: P0–P4 landed (2026-07-21) — satkit is OUT of the shipped crate
+**Status: P0–P5 landed (2026-07-21). P5: SRP with conical-penumbra shadow
+(spec §4.4/4.5; spherical occulters, oblateness deferred as documented),
+albedo + thermal IR single-disk model with the sanctioned in-crate Bond
+albedo table (§4.6), and shadow-boundary event detection - two separate
+signed edge functions per occulter family (a single product form is
+sign-blind when one integrator step swallows the whole ~10 s penumbra
+transit), stop-and-restart segment driver with a 20 ms plain-solve guard
+hop past each located root, and event states re-derived by mini-solve
+because the upstream interpolant's off-midpoint error would otherwise
+inject tens of meters at each restart. Boundary epochs are recorded on
+`Propagation::shadow_boundaries()` (telemetry). Restart accumulation is
+tolerance-proportional (measured: ~7 m over 16 restarts at 1e-8, mm at
+1e-11). `Settings.spacecraft = None` keeps the exact P4 path. Next: P6
+(drag). Earlier phases: P0–P4 landed (2026-07-21) — satkit is OUT of the shipped crate
 (survives only in the tests/ harness as the reference, seeded by the
 harness's own `data::seed_satkit`; its assets moved to `tests/src/build.rs`
 with `build = "src/build.rs"` dodging the parent's tests/*.rs

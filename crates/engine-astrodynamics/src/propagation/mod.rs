@@ -19,15 +19,20 @@ use anise::constants::frames::{EARTH_J2000, MOON_J2000, SUN_J2000};
 use glam::DVec3;
 use hifitime::Epoch;
 
+use hifitime::Duration;
+use nalgebra::SVector;
+
 use crate::data::context;
 use crate::ephemeris::Body;
 use bodies::CentralBody;
+use forces::albedo_ir::{PlanetaryRadiation, bond_albedo};
 use forces::central::CentralGravity;
 use forces::relativity::Schwarzschild;
+use forces::srp::{Occulter, SolarRadiationPressure};
 use forces::third_body::ThirdBodyGravity;
-use forces::{DynamicsModel, ForceModel};
-use formulation::cowell::{CowellSystem, pack};
-use integrator::{SolveConfig, solve_arc};
+use forces::{DynamicsModel, EvalContext, ForceModel};
+use formulation::cowell::{CowellSystem, pack, unpack};
+use integrator::{RawArc, SolveConfig, solve_arc, solve_arc_until};
 use trajectory::{Segment, Trajectory};
 use units::CanonicalUnits;
 
@@ -96,6 +101,7 @@ pub struct Propagation {
     end_state: OrbitState,
     begin: Epoch,
     end: Epoch,
+    shadow_boundaries: Vec<Epoch>,
 }
 
 impl Propagation {
@@ -109,6 +115,15 @@ impl Propagation {
 
     pub fn state_end(&self) -> OrbitState {
         self.end_state
+    }
+
+    /// Epochs where the arc crossed a shadow boundary (penumbra or umbra
+    /// edge of any configured occulter), in integration order - boundary
+    /// telemetry, recorded because the integrator stops and restarts at
+    /// each crossing rather than stepping through the discontinuity.
+    /// Empty without a spacecraft model (no SRP, no shadow).
+    pub fn shadow_boundaries(&self) -> &[Epoch] {
+        &self.shadow_boundaries
     }
 
     /// Interpolates the dense output at `epoch` (within the propagated span).
@@ -167,6 +182,34 @@ pub fn propagate(
     if settings.use_relativistic_correction {
         perturbations.push(Box::new(Schwarzschild::new(&units)));
     }
+    // Non-gravitational forces exist only with physical spacecraft
+    // parameters (owner decision §9-Q3b: nullable end to end).
+    let srp = match settings.spacecraft {
+        Some(spacecraft) => {
+            let moon = almanac.frame_info(MOON_J2000).map_err(err)?;
+            let srp = SolarRadiationPressure {
+                spacecraft,
+                // Central body always; Luna is a mandatory occulter
+                // candidate for Earth orbiters (spec §4.5).
+                occulters: vec![
+                    Occulter::Central {
+                        radius_m: central.reference_radius_m,
+                    },
+                    Occulter::Luna {
+                        radius_m: moon.mean_equatorial_radius_km().map_err(err)? * 1e3,
+                    },
+                ],
+            };
+            perturbations.push(Box::new(srp.clone()));
+            perturbations.push(Box::new(PlanetaryRadiation {
+                spacecraft,
+                body_radius_m: central.reference_radius_m,
+                bond_albedo: bond_albedo(central.naif_id).unwrap_or(0.3),
+            }));
+            Some(srp)
+        }
+        None => None,
+    };
     let model = DynamicsModel {
         units,
         central: CentralGravity {
@@ -194,7 +237,13 @@ pub fn propagate(
         atol: settings.abs_error,
         dense_points_per_step: 2,
     };
-    let arc = solve_arc(&system, 0.0, tf_can, y0, &config).map_err(PropagationError)?;
+    let (arc, shadow_boundaries) = match &srp {
+        Some(srp) => solve_with_shadow_events(&system, tf_can, y0, &config, srp, units, begin)?,
+        None => (
+            solve_arc(&system, 0.0, tf_can, y0, &config).map_err(PropagationError)?,
+            Vec::new(),
+        ),
+    };
 
     let trajectory = Trajectory::new(Segment::from_arc(begin, units, &arc));
     let (end_pos, end_vel) = trajectory.end_state(end >= begin);
@@ -206,7 +255,120 @@ pub fn propagate(
         },
         begin,
         end,
+        shadow_boundaries,
     })
+}
+
+/// The segment driver for shadowed arcs (spec §5): integrate until a
+/// shadow-boundary crossing, record it, restart exactly at the crossing
+/// state, and stitch the arcs - the integrator never steps through the
+/// SRP discontinuity's neighborhood unchecked.
+fn solve_with_shadow_events(
+    system: &CowellSystem,
+    tf_can: f64,
+    y0: SVector<f64, 6>,
+    config: &SolveConfig,
+    srp: &SolarRadiationPressure,
+    units: CanonicalUnits,
+    anchor: Epoch,
+) -> Result<(RawArc<6>, Vec<Epoch>)> {
+    // An ephemeris failure inside a boundary function reports "no
+    // boundary" - the dynamics hit the same failure on the same epoch and
+    // surface the real error through the solve itself.
+    let boundary = |t: f64, y: &SVector<f64, 6>, pick_inner: bool| {
+        let ctx = EvalContext::new(units, anchor + Duration::from_seconds(units.time_to_s(t)));
+        let (r_can, _) = unpack(y);
+        match srp.boundary_functions(&ctx, r_can) {
+            Ok((outer, inner)) => {
+                if pick_inner {
+                    inner
+                } else {
+                    outer
+                }
+            }
+            Err(_) => 1.0,
+        }
+    };
+    let outer = |t: f64, y: &SVector<f64, 6>| boundary(t, y, false);
+    let inner = |t: f64, y: &SVector<f64, 6>| boundary(t, y, true);
+    // The event solout is blind inside a solve's first step; keep restarts'
+    // opening step (~1 s) below the ~10 s LEO penumbra transit so the next
+    // edge cannot hide in it.
+    let restart_step_can = units.time_to_can(1.0).min(tf_can.abs() / 2.0);
+    // After stopping ON a root, the detector would re-trigger on it
+    // immediately; a short plain solve carries the state a guard interval
+    // past the crossing first (physically exact - it is an ordinary
+    // integration; 20 ms cannot hide a shadow edge, the narrowest real
+    // feature being the ~10 s penumbra transit).
+    let guard_can = units.time_to_can(0.02);
+
+    // LEO worst case is ~4 boundaries per 90-minute orbit; this cap only
+    // exists to turn pathological chatter into an error instead of a hang.
+    const MAX_BOUNDARIES: usize = 10_000;
+    let forward = tf_can >= 0.0;
+    let chronological_end = |arc: &RawArc<6>| {
+        if forward {
+            *arc.y.last().unwrap()
+        } else {
+            *arc.y.first().unwrap()
+        }
+    };
+    let mut t = 0.0;
+    let mut y = y0;
+    let mut first_step = None;
+    let mut arcs: Vec<RawArc<6>> = Vec::new();
+    let mut boundaries = Vec::new();
+    loop {
+        let outcome = solve_arc_until(system, t, tf_can, y, config, first_step, &outer, &inner)
+            .map_err(PropagationError)?;
+        // The crossing state sits at the arc's chronological event end:
+        // last knot going forward, first going backward (arcs ascend).
+        let crossing = chronological_end(&outcome.arc);
+        arcs.push(outcome.arc);
+        match outcome.event_t {
+            Some(event_t) => {
+                if boundaries.len() >= MAX_BOUNDARIES {
+                    return Err(PropagationError(format!(
+                        "shadow-boundary chatter: {MAX_BOUNDARIES} crossings in one arc"
+                    )));
+                }
+                boundaries.push(anchor + Duration::from_seconds(units.time_to_s(event_t)));
+                // Guard hop past the located root (see guard_can above).
+                let guard_end = if forward {
+                    (event_t + guard_can).min(tf_can)
+                } else {
+                    (event_t - guard_can).max(tf_can)
+                };
+                let hop = solve_arc(system, event_t, guard_end, crossing, config)
+                    .map_err(PropagationError)?;
+                y = chronological_end(&hop);
+                arcs.push(hop);
+                t = guard_end;
+                if t == tf_can {
+                    break;
+                }
+                first_step = Some(restart_step_can);
+            }
+            None => break,
+        }
+    }
+
+    // Stitch ascending: backward runs produced later-time arcs first.
+    if !forward {
+        arcs.reverse();
+    }
+    let mut merged = RawArc {
+        t: Vec::new(),
+        y: Vec::new(),
+        ydot: Vec::new(),
+    };
+    for (i, arc) in arcs.into_iter().enumerate() {
+        let skip = usize::from(i > 0); // junction knot duplicates the seam
+        merged.t.extend(arc.t.into_iter().skip(skip));
+        merged.y.extend(arc.y.into_iter().skip(skip));
+        merged.ydot.extend(arc.ydot.into_iter().skip(skip));
+    }
+    Ok((merged, boundaries))
 }
 
 fn err<E: std::fmt::Display>(error: E) -> PropagationError {
@@ -297,6 +459,147 @@ mod tests {
             .expect("zero-duration propagation")
             .state_end();
         assert_eq!(end, state);
+    }
+
+    /// A spacecraft model activates SRP: over a day, the arc must be
+    /// displaced by a physically plausible amount versus the
+    /// parameter-less run (order 1e-7 m/s^2 acting over ~86400 s, minus
+    /// eclipse and cancellation).
+    #[test]
+    fn srp_displaces_a_day_long_arc() {
+        init();
+        let (state, t0) = circular_leo();
+        let t1 = t0 + Duration::from_seconds(86_400.0);
+        let without = propagate(&state, t0, t1, &Settings::default())
+            .expect("parameter-less propagation")
+            .state_end();
+        let with_spacecraft = Settings {
+            spacecraft: Some(SpacecraftModel {
+                mass_kg: 157.0,
+                radius_m: 1.0,
+                c_r: 1.3,
+                c_d: 2.2,
+            }),
+            ..Settings::default()
+        };
+        let with = propagate(&state, t0, t1, &with_spacecraft)
+            .expect("spacecraft propagation")
+            .state_end();
+        let displacement = (with.pos_gcrf_m - without.pos_gcrf_m).length();
+        assert!(
+            (10.0..100_000.0).contains(&displacement),
+            "SRP displaced the day arc by {displacement:.1} m"
+        );
+    }
+
+    /// Shadow-boundary events: an orbit whose plane contains the Sun
+    /// direction eclipses every revolution - the driver must record ~4
+    /// boundaries per orbit (penumbra in/out, umbra in/out), each landing
+    /// on a root of the shadow-boundary function.
+    #[test]
+    fn eclipse_boundaries_are_detected_and_exact() {
+        init();
+        let t0 = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
+        let sun_dir = crate::ephemeris::geocentric_pos(Body::Sol, t0)
+            .expect("sun position")
+            .normalize();
+        let radius = 6_778_000.0;
+        let speed = (3.986_004_418e14_f64 / radius).sqrt();
+        let state = OrbitState {
+            pos_gcrf_m: sun_dir * radius,
+            vel_gcrf_m_s: sun_dir.cross(DVec3::Z).normalize() * speed,
+        };
+        let spacecraft = SpacecraftModel {
+            mass_kg: 157.0,
+            radius_m: 1.0,
+            c_r: 1.3,
+            c_d: 2.2,
+        };
+        let settings = Settings {
+            spacecraft: Some(spacecraft),
+            ..Settings::default()
+        };
+        let period = std::f64::consts::TAU * (radius.powi(3) / 3.986_004_418e14).sqrt();
+        let t1 = t0 + Duration::from_seconds(3.0 * period);
+        let result = propagate(&state, t0, t1, &settings).expect("eclipsing propagation");
+
+        let boundaries = result.shadow_boundaries();
+        assert!(
+            (8..=16).contains(&boundaries.len()),
+            "expected ~12 boundaries over 3 orbits, got {}",
+            boundaries.len()
+        );
+
+        // Rebuild the facade's shadow configuration and check every
+        // recorded epoch sits on a root of the boundary function.
+        let almanac = &context().almanac;
+        let earth = almanac.frame_info(EARTH_J2000).unwrap();
+        let moon = almanac.frame_info(MOON_J2000).unwrap();
+        let units = CanonicalUnits::new(
+            earth.mu_km3_s2().unwrap() * 1e9,
+            earth.mean_equatorial_radius_km().unwrap() * 1e3,
+        );
+        let srp = SolarRadiationPressure {
+            spacecraft,
+            occulters: vec![
+                Occulter::Central {
+                    radius_m: earth.mean_equatorial_radius_km().unwrap() * 1e3,
+                },
+                Occulter::Luna {
+                    radius_m: moon.mean_equatorial_radius_km().unwrap() * 1e3,
+                },
+            ],
+        };
+        for &epoch in boundaries {
+            let sample = result.interp(epoch).expect("state at boundary");
+            let ctx = EvalContext::new(units, epoch);
+            let (outer, inner) = srp
+                .boundary_functions(&ctx, units.length_to_can(sample.pos_gcrf_m))
+                .unwrap();
+            let nearest = outer.abs().min(inner.abs());
+            // The recorded epoch is root-found on the solver's
+            // interpolated path, which skews it by up to a few ms of true
+            // crossing time (~1e-3 rad/s separation rate x ms = ~1e-5
+            // rad) - physically negligible against the ~10 s penumbra.
+            assert!(
+                nearest < 2e-5,
+                "boundary at {epoch} is not a root: (outer, inner) = ({outer:.3e}, {inner:.3e})"
+            );
+        }
+    }
+
+    /// Backward spans stay first-class with the event machinery active.
+    /// Tight tolerances on purpose: every shadow boundary restarts the
+    /// integrator, and per-restart error scales with the tolerance (at the
+    /// default 1e-8 the ~16 restarts of this arc accumulate ~7 m; at 1e-11
+    /// they accumulate millimeters - the machinery converges).
+    #[test]
+    fn backward_span_round_trips_with_spacecraft() {
+        init();
+        let (state, t0) = circular_leo();
+        let settings = Settings {
+            abs_error: 1e-11,
+            rel_error: 1e-11,
+            spacecraft: Some(SpacecraftModel {
+                mass_kg: 157.0,
+                radius_m: 1.0,
+                c_r: 1.3,
+                c_d: 2.2,
+            }),
+            ..Settings::default()
+        };
+        let t_back = t0 - Duration::from_seconds(3.0 * 3600.0);
+        let back = propagate(&state, t0, t_back, &settings)
+            .expect("backward propagation")
+            .state_end();
+        let forward = propagate(&back, t_back, t0, &settings)
+            .expect("forward propagation")
+            .state_end();
+        assert!(
+            (forward.pos_gcrf_m - state.pos_gcrf_m).length() < 2.0,
+            "round trip drifted {} m",
+            (forward.pos_gcrf_m - state.pos_gcrf_m).length()
+        );
     }
 
     /// Backward spans are first-class: propagate back, then forward again,

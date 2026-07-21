@@ -155,3 +155,175 @@ fn derivatives_at<const N: usize, D: Dynamics<N>>(
         .map(|(&t, y)| dynamics.derivative(t, y))
         .collect()
 }
+
+/// Result of an event-terminated solve: the captured arc, plus the
+/// crossing time if a boundary stopped the integration before `tf`.
+pub(crate) struct EventOutcome<const N: usize> {
+    pub arc: RawArc<N>,
+    pub event_t: Option<f64>,
+}
+
+/// Bridges a plain boundary closure onto the solver's `Event` trait:
+/// terminal on the first sign change, either direction (the caller loops
+/// solve -> record -> restart per spec §5: detect, stop, restart - never
+/// integrate through a discontinuity).
+struct BoundaryAdapter<'a, const N: usize, F: Fn(f64, &SVector<f64, N>) -> f64> {
+    boundary: &'a F,
+}
+
+impl<const N: usize, F: Fn(f64, &SVector<f64, N>) -> f64> Event<f64, SVector<f64, N>>
+    for BoundaryAdapter<'_, N, F>
+{
+    fn config(&self) -> EventConfig {
+        EventConfig::default().terminal()
+    }
+
+    fn event(&self, t: f64, y: &SVector<f64, N>) -> f64 {
+        (self.boundary)(t, y)
+    }
+}
+
+/// Like [`solve_arc`], but stops at the first sign change of EITHER
+/// boundary function (evaluated on the TRUE time axis, both directions
+/// supported). Two separate functions are required by the shadow model -
+/// see `SolarRadiationPressure::boundary_functions`. When an event fires,
+/// the arc's final knot is exactly the crossing state.
+///
+/// `first_step` bounds the solver's opening step: the event solout cannot
+/// detect a crossing inside the very first step of a solve (its previous
+/// sample initializes there), so restart-heavy callers pass a step smaller
+/// than the narrowest feature between boundaries.
+#[allow(clippy::too_many_arguments)] // crate-internal solver plumbing
+pub(crate) fn solve_arc_until<const N: usize, D, F1, F2>(
+    dynamics: &D,
+    t0: f64,
+    tf: f64,
+    y0: SVector<f64, N>,
+    config: &SolveConfig,
+    first_step: Option<f64>,
+    outer: &F1,
+    inner: &F2,
+) -> Result<EventOutcome<N>, String>
+where
+    D: Dynamics<N>,
+    F1: Fn(f64, &SVector<f64, N>) -> f64,
+    F2: Fn(f64, &SVector<f64, N>) -> f64,
+{
+    if t0 == tf {
+        let ydot = dynamics.derivative(t0, &y0)?;
+        return Ok(EventOutcome {
+            arc: RawArc {
+                t: vec![t0],
+                y: vec![y0],
+                ydot: vec![ydot],
+            },
+            event_t: None,
+        });
+    }
+    if tf < t0 {
+        let reversed = TimeReversed {
+            inner: dynamics,
+            t0,
+        };
+        let reversed_outer = |tau: f64, y: &SVector<f64, N>| outer(t0 - tau, y);
+        let reversed_inner = |tau: f64, y: &SVector<f64, N>| inner(t0 - tau, y);
+        let mut outcome = solve_forward_until(
+            &reversed,
+            0.0,
+            t0 - tf,
+            y0,
+            config,
+            first_step,
+            &reversed_outer,
+            &reversed_inner,
+        )?;
+        for t in &mut outcome.arc.t {
+            *t = t0 - *t;
+        }
+        outcome.arc.t.reverse();
+        outcome.arc.y.reverse();
+        outcome.arc.ydot = derivatives_at(dynamics, &outcome.arc.t, &outcome.arc.y)?;
+        outcome.event_t = outcome.event_t.map(|tau| t0 - tau);
+        return Ok(outcome);
+    }
+    solve_forward_until(dynamics, t0, tf, y0, config, first_step, outer, inner)
+}
+
+#[allow(clippy::too_many_arguments)] // crate-internal, mirrored by the public wrapper above
+fn solve_forward_until<const N: usize, D, F1, F2>(
+    dynamics: &D,
+    t0: f64,
+    tf: f64,
+    y0: SVector<f64, N>,
+    config: &SolveConfig,
+    first_step: Option<f64>,
+    outer: &F1,
+    inner: &F2,
+) -> Result<EventOutcome<N>, String>
+where
+    D: Dynamics<N>,
+    F1: Fn(f64, &SVector<f64, N>) -> f64,
+    F2: Fn(f64, &SVector<f64, N>) -> f64,
+{
+    let adapter = Adapter {
+        dynamics,
+        failure: RefCell::new(None),
+    };
+    let outer_event = BoundaryAdapter { boundary: outer };
+    let inner_event = BoundaryAdapter { boundary: inner };
+    let mut method = ExplicitRungeKutta::dop853()
+        .rtol(config.rtol)
+        .atol(config.atol);
+    if let Some(h0) = first_step {
+        method = method.h0(h0);
+    }
+    let solution = IVP::ode(&adapter, t0, tf, y0)
+        .method(method)
+        .dense(config.dense_points_per_step)
+        .event(&outer_event)
+        .event(&inner_event)
+        .solve()
+        .map_err(|error| format!("DOP853: {error:?}"))?;
+    if let Some(failure) = adapter.failure.into_inner() {
+        return Err(failure);
+    }
+
+    let interrupted = matches!(solution.status, Status::Interrupted);
+    let (mut t, mut y) = (solution.t, solution.y);
+    let event_t = if interrupted {
+        // The dense solout ran FIRST on the terminating step, so interior
+        // knots past the crossing precede the appended event point: drop
+        // them and keep the event knot last.
+        let te = *t.last().unwrap();
+        let mut ye = *y.last().unwrap();
+        t.pop();
+        y.pop();
+        while t.last().is_some_and(|&knot| knot >= te) {
+            t.pop();
+            y.pop();
+        }
+        // The appended event state came from the solver's interpolant,
+        // whose off-midpoint error is the crate flaw documented on
+        // `dense_points_per_step` - tens of meters at loose tolerances.
+        // The caller RESTARTS from this state, so re-derive it properly:
+        // a plain mini-solve from the last trustworthy knot to te. (The
+        // event TIME keeps the interpolant's ~ms-level skew; boundary
+        // epochs are telemetry, not dynamics.)
+        if let (Some(&tp), Some(&yp)) = (t.last(), y.last())
+            && tp < te
+        {
+            let refined = solve_forward(dynamics, tp, te, yp, config)?;
+            ye = *refined.y.last().unwrap();
+        }
+        t.push(te);
+        y.push(ye);
+        Some(te)
+    } else {
+        None
+    };
+    let ydot = derivatives_at(dynamics, &t, &y)?;
+    Ok(EventOutcome {
+        arc: RawArc { t, y, ydot },
+        event_t,
+    })
+}

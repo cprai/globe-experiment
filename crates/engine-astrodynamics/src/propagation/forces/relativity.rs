@@ -6,10 +6,8 @@
 
 use glam::DVec3;
 
-use super::{EvalContext, ForceModel};
+use super::{EvalContext, ForceModel, SPEED_OF_LIGHT_M_S};
 use crate::propagation::units::CanonicalUnits;
-
-const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
 pub(crate) struct Schwarzschild {
     /// The speed of light in the segment's canonical velocity unit,
