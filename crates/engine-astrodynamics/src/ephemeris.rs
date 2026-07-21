@@ -1,9 +1,13 @@
-//! Ephemeris lookups for the DE440 solar-system bodies, delegating to
-//! satkit's `jplephem` behind a crate-owned API (glam vectors, project body
-//! naming). All queries require [`crate::init`] first.
+//! Ephemeris lookups for the DE440 solar-system bodies over the embedded
+//! anise kernels (glam vectors, project body naming). Queries parse the
+//! kernels lazily on first touch; [`crate::init`] merely front-loads that.
 
+use anise::constants::frames::{EARTH_J2000, SSB_J2000};
+use anise::frames::Frame;
 use glam::DVec3;
-use satkit::{Instant, SolarSystem};
+use hifitime::Epoch;
+
+use crate::data::context;
 
 /// Solar-system bodies resolvable through the DE440 ephemeris.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,24 +27,31 @@ pub enum Body {
 }
 
 impl Body {
-    fn to_satkit(self) -> SolarSystem {
+    /// NAIF id, same semantics as the satkit-era lookups: planet centers
+    /// for Mercury/Venus (199/299), system barycenters for Mars..Pluto
+    /// (4..9 - DE440 carries the outer planets only as barycenters).
+    fn naif_id(self) -> i32 {
         match self {
-            Body::Sol => SolarSystem::Sun,
-            Body::Mercury => SolarSystem::Mercury,
-            Body::Venus => SolarSystem::Venus,
-            Body::TerraLunaBarycenter => SolarSystem::EMB,
-            Body::Luna => SolarSystem::Moon,
-            Body::Mars => SolarSystem::Mars,
-            Body::Jupiter => SolarSystem::Jupiter,
-            Body::Saturn => SolarSystem::Saturn,
-            Body::Uranus => SolarSystem::Uranus,
-            Body::Neptune => SolarSystem::Neptune,
-            Body::Pluto => SolarSystem::Pluto,
+            Body::Sol => 10,
+            Body::Mercury => 199,
+            Body::Venus => 299,
+            Body::TerraLunaBarycenter => 3,
+            Body::Luna => 301,
+            Body::Mars => 4,
+            Body::Jupiter => 5,
+            Body::Saturn => 6,
+            Body::Uranus => 7,
+            Body::Neptune => 8,
+            Body::Pluto => 9,
         }
+    }
+
+    fn frame(self) -> Frame {
+        Frame::from_ephem_j2000(self.naif_id())
     }
 }
 
-/// Ephemeris lookup failure (time outside DE440 range, or unseeded data).
+/// Ephemeris lookup failure (time outside the embedded kernels' span).
 #[derive(Debug)]
 pub struct EphemerisError(String);
 
@@ -55,39 +66,38 @@ impl std::error::Error for EphemerisError {}
 pub type Result<T> = core::result::Result<T, EphemerisError>;
 
 /// GCRF position of `body` relative to Terra's center, meters.
-pub fn geocentric_pos(body: Body, time: &Instant) -> Result<DVec3> {
-    satkit::jplephem::geocentric_pos(body.to_satkit(), time)
-        .map(vec)
-        .map_err(err)
+pub fn geocentric_pos(body: Body, epoch: Epoch) -> Result<DVec3> {
+    state(body, EARTH_J2000, epoch).map(|(pos, _)| pos)
 }
 
 /// ICRF position of `body` relative to the solar-system barycenter, meters.
-pub fn barycentric_pos(body: Body, time: &Instant) -> Result<DVec3> {
-    satkit::jplephem::barycentric_pos(body.to_satkit(), time)
-        .map(vec)
-        .map_err(err)
+pub fn barycentric_pos(body: Body, epoch: Epoch) -> Result<DVec3> {
+    state(body, SSB_J2000, epoch).map(|(pos, _)| pos)
 }
 
 /// GCRF (position m, velocity m/s) of `body` relative to Terra's center.
-pub fn geocentric_state(body: Body, time: &Instant) -> Result<(DVec3, DVec3)> {
-    satkit::jplephem::geocentric_state(body.to_satkit(), time)
-        .map(|(pos, vel)| (vec(pos), vec(vel)))
-        .map_err(err)
+pub fn geocentric_state(body: Body, epoch: Epoch) -> Result<(DVec3, DVec3)> {
+    state(body, EARTH_J2000, epoch)
 }
 
 /// ICRF (position m, velocity m/s) of `body` relative to the barycenter.
-pub fn barycentric_state(body: Body, time: &Instant) -> Result<(DVec3, DVec3)> {
-    satkit::jplephem::barycentric_state(body.to_satkit(), time)
-        .map(|(pos, vel)| (vec(pos), vec(vel)))
-        .map_err(err)
+pub fn barycentric_state(body: Body, epoch: Epoch) -> Result<(DVec3, DVec3)> {
+    state(body, SSB_J2000, epoch)
 }
 
-fn vec(v: satkit::Vector3) -> DVec3 {
-    DVec3::new(v[(0, 0)], v[(1, 0)], v[(2, 0)])
+/// Geometric (no aberration) state of `body` seen from `observer`, converted
+/// km -> m at this boundary and nowhere else. anise treats the J2000
+/// orientation as GCRF/ICRF, matching the satkit-era output frames.
+fn state(body: Body, observer: Frame, epoch: Epoch) -> Result<(DVec3, DVec3)> {
+    context()
+        .almanac
+        .translate(body.frame(), observer, epoch, None)
+        .map(|state| (vec_km(state.radius_km), vec_km(state.velocity_km_s)))
+        .map_err(|error| EphemerisError(error.to_string()))
 }
 
-fn err(error: satkit::jplephem::Error) -> EphemerisError {
-    EphemerisError(error.to_string())
+fn vec_km(v: anise::math::Vector3) -> DVec3 {
+    DVec3::new(v.x, v.y, v.z) * 1e3
 }
 
 #[cfg(test)]
@@ -109,14 +119,14 @@ mod tests {
         Body::Pluto,
     ];
 
-    fn epoch() -> Instant {
-        Instant::from_datetime(2020, 1, 1, 0, 0, 0.0).expect("valid test epoch")
+    fn epoch() -> Epoch {
+        Epoch::from_gregorian_utc(2020, 1, 1, 0, 0, 0, 0)
     }
 
     #[test]
     fn luna_geocentric_distance_within_perigee_apogee() {
         init();
-        let distance = geocentric_pos(Body::Luna, &epoch())
+        let distance = geocentric_pos(Body::Luna, epoch())
             .expect("luna lookup")
             .length();
         assert!(
@@ -128,7 +138,7 @@ mod tests {
     #[test]
     fn sol_geocentric_distance_about_one_au() {
         init();
-        let distance = geocentric_pos(Body::Sol, &epoch())
+        let distance = geocentric_pos(Body::Sol, epoch())
             .expect("sol lookup")
             .length();
         assert!(
@@ -142,12 +152,11 @@ mod tests {
         init();
         let time = epoch();
         for body in ALL {
-            geocentric_pos(body, &time).unwrap_or_else(|e| panic!("{body:?} geocentric_pos: {e}"));
-            barycentric_pos(body, &time)
-                .unwrap_or_else(|e| panic!("{body:?} barycentric_pos: {e}"));
-            geocentric_state(body, &time)
+            geocentric_pos(body, time).unwrap_or_else(|e| panic!("{body:?} geocentric_pos: {e}"));
+            barycentric_pos(body, time).unwrap_or_else(|e| panic!("{body:?} barycentric_pos: {e}"));
+            geocentric_state(body, time)
                 .unwrap_or_else(|e| panic!("{body:?} geocentric_state: {e}"));
-            barycentric_state(body, &time)
+            barycentric_state(body, time)
                 .unwrap_or_else(|e| panic!("{body:?} barycentric_state: {e}"));
         }
     }
@@ -155,7 +164,7 @@ mod tests {
     #[test]
     fn luna_orbital_speed_plausible() {
         init();
-        let (_, vel) = geocentric_state(Body::Luna, &epoch()).expect("luna state");
+        let (_, vel) = geocentric_state(Body::Luna, epoch()).expect("luna state");
         let speed = vel.length();
         assert!((900.0..1100.0).contains(&speed), "luna speed {speed} m/s");
     }

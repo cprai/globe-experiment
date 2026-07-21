@@ -1,11 +1,16 @@
-//! SGP4 propagation of element sets, delegating to satkit. Output is the
+//! SGP4 propagation of element sets over the `sgp4` crate. Output is the
 //! TEME frame (SGP4's native quasi-inertial frame), meters and m/s.
 
 use glam::DVec3;
-use satkit::Instant;
-use satkit::sgp4::SGP4Error;
+use hifitime::{Epoch, Unit};
 
 use crate::tle::Tle;
+
+/// SGP4's own decay floor: the WGS72 equatorial radius. The reference
+/// implementation flags samples below one Earth radius; the `sgp4` crate
+/// returns them without complaint, so the check is reinstated here - this
+/// module's contract is "never a silently garbage state".
+const EARTH_RADIUS_M: f64 = 6_378_135.0;
 
 /// A TEME state vector from SGP4: position meters, velocity m/s.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,35 +33,38 @@ impl std::error::Error for Sgp4Error {}
 
 pub type Result<T> = core::result::Result<T, Sgp4Error>;
 
-/// Propagates `tle` to each instant, one TEME state per input time (`&mut`:
-/// the initialized propagator is cached in the TLE). Stricter than satkit:
-/// a per-sample SGP4 error code becomes an `Err`, never a silently garbage
-/// state.
-pub fn sgp4(tle: &mut Tle, times: &[Instant]) -> Result<Vec<TemeState>> {
-    let state =
-        satkit::sgp4::sgp4(&mut tle.inner, times).map_err(|error| Sgp4Error(error.to_string()))?;
-
-    if let Some(code) = state
-        .errcode
+/// Propagates `tle` to each epoch, one TEME state per input time. Stricter
+/// than the backing crate: a model error or a sub-surface (decayed) sample
+/// becomes an `Err`, never a silently garbage state.
+pub fn sgp4(tle: &Tle, epochs: &[Epoch]) -> Result<Vec<TemeState>> {
+    epochs
         .iter()
-        .find(|code| !matches!(code, SGP4Error::SGP4Success))
-    {
-        return Err(Sgp4Error(code.to_string()));
-    }
-
-    Ok((0..times.len())
-        .map(|i| TemeState {
-            pos_teme_m: DVec3::new(state.pos[(0, i)], state.pos[(1, i)], state.pos[(2, i)]),
-            vel_teme_m_s: DVec3::new(state.vel[(0, i)], state.vel[(1, i)], state.vel[(2, i)]),
+        .map(|&epoch| {
+            let minutes = (epoch - tle.epoch()).to_unit(Unit::Minute);
+            let prediction = tle
+                .constants
+                .propagate(sgp4::MinutesSinceEpoch(minutes))
+                .map_err(|error| Sgp4Error(error.to_string()))?;
+            let state = TemeState {
+                pos_teme_m: DVec3::from_array(prediction.position) * 1e3,
+                vel_teme_m_s: DVec3::from_array(prediction.velocity) * 1e3,
+            };
+            if state.pos_teme_m.length() < EARTH_RADIUS_M {
+                return Err(Sgp4Error(format!(
+                    "decayed: radius {:.1} km is below one Earth radius",
+                    state.pos_teme_m.length() / 1e3
+                )));
+            }
+            Ok(state)
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Duration;
     use crate::tle::tests::ISS_TLE;
-    use satkit::Duration;
 
     fn iss() -> Tle {
         Tle::load_3line(ISS_TLE[0], ISS_TLE[1], ISS_TLE[2]).expect("valid TLE")
@@ -66,9 +74,9 @@ mod tests {
     /// envelope (radius and inertial speed).
     #[test]
     fn epoch_sample_is_leo() {
-        let mut tle = iss();
+        let tle = iss();
         let epoch = tle.epoch();
-        let states = sgp4(&mut tle, &[epoch]).expect("sgp4 at epoch");
+        let states = sgp4(&tle, &[epoch]).expect("sgp4 at epoch");
         assert_eq!(states.len(), 1);
         let radius = states[0].pos_teme_m.length();
         let speed = states[0].vel_teme_m_s.length();
@@ -87,12 +95,12 @@ mod tests {
     /// moving along track between samples.
     #[test]
     fn batch_matches_input_times() {
-        let mut tle = iss();
+        let tle = iss();
         let t0 = tle.epoch();
-        let times: Vec<Instant> = (0..10)
+        let times: Vec<Epoch> = (0..10)
             .map(|i| t0 + Duration::from_seconds(60.0 * f64::from(i)))
             .collect();
-        let states = sgp4(&mut tle, &times).expect("batch sgp4");
+        let states = sgp4(&tle, &times).expect("batch sgp4");
         assert_eq!(states.len(), times.len());
         for state in &states {
             assert!((6.6e6..7.0e6).contains(&state.pos_teme_m.length()));
@@ -100,6 +108,34 @@ mod tests {
         assert!(
             (states[9].pos_teme_m - states[0].pos_teme_m).length() > 1_000_000.0,
             "nine minutes must move well along track"
+        );
+    }
+
+    /// Appends the TLE checksum digit (digit sum, '-' counts 1, mod 10).
+    fn checksummed(line: &str) -> String {
+        let sum: u32 = line
+            .chars()
+            .map(|c| match c {
+                '0'..='9' => c as u32 - '0' as u32,
+                '-' => 1,
+                _ => 0,
+            })
+            .sum();
+        format!("{line}{}", sum % 10)
+    }
+
+    /// A sub-surface sample must be an `Err`, not a garbage state: same
+    /// ISS elements reshaped to e = 0.05 at 16.9 rev/day, whose perigee
+    /// (~6100 km radius) sits below one Earth radius from the start.
+    #[test]
+    fn sub_surface_sample_errs_as_decayed() {
+        let line2 =
+            checksummed("2 25544  51.6432 351.4697 0500000 130.5364 329.6482 16.9000000029935");
+        let tle = Tle::load_2line(ISS_TLE[1], &line2).expect("valid decayed-orbit TLE");
+        let error = sgp4(&tle, &[tle.epoch()]).expect_err("sub-surface sample");
+        assert!(
+            error.to_string().contains("decayed"),
+            "unexpected error: {error}"
         );
     }
 }

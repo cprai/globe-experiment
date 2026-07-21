@@ -1,7 +1,29 @@
 # engine-astrodynamics refactor: satkit → hifitime + anise + differential-equations
 
-**Status: plan only — no code has changed. All §9 owner decisions were
-resolved 2026-07-21; §9 records the answers.**
+**Status: P0–P4 landed (2026-07-21) — satkit is OUT of the shipped crate
+(survives only in the tests/ harness as the reference, seeded by the
+harness's own `data::seed_satkit`; its assets moved to `tests/src/build.rs`
+with `build = "src/build.rs"` dodging the parent's tests/*.rs
+auto-discovery). P4 core: canonical units, `GravityField`/`ForceModel`
+registries, Cowell on DOP853 (spec tests §7.1/2/7/11/12 in-crate), Battin
+third-body, Schwarzschild, EGM2008 normalized-Pines + frequency-independent
+degree-2 solid tides (§7.13/14), crate-owned quintic/cubic-Hermite
+`Trajectory`, facade with `spacecraft: Option<SpacecraftModel>`. Harness:
+full-model 1-day LEO vs satkit ≤ 50 m, reduced ≤ 10 m, backward ≤ 50 m.
+Upstream findings pinned in code: differential-equations 0.6.1's DOP853
+interpolant is only accurate at step MIDPOINTS (knots use
+dense_points_per_step = 2; ~0.87 m at quarter-points measured) and its
+DenseSolout rejects backward spans (backward arcs integrate as negated
+forward problems, spec §7.7 fallback). P4-gate perf (release, warm, 1-orbit
+LEO 4x4): propagate ~75 ms vs satkit ~0.5 ms (anise per-eval
+translate/rotate overhead — P8 profiles before any caching, spec §9);
+interp_batch 26 us vs 31 us (the engine's per-frame path is FASTER).
+Earlier-phase status/deviations: P1 ephemeris has true-SSB barycentric
+semantics (satkit returns raw DE storage — geocentric Luna) and the harness
+compensates satkit's TT-as-TDB ephemeris argument; P2 kepler bounds scale
+as (1+e)/(1-e) x the 1.6e-8 mu-provenance gap and the pre-1972 frames
+comparison pins the predicted 57.7" rubber-second divergence; P3 corrected
+the fixture TLE checksums (satkit never validated them). Next: P5.**
 
 Companion spec: `deep-space-propagator-spec-revised.md` (Rev C) governs the
 propagator internals (formulations, force models, integrator policy,

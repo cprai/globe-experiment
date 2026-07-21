@@ -5,10 +5,19 @@
 [package]
 name = "engine-astrodynamics-tests"
 edition = "2024"
+# NOT the default `build.rs` at the package root: the PARENT crate
+# auto-discovers `tests/*.rs` as its own integration-test targets, and this
+# harness lives inside the parent's `tests/` directory. `src/` is outside
+# every discovery glob.
+build = "src/build.rs"
 
 [dependencies]
 engine-astrodynamics = { path = ".." }
 glam = "0.33.1"
-# Must mirror the parent's `default-features = false` (workspace feature
-# unification would otherwise re-enable satkit's runtime data fetch).
+# The reference implementation (the crate's former backend). default-features
+# off drops satkit's runtime data fetch; the harness's own build script
+# downloads and `data::seed_satkit` embeds.
 satkit = { version = "0.18", default-features = false }
+
+[build-dependencies]
+ureq = "3.3.0"

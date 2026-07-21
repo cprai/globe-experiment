@@ -1,8 +1,12 @@
-//! Osculating Keplerian elements from an inertial state vector, delegating
-//! to satkit.
+//! Osculating Keplerian elements from an inertial state vector, over anise
+//! (mu from the embedded planetary-constants kernel).
 
+use anise::astro::orbit::Orbit;
+use anise::constants::frames::EARTH_J2000;
 use glam::DVec3;
-use satkit::Vector3;
+use hifitime::Epoch;
+
+use crate::data::context;
 
 /// Osculating elements of an elliptic orbit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,12 +20,35 @@ impl Kepler {
     /// Elements from an inertial (GCRF) position (m) + velocity (m/s).
     /// Errs for a non-elliptic (e >= 1, escape) state, which has no period.
     pub fn from_pv(pos_m: DVec3, vel_m_s: DVec3) -> Result<Self> {
-        let kepler = satkit::Kepler::from_pv(vec3(pos_m), vec3(vel_m_s))
-            .map_err(|error| KeplerError(error.to_string()))?;
+        let frame = context().almanac.frame_info(EARTH_J2000).map_err(err)?;
+        // Osculating elements are epoch-free; the placeholder never leaves
+        // this function.
+        let epoch = Epoch::from_gregorian_utc(2000, 1, 1, 12, 0, 0, 0);
+        let orbit = Orbit::new(
+            pos_m.x / 1e3,
+            pos_m.y / 1e3,
+            pos_m.z / 1e3,
+            vel_m_s.x / 1e3,
+            vel_m_s.y / 1e3,
+            vel_m_s.z / 1e3,
+            epoch,
+            frame,
+        );
+
+        let eccentricity = orbit.ecc().map_err(err)?;
+        let sma_km = orbit.sma_km().map_err(err)?;
+        // The e >= 1 -> Err contract is imposed HERE, before period():
+        // anise silently returns Ok(Duration::ZERO) for hyperbolic states,
+        // and the engine's orbit-shape readout relies on the Err fallback.
+        if eccentricity >= 1.0 || sma_km <= 0.0 {
+            return Err(KeplerError(format!(
+                "non-elliptic state: e = {eccentricity:.6}, a = {sma_km:.1} km"
+            )));
+        }
         Ok(Self {
-            semi_major_axis_m: kepler.a,
-            eccentricity: kepler.eccen,
-            period_s: kepler.period(),
+            semi_major_axis_m: sma_km * 1e3,
+            eccentricity,
+            period_s: orbit.period().map_err(err)?.to_seconds(),
         })
     }
 }
@@ -40,8 +67,8 @@ impl std::error::Error for KeplerError {}
 
 pub type Result<T> = core::result::Result<T, KeplerError>;
 
-fn vec3(v: DVec3) -> Vector3 {
-    Vector3::new([[v.x], [v.y], [v.z]])
+fn err<E: std::fmt::Display>(error: E) -> KeplerError {
+    KeplerError(error.to_string())
 }
 
 #[cfg(test)]
@@ -78,7 +105,9 @@ mod tests {
     }
 
     /// An escape state (e >= 1) has no elements - the readout/trail `None`
-    /// fallback the engine relies on.
+    /// fallback the engine relies on. anise alone would NOT err here (its
+    /// `period()` returns zero for hyperbolic states); the crate's own gate
+    /// must.
     #[test]
     fn escape_state_errs() {
         let (pos, mut vel) = circular_pv();

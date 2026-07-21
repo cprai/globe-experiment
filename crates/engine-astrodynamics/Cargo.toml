@@ -1,16 +1,33 @@
-# Long-term home of all orbit math (the eventual satkit replacement). Today:
-# ephemeris interfaces over an embedded JPL DE440, with satkit as a hidden
-# backend. Standalone workspace member - not yet consumed by `engine` or the
-# root bin. Path-only, never published.
+# Home of all orbit math over hifitime + anise + differential-equations
+# (satkit fully replaced; it survives only in the tests/ harness as a
+# reference implementation). Standalone workspace member - not yet consumed
+# by `engine` or the root bin. Path-only, never published.
 [package]
 name = "engine-astrodynamics"
 edition = "2024"
 
 [dependencies]
+# default-features off drops anise's metaload/analysis stacks (ureq, rayon,
+# csv - runtime kernel fetching and analysis tooling); the byte parsers and
+# Almanac math live in the base crate. Kernels come embedded via build.rs.
+anise = { version = "0.10.4", default-features = false }
+# Boundary-only (mandatory via sgp4): the TLE epoch is a chrono
+# NaiveDateTime, converted to hifitime Epoch once at parse. No chrono type
+# appears in any signature.
+chrono = { version = "0.4", default-features = false }
+# Already in the tree via anise; used to pin the HTTP-fetched pck11.pca
+# snapshot by its published raw-byte crc32.
+crc32fast = "1"
+# DOP853 for the propagator. 0.x with real API churn (0.5 -> 0.6 renamed the
+# core builder): pinned exactly, and imported ONLY from
+# propagation/integrator.rs so churn stays contained there.
+differential-equations = { version = "=0.6.1", default-features = false, features = ["nalgebra"] }
 glam = "0.33.1"
-# default-features off drops satkit's runtime data fetch; build.rs downloads
-# the data and `init` seeds it from embedded bytes.
-satkit = { version = "0.18", default-features = false }
+hifitime = "4.3"
+# Integrator state vectors only (differential-equations' nalgebra line, 0.34
+# - anise carries its own 0.35 internally); never in a public signature.
+nalgebra = "0.34"
+sgp4 = "2.4"
 
 [build-dependencies]
 ureq = "3.3.0"
