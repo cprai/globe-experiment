@@ -513,3 +513,87 @@ mod tests {
         assert!(deltas[1].abs() < 1e-15 && deltas[2].abs() < 1e-15 && deltas[4].abs() < 1e-15);
     }
 }
+
+#[cfg(test)]
+mod secular_tests {
+    use super::*;
+    use crate::propagation::forces::DynamicsModel;
+    use crate::propagation::forces::central::CentralGravity;
+    use crate::propagation::formulation::cowell::{CowellSystem, pack, unpack};
+    use crate::propagation::integrator::{SolveConfig, solve_arc};
+    use crate::propagation::units::CanonicalUnits;
+    use hifitime::Epoch;
+
+    /// Spec §7.13 (second half): the degree-2 term must reproduce the
+    /// known J2 secular nodal regression, dOmega/orbit = -3 pi J2
+    /// (Re/p)^2 cos i, measured over ten inclined circular LEO orbits.
+    /// (Static field, no tides/rotation coupling: the J2 model itself.)
+    #[test]
+    fn degree_two_reproduces_j2_nodal_regression() {
+        crate::init();
+        let field = Egm2008Gravity::new(2, 0, false);
+        let j2 = -5.0_f64.sqrt() * field.table.c_bar[coefficient_index(2, 0)];
+        let (gm, re) = (field.table.gm_m3_s2, field.table.radius_m);
+        let radius = 7.0e6;
+        let units = CanonicalUnits::new(gm, radius);
+        let model = DynamicsModel {
+            units,
+            center: crate::ephemeris::Body::Terra,
+            central: CentralGravity {
+                field: Box::new(NonRotatingJ2(field)),
+            },
+            perturbations: Vec::new(),
+        };
+        let inclination = 51.6_f64.to_radians();
+        let speed = 1.0; // circular at 1 DU, canonical
+        let y0 = pack(
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, speed * inclination.cos(), speed * inclination.sin()),
+        );
+        let orbits = 10.0;
+        let period = std::f64::consts::TAU;
+        let system = CowellSystem {
+            model: &model,
+            anchor: Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0),
+        };
+        let config = SolveConfig {
+            rtol: 1e-12,
+            atol: 1e-12,
+            dense_points_per_step: 2,
+        };
+        let arc = solve_arc(&system, 0.0, orbits * period, y0, &config).unwrap();
+
+        let node = |y: &nalgebra::SVector<f64, 6>| {
+            let (r, v) = unpack(y);
+            let n = DVec3::Z.cross(r.cross(v));
+            n.y.atan2(n.x)
+        };
+        let measured = node(arc.y.last().unwrap()) - node(&y0);
+        let predicted =
+            -3.0 * std::f64::consts::PI * j2 * (re / radius).powi(2) * inclination.cos() * orbits;
+        assert!(
+            ((measured - predicted) / predicted).abs() < 0.05,
+            "node drift {measured:.5} rad vs J2 prediction {predicted:.5}"
+        );
+    }
+
+    /// The J2 field frozen in the inertial frame (no ITRF rotation): the
+    /// textbook secular-rate formula assumes an axisymmetric field, and
+    /// degree 2 order 0 IS axisymmetric - only the body-fixed flag must
+    /// not rotate the evaluation.
+    struct NonRotatingJ2(Egm2008Gravity);
+    impl GravityField for NonRotatingJ2 {
+        fn acceleration_m_s2(&self, r_m: DVec3) -> DVec3 {
+            self.0.acceleration_m_s2(r_m)
+        }
+        fn needs_body_fixed(&self) -> bool {
+            false
+        }
+        fn mu_m3_s2(&self) -> f64 {
+            self.0.mu_m3_s2()
+        }
+        fn reference_radius_m(&self) -> f64 {
+            self.0.reference_radius_m()
+        }
+    }
+}
