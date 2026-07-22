@@ -58,6 +58,25 @@ satkit seeded, anise kernels parsed before measurement. Bench profile
   vs satkit's direct Chebyshev evaluation) and **TEME is ~24x slower**
   (anise full frame graph vs satkit's closed-form equinox-based chain).
   Per-call costs are microseconds — only hot loops care.
+- **Luna-geocentric split, measured 2026-07-22** (throwaway `Instant`
+  probe over the crate's own almanac, 200k iters, release; parts sum to
+  the whole): full `translate(301→399)` 2267 ns = `frame_info` 46 ns
+  (pca hash lookup + `PlanetaryData` clone) + `common_ephemeris_path`
+  779 ns (two `ephemeris_path_to_root` walks, each re-running
+  `try_find_ephemeris_root` — a 125 ns sweep re-parsing every summary of
+  BOTH loaded SPKs — plus indexed `spk_summary_at_epoch` calls at 130 ns
+  each; nothing cached between calls) + 2 × `translate_to_parent` 732 ns
+  (the SPK tree stores 301-wrt-3 and 399-wrt-3, so geocentric Luna is
+  two Chebyshev legs; each leg = indexed summary search + zerocopy
+  re-derivation of the segment view from raw DAF bytes + the eval).
+  satkit's 85 ns is a Moon fast path: DE440's native format stores Luna
+  geocentrically, so `geocentric_state(Moon)` short-circuits to ONE
+  Chebyshev evaluation over a preloaded dense coefficient matrix — no
+  tree, no search, no per-call parsing. Net: 2 evals instead of 1, ~8x
+  packaging overhead per eval, plus ~800 ns/call of frame-tree
+  resolution satkit never does. All inside anise's `translate`; the only
+  crate-side lever is caching results (the per-step third-body cache
+  already anticipated for propagate).
 - **GCRF↔ITRF is ~15x faster** than satkit's IERS-2010 series evaluation,
   and **geodetic ~5x faster** (Vermeille closed form vs satkit's
   approach).
