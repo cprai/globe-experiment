@@ -26,6 +26,12 @@
   its sources under `src/` with no `main.rs`, and its build script at
   `src/build.rs` via the manifest `build` key (the parent auto-discovers
   `tests/*.rs` and `tests/*/main.rs` as bogus integration-test targets).
+  The harness also owns the criterion comparison benches (crate vs satkit
+  timing on the same problems), one target per domain so each runs alone
+  in seconds: `cargo bench -p engine-astrodynamics-tests --bench
+  <ephemeris|frames|geodetic|kepler|sgp4|propagation>` (omit `--bench` to
+  run all; sources at `tests/src/benches/*.rs`, kept under `src/` for the
+  same discovery-glob reason).
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none
   crates/engine/src/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing

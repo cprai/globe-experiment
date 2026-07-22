@@ -2,10 +2,17 @@
 //! implementations — raw satkit today, other astrodynamics crates later.
 //!
 //! A test-only lib crate: `cargo test -p engine-astrodynamics-tests` runs
-//! the comparisons, while the reference dependencies stay out of every
-//! shipped build (nothing depends on this leaf crate). Keep all sources
-//! under `src/` with no `main.rs` — the parent crate auto-discovers
-//! `tests/*.rs` and `tests/*/main.rs` as its own integration-test targets.
+//! the comparisons, and `cargo bench -p engine-astrodynamics-tests --bench
+//! <name>` runs one criterion benchmark target (`src/benches/*.rs` — crate
+//! vs satkit timing on the same problems; omit `--bench` to run all),
+//! while the reference dependencies stay out of every shipped build
+//! (nothing depends on this leaf crate). Keep all sources under `src/`
+//! with no `main.rs` — the parent crate auto-discovers `tests/*.rs` and
+//! `tests/*/main.rs` as its own integration-test targets.
+//!
+//! [`data`] and [`support`] are public (not `#[cfg(test)]`) solely so the
+//! bench target — a separate crate root — can reuse the seeding and time
+//! bridges; nothing outside this directory consumes them.
 //!
 //! Initialization rule: the harness owns the reference side's data. Seed
 //! satkit's process-wide set-once stores exclusively through the
@@ -15,11 +22,9 @@
 //! process with any other satkit seeder (e.g. the engine's
 //! `init_satkit`) — the stores accept one seeding per process.
 
-#[cfg(test)]
-mod data;
+pub mod data;
 
-#[cfg(test)]
-mod support {
+pub mod support {
     use engine_astrodynamics::Epoch;
 
     /// The reference-side time bridge, permanent harness infrastructure:
@@ -28,7 +33,7 @@ mod support {
     /// keeps both libraries on the same physical instant even where their
     /// UTC conventions differ (leap seconds, pre-1972); the f64 MJD carries
     /// ~1.3 us roundoff, orders below every comparison bound in this crate.
-    pub(crate) fn satkit_instant(epoch: Epoch) -> satkit::Instant {
+    pub fn satkit_instant(epoch: Epoch) -> satkit::Instant {
         satkit::Instant::from_mjd_with_scale(epoch.to_mjd_tai_days(), satkit::TimeScale::TAI)
     }
 
@@ -41,8 +46,13 @@ mod support {
     /// the same ephemeris argument, so the comparison stays a tight check
     /// of kernel reading, body mapping, and units - not of satkit's
     /// time-scale approximation.
-    pub(crate) fn satkit_instant_at_tdb(epoch: Epoch) -> satkit::Instant {
+    pub fn satkit_instant_at_tdb(epoch: Epoch) -> satkit::Instant {
         satkit::Instant::from_jd_with_scale(epoch.to_jde_tdb_days(), satkit::TimeScale::TT)
+    }
+
+    /// glam -> satkit vector bridge for handing both sides the same input.
+    pub fn satkit_vec(v: glam::DVec3) -> satkit::Vector3 {
+        satkit::Vector3::new([[v.x], [v.y], [v.z]])
     }
 }
 
@@ -679,78 +689,5 @@ mod propagation {
             pos_diff <= FULL_MODEL_TOL_M,
             "6-hour backward position differs by {pos_diff:.2} m"
         );
-    }
-}
-
-#[cfg(test)]
-mod bench {
-    //! Not a correctness test: a crude timing probe for the facade-vs-satkit
-    //! performance question the refactor plan requires measuring at the P4
-    //! gate (the engine samples trails per frame). Run manually:
-    //! `cargo test --release -p engine-astrodynamics-tests bench -- --ignored
-    //! --nocapture`
-
-    use engine_astrodynamics::propagation::{OrbitState, Settings, propagate};
-    use engine_astrodynamics::{Duration, Epoch};
-    use glam::DVec3;
-
-    use crate::support::satkit_instant;
-
-    #[test]
-    #[ignore = "timing probe, run manually in release"]
-    fn facade_timing_vs_satkit() {
-        crate::data::seed_satkit();
-        let state = OrbitState {
-            pos_gcrf_m: DVec3::new(6_778_000.0, 0.0, 0.0),
-            vel_gcrf_m_s: DVec3::new(0.0, 4_764.0, 6_009.0),
-        };
-        let begin = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
-        let end = begin + Duration::from_seconds(5_400.0); // ~one orbit
-        let samples: Vec<Epoch> = (0..=500)
-            .map(|i| begin + Duration::from_seconds(5_400.0 * f64::from(i) / 500.0))
-            .collect();
-
-        let t = std::time::Instant::now();
-        let ours = propagate(&state, begin, end, &Settings::default()).unwrap();
-        let ours_propagate = t.elapsed();
-        let t = std::time::Instant::now();
-        let _ = ours.interp_batch(&samples).unwrap();
-        let ours_interp = t.elapsed();
-
-        let mut packed = satkit::orbitprop::SimpleState::zeros();
-        for (i, v) in [
-            state.pos_gcrf_m.x,
-            state.pos_gcrf_m.y,
-            state.pos_gcrf_m.z,
-            state.vel_gcrf_m_s.x,
-            state.vel_gcrf_m_s.y,
-            state.vel_gcrf_m_s.z,
-        ]
-        .iter()
-        .enumerate()
-        {
-            packed[i] = *v;
-        }
-        let settings = satkit::orbitprop::PropSettings {
-            use_spaceweather: false,
-            ..satkit::orbitprop::PropSettings::default()
-        };
-        let instants: Vec<satkit::Instant> = samples.iter().map(|&e| satkit_instant(e)).collect();
-        let t = std::time::Instant::now();
-        let theirs = satkit::orbitprop::propagate(
-            &packed,
-            &satkit_instant(begin),
-            &satkit_instant(end),
-            &settings,
-            None,
-        )
-        .unwrap();
-        let theirs_propagate = t.elapsed();
-        let t = std::time::Instant::now();
-        let _ = theirs.interp_batch(&instants).unwrap();
-        let theirs_interp = t.elapsed();
-
-        println!("crate:  propagate {ours_propagate:?}, 500-sample interp {ours_interp:?}");
-        println!("satkit: propagate {theirs_propagate:?}, 500-sample interp {theirs_interp:?}");
     }
 }

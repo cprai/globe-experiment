@@ -46,7 +46,7 @@ const EGM96: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EGM96.gfc"));
 /// one-shot lazy loaders, which would otherwise create a stray
 /// `satkit-data` dir (after which a seed fails `AlreadyInitialized`).
 /// Once-guarded, so repeat calls are no-ops. Panics on parse failure.
-pub(crate) fn seed_satkit() {
+pub fn seed_satkit() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         satkit::jplephem::init_from_bytes(EPHEMERIS)

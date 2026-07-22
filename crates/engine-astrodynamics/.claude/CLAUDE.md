@@ -380,15 +380,20 @@ triggers). API differences the engine migration must absorb:
   Luna 301, Mars..Pluto 4..9 (system barycenters — DE440 has outer
   planets only as barycenters; same semantics as the satkit era).
 
-Performance (release, warm, 1-orbit LEO, default 4×4): `propagate` ~75 ms
-vs satkit ~0.5 ms — dominated by anise per-evaluation `translate`/`rotate`
-frame resolution (3 calls/derivative); `interp_batch` (the engine's
-per-frame trail path) is FASTER than satkit (26 µs vs 31 µs). Decision:
-no caching until a real profile shows propagate cost is user-visible;
+Performance (criterion, warm, 1-orbit LEO, default 4×4, measured
+2026-07-22): `propagate` ~2.2 ms vs satkit ~0.4 ms (~5x — the earlier
+"~75 ms" probe figure was NOT warm: it included the one-time lazy anise
+kernel parse on the first ephemeris query, which criterion's warm-up
+excludes; satkit's figure was unchanged, confirming the attribution). The
+remaining gap is anise per-evaluation `translate`/`rotate` frame
+resolution (3 calls/derivative); `interp_batch` (the engine's per-frame
+trail path) is comparable to satkit (~25 µs vs ~23 µs). Decision: no
+caching until a real profile shows propagate cost is user-visible;
 per-step Chebyshev caching of third-body states is the anticipated remedy.
-An ignored timing probe lives in the harness
-(`cargo test --release -p engine-astrodynamics-tests bench -- --ignored
---nocapture`).
+Criterion comparison benches live in the harness, one target per domain
+(ephemeris/frames/geodetic/kepler/sgp4/propagation):
+`cargo bench -p engine-astrodynamics-tests --bench <name>` (omit `--bench`
+to run all; sources at `tests/src/benches/*.rs`).
 
 ## Verification
 

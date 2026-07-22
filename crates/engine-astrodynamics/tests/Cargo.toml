@@ -11,6 +11,11 @@ edition = "2024"
 # every discovery glob.
 build = "src/build.rs"
 
+# `cargo bench` would otherwise also spin the libtest harness up for the
+# lib target, which rejects criterion's CLI flags.
+[lib]
+bench = false
+
 [dependencies]
 engine-astrodynamics = { path = ".." }
 glam = "0.33.1"
@@ -18,6 +23,46 @@ glam = "0.33.1"
 # off drops satkit's runtime data fetch; the harness's own build script
 # downloads and `data::seed_satkit` embeds.
 satkit = { version = "0.18", default-features = false }
+
+[dev-dependencies]
+criterion = "0.8"
+
+# Criterion comparison benches (crate vs reference satkit on the same
+# problems), one target per domain so each runs alone in seconds:
+# `cargo bench -p engine-astrodynamics-tests --bench <name>` (omit --bench
+# to run all). Under `src/` like every other source file — see the note on
+# `build` above; a conventional `benches/` dir would sit inside the
+# parent's `tests/` directory next to its discovery globs, and `src/` is
+# provably outside all of them.
+[[bench]]
+name = "ephemeris"
+path = "src/benches/ephemeris.rs"
+harness = false
+
+[[bench]]
+name = "frames"
+path = "src/benches/frames.rs"
+harness = false
+
+[[bench]]
+name = "geodetic"
+path = "src/benches/geodetic.rs"
+harness = false
+
+[[bench]]
+name = "kepler"
+path = "src/benches/kepler.rs"
+harness = false
+
+[[bench]]
+name = "sgp4"
+path = "src/benches/sgp4.rs"
+harness = false
+
+[[bench]]
+name = "propagation"
+path = "src/benches/propagation.rs"
+harness = false
 
 [build-dependencies]
 ureq = "3.3.0"
