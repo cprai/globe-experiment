@@ -955,8 +955,10 @@ dependencies = [
  "hifitime",
  "nalgebra 0.34.2",
  "sgp4",
+ "sofars",
  "tobari",
  "ureq",
+ "zerocopy",
 ]
 
 [[package]]

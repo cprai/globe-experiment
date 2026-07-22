@@ -3,7 +3,10 @@
 Standalone orbit-math crate, fully off satkit (completed 2026-07-21, phases
 P0–P8): **hifitime** (time), **anise** (DE440 ephemeris, frames, planetary
 constants), **differential-equations** (DOP853), **sgp4** (SGP4/TLE),
-**tobari** (NRLMSISE-00), plus a crate-owned deep-space propagator. This
+**tobari** (NRLMSISE-00), **sofars** (direct IAU-76/FK5 TEME chain — the
+same SOFA crate anise uses, called once per query; see segments.rs notes
+in BENCHMARKS.md), **zerocopy** (the DAF `[u8]→[f64]` cast at load), plus
+a crate-owned deep-space propagator. This
 file is the permanent record of the spec (Rev C), the refactor decisions,
 and the session findings — the original spec/plan documents were deleted
 after being folded in here. `engine` still calls satkit directly; its
@@ -344,7 +347,12 @@ ICGEM hash-URL has no permanence guarantee — if 404, re-locate via the
 icgem.gfz.de model listing. `SW-All.csv` (space weather; see drag). anise
 DAF-from-bytes requires an 8-aligned base: the `Align8` wrapper covers the
 `.bsp`/`.bpc` embeds (`SPK/BPC::from_static`); `.pca` is DER, no alignment
-need. anise is used with `default-features = false` (defaults pull
+need. The kernel embeds MUST stay NAMED statics (the `aligned_kernel!`
+macro): a promoted `&Align8(*include_bytes!(..))` temporary is an
+anonymous allocation that rustc duplicates into every codegen unit
+reading it — with both data.rs and segments.rs as readers that doubled
+LLVM's constant memory and OOM-killed release builds (rustc peak ~16 GB;
+~13.9 GB with named statics). anise is used with `default-features = false` (defaults pull
 metaload/analysis: ureq/rayon/csv — unneeded for embedded parsing).
 
 ## Facade contract (propagation/mod.rs) + engine migration notes
@@ -404,14 +412,17 @@ target per domain in the harness:
 `cargo bench -p engine-astrodynamics-tests --bench
 <ephemeris|frames|geodetic|kepler|sgp4|propagation>` (omit `--bench` to
 run all; sources at `tests/src/benches/*.rs`). Headline (2026-07-22, warm,
-1-orbit LEO, default 4×4): `propagate` ~2.2 ms vs satkit ~0.4 ms — ~5x,
-NOT the ~150x once recorded here (the old "~75 ms" probe figure included
-the one-time lazy anise kernel parse; criterion's warm-up excludes it),
-dominated by anise per-evaluation `translate`/`rotate` frame resolution
-(3 calls/derivative); `interp_batch` (the engine's per-frame trail path)
-is at parity. Decision: no caching until a real profile shows propagate
-cost is user-visible; per-step Chebyshev caching of third-body states is
-the anticipated remedy.
+1-orbit LEO, default 4×4): `propagate` ~370 µs vs satkit ~409 µs —
+FASTER, after the segments.rs fast-path landing (load-time
+pre-resolution of every SPK/BPC segment + direct sofars TEME + one-pass
+kepler; full record with root causes in BENCHMARKS.md). No dynamic
+caching anywhere (owner constraint 2026-07-22): everything
+epoch-independent is precomputed at `AstroData::load`, everything
+epoch-dependent is recomputed exactly per call, and the fast paths are
+pinned to the anise almanac by machine-agreement unit tests (the almanac
+stays loaded as the oracle). The once-anticipated per-step third-body
+cache is dead — exact evaluation is now cheap enough. `interp_batch`
+(the engine's per-frame trail path) is at parity.
 
 ## Verification
 

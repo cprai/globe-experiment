@@ -5,11 +5,13 @@
 //! data-dependent API function takes `&AstroData` as its first argument.
 
 use anise::almanac::Almanac;
+use anise::constants::frames::{EARTH_ITRF93, EARTH_J2000};
 use anise::prelude::{BPC, SPK};
 use anise::structure::PlanetaryDataSet;
 
 use crate::propagation::forces::atmosphere::SpaceWeatherTable;
 use crate::propagation::forces::harmonics::EgmTable;
+use crate::segments::{EarthRotation, EphemerisTree};
 
 /// Forces 8-byte alignment on an embedded blob: anise's zero-copy DAF
 /// parser casts the base to `[f64]` and errors on a misaligned start,
@@ -17,24 +19,35 @@ use crate::propagation::forces::harmonics::EgmTable;
 #[repr(C, align(8))]
 struct Align8<T: ?Sized>(T);
 
-/// JPL DE440 excerpt (1849-2150) and full span (1550-2650), anise `.bsp`
-/// format. The two are byte-identical where they overlap;
-/// [`AstroData::load`] loads full-then-excerpt so the excerpt serves the
-/// overlap and the full file everything outside it.
-static DE440S_ALIGNED: &Align8<[u8]> =
-    &Align8(*include_bytes!(concat!(env!("OUT_DIR"), "/de440s.bsp")));
-static DE440S: &[u8] = &DE440S_ALIGNED.0;
-static DE440_ALIGNED: &Align8<[u8]> =
-    &Align8(*include_bytes!(concat!(env!("OUT_DIR"), "/de440.bsp")));
-static DE440: &[u8] = &DE440_ALIGNED.0;
+/// Embeds a kernel as a NAMED static with a concrete array type. The
+/// previous `&Align8(*include_bytes!(..))` form promoted the bytes into an
+/// ANONYMOUS allocation, which rustc duplicates into every codegen unit
+/// that reads it - once segments.rs joined data.rs in touching the embeds,
+/// release LLVM materialized the ~180 MB of kernels twice and the build
+/// was OOM-killed. A named static is emitted exactly once and referenced
+/// by symbol everywhere.
+macro_rules! aligned_kernel {
+    ($aligned:ident, $bytes:ident, $file:expr) => {
+        static $aligned: Align8<[u8; include_bytes!(concat!(env!("OUT_DIR"), $file)).len()]> =
+            Align8(*include_bytes!(concat!(env!("OUT_DIR"), $file)));
+        static $bytes: &[u8] = &$aligned.0;
+    };
+}
 
-/// High-precision binary Earth PCK (ITRF93), 1962-2125 - the GCRF<->ITRF
-/// rotation source (nutation, polar motion, UT1 baked in by NAIF).
-static EARTH_BPC_ALIGNED: &Align8<[u8]> = &Align8(*include_bytes!(concat!(
-    env!("OUT_DIR"),
+// JPL DE440 excerpt (1849-2150) and full span (1550-2650), anise `.bsp`
+// format. The two are byte-identical where they overlap; `AstroData::load`
+// loads full-then-excerpt so the excerpt serves the overlap and the full
+// file everything outside it.
+aligned_kernel!(DE440S_ALIGNED, DE440S, "/de440s.bsp");
+aligned_kernel!(DE440_ALIGNED, DE440, "/de440.bsp");
+
+// High-precision binary Earth PCK (ITRF93), 1962-2125 - the GCRF<->ITRF
+// rotation source (nutation, polar motion, UT1 baked in by NAIF).
+aligned_kernel!(
+    EARTH_BPC_ALIGNED,
+    EARTH_BPC,
     "/earth_1962_250826_2125_combined.bpc"
-)));
-static EARTH_BPC: &[u8] = &EARTH_BPC_ALIGNED.0;
+);
 
 /// anise planetary-constants kernel (per-body mu/radii/flattening).
 /// DER-encoded - no alignment requirement.
@@ -59,6 +72,15 @@ pub(crate) static SPACE_WEATHER_CSV: &[u8] =
 /// decides when the (one-time, ~100 ms) parse cost is paid.
 pub struct AstroData {
     pub(crate) almanac: Almanac,
+    /// Pre-resolved SPK segments (see segments.rs) - the hot ephemeris
+    /// path. The almanac stays the oracle the comparison tests check it
+    /// against, and the planetary-constants source.
+    pub(crate) ephemeris_segments: EphemerisTree,
+    /// Pre-resolved Earth-PCK segments - the hot GCRF <-> ITRF path.
+    pub(crate) earth_rotation: EarthRotation,
+    /// Terra's GM from the planetary-constants kernel, resolved once here
+    /// so per-call element extraction never re-scans the dataset.
+    pub(crate) earth_mu_km3_s2: f64,
     pub(crate) egm2008: EgmTable,
     pub(crate) space_weather: SpaceWeatherTable,
 }
@@ -83,6 +105,13 @@ impl AstroData {
         );
         let pca = PlanetaryDataSet::try_from_bytes(PCK11).expect("parse embedded pck11.pca");
 
+        // Pre-resolve every kernel segment for the hot query paths
+        // (segments.rs) - file order here IS anise's search order, i.e.
+        // the REVERSE of the almanac load order below: the de440s excerpt
+        // serves 1849-2150, the full de440 the remainder.
+        let ephemeris_segments = EphemerisTree::new(&[(&de440s, DE440S), (&de440, DE440)]);
+        let earth_rotation = EarthRotation::new(&bpc, EARTH_BPC, EARTH_ITRF93.orientation_id);
+
         // Load order is the ephemeris-selection rule: anise searches SPKs
         // newest-loaded-first and falls through per file when the epoch is
         // outside its coverage, so de440s (loaded last) serves 1849-2150 and
@@ -92,8 +121,16 @@ impl AstroData {
             .with_spk(de440s)
             .with_bpc(bpc)
             .with_planetary_data(pca);
+        let earth_mu_km3_s2 = almanac
+            .frame_info(EARTH_J2000)
+            .expect("Terra in the planetary-constants kernel")
+            .mu_km3_s2()
+            .expect("Terra's GM in the planetary-constants kernel");
         Self {
             almanac,
+            ephemeris_segments,
+            earth_rotation,
+            earth_mu_km3_s2,
             egm2008: EgmTable::parse(EGM2008_PACKED),
             space_weather: SpaceWeatherTable::parse(SPACE_WEATHER_CSV),
         }

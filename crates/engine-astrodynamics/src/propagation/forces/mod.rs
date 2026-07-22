@@ -70,13 +70,12 @@ impl<'a> EvalContext<'a> {
     /// itself, never a hand-rolled rate constant (plan §5): for
     /// `R: gcrf -> itrf`, the skew part of `Rdot^T R` IS `[omega x]`.
     pub(crate) fn earth_rotation(&self) -> Result<(DQuat, DVec3), String> {
-        use anise::constants::frames::{EARTH_ITRF93, EARTH_J2000};
         self.earth_rotation
             .get_or_init(|| {
                 let dcm = self
                     .data
-                    .almanac
-                    .rotate(EARTH_J2000, EARTH_ITRF93, self.epoch)
+                    .earth_rotation
+                    .dcm_j2000_to_itrf93(self.epoch)
                     .map_err(|error| format!("body-fixed rotation at {}: {error}", self.epoch))?;
                 let q = crate::frames::dquat(&dcm);
                 let r = &dcm.rot_mat;

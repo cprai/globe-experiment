@@ -34,7 +34,7 @@ impl Body {
     /// NAIF id, same semantics as the satkit-era lookups: planet centers
     /// for Mercury/Venus (199/299), system barycenters for Mars..Pluto
     /// (4..9 - DE440 carries the outer planets only as barycenters).
-    fn naif_id(self) -> i32 {
+    pub(crate) fn naif_id(self) -> i32 {
         match self {
             Body::Sol => 10,
             Body::Terra => 399,
@@ -51,7 +51,7 @@ impl Body {
         }
     }
 
-    fn frame(self) -> Frame {
+    pub(crate) fn frame(self) -> Frame {
         Frame::from_ephem_j2000(self.naif_id())
     }
 }
@@ -105,11 +105,14 @@ pub fn relative_state(
 /// Geometric (no aberration) state of `body` seen from `observer`, converted
 /// km -> m at this boundary and nowhere else. anise treats the J2000
 /// orientation as GCRF/ICRF, matching the satkit-era output frames.
+/// Evaluated over the load-time pre-resolved segments (segments.rs) - the
+/// same DE440 coefficients and interpolation code as `Almanac::translate`,
+/// minus its per-call frame-tree resolution.
 fn state(data: &AstroData, body: Body, observer: Frame, epoch: Epoch) -> Result<(DVec3, DVec3)> {
-    data.almanac
-        .translate(body.frame(), observer, epoch, None)
-        .map(|state| (vec_km(state.radius_km), vec_km(state.velocity_km_s)))
-        .map_err(|error| EphemerisError(error.to_string()))
+    data.ephemeris_segments
+        .state_km(body.naif_id(), observer.ephemeris_id, epoch)
+        .map(|(position, velocity)| (vec_km(position), vec_km(velocity)))
+        .map_err(EphemerisError)
 }
 
 fn vec_km(v: anise::math::Vector3) -> DVec3 {

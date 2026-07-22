@@ -17,6 +17,7 @@ pub mod frames;
 pub mod geodetic;
 pub mod kepler;
 pub mod propagation;
+mod segments;
 pub mod sgp4;
 pub mod tle;
 

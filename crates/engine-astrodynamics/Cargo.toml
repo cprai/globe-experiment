@@ -28,12 +28,22 @@ hifitime = "4.3"
 # - anise carries its own 0.35 internally); never in a public signature.
 nalgebra = "0.34"
 sgp4 = "2.4"
+# The IAU-76/FK5 TEME chain, called DIRECTLY (frames.rs) instead of through
+# anise's dynamic-frame dispatch - the SAME sofars anise itself uses (Cargo
+# unifies the version), evaluated once per call instead of six times (anise
+# finite-differences a derivative the quaternion surface discards, and its
+# eqeq94 call re-runs the nut80 series nutm80 already evaluated).
+sofars = "0.6"
 # NRLMSISE-00 for Earth drag: pure-Rust clean-room, validated upstream
 # against pymsis fixtures + an Orekit oracle. Young crate - pinned exactly;
 # it sits behind the AtmosphereModel registry so the blast radius of any
 # problem is one adapter (the documented fallback is an in-crate port of
 # the public-domain Brodowski C reference).
 tobari = "=0.2.0"
+# Already in the tree via anise; used for the same safe [u8] -> [f64]
+# zero-copy cast anise's DAF reader does, over the 8-aligned embedded
+# kernels (segments.rs precomputes segment views at load).
+zerocopy = "0.8"
 
 [build-dependencies]
 ureq = "3.3.0"
