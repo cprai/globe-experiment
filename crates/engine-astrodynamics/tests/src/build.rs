@@ -39,6 +39,15 @@ const EMBEDS: &[Embed] = &[
         url: "https://storage.googleapis.com/astrokit-astro-data/EGM96.gfc",
         limit: 64 * 1024 * 1024,
     },
+    // JPL DE440 excerpt in SPICE .bsp layout (~31 MiB), for the astrodyn
+    // reference side (`Ephemeris::from_bsp_bytes`). Same URL as one of the
+    // parent crate's embeds; byte-identical Chebyshev content to the
+    // satkit-format .440 file above, so the two reference stacks and the
+    // crate all read the same integration.
+    Embed {
+        url: "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp",
+        limit: 64 * 1024 * 1024,
+    },
 ];
 
 struct Embed {

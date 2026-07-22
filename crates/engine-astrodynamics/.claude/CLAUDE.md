@@ -471,6 +471,23 @@ Reference-side times always go through the TAI-MJD bridge (~1.3 µs
 roundoff), which stays valid pre-1972 where UTC labels diverge between
 the libraries.
 
+Second reference (added 2026-07-22): the **astrodyn 0.2 family** (pure-
+Rust NASA JEOD port), `*_astrodyn` harness modules + bench rows. It
+shares anise with the crate, so its ephemeris comparison (same de440s
+bytes via the harness's own `.bsp` embed) checks WIRING at near-machine
+tightness (1e-13 bound, measured 2.2e-16); the genuinely independent
+sides are JEOD's RNP (IAU-76/FK5 + Aoki GMST + polar motion, driven by
+satkit's EOP through `support::astrodyn_rnp_inputs`; bound 0.2", measured
+0.048"), Borkowski geodetic (1e-9 rad), JEOD elements (satkit-style
+mu-provenance-scaled bounds; its |e−1| ≤ 1e-2 parabolic band nulls a — a
+pinned contract difference, so element comparisons stop at e = 0.95), and
+a mu-matched two-body day through the `astrodyn_runner` RK4 pipeline
+(0.1 m bound, measured 7.4 mm — the crate's mu recovered from its own
+`Kepler` output since the pca value is not exposed). astrodyn speaks
+glam 0.30 (bridged in `support`) and one shared hifitime lets `Epoch`
+cross directly. No astrodyn SGP4 (none exists) and no full-model
+propagation comparison (its field is GGM05C, not EGM2008).
+
 ## Residuals (deliberate, revisit when needed)
 
 Automated SOI segment driver (pieces tested, not composed); switch

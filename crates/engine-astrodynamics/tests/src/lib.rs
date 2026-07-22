@@ -1,14 +1,24 @@
 //! Verification harness comparing `engine-astrodynamics` against reference
-//! implementations — raw satkit today, other astrodynamics crates later.
+//! implementations — raw satkit and the astrodyn family (a pure-Rust port
+//! of NASA JEOD).
 //!
 //! A test-only lib crate: `cargo test -p engine-astrodynamics-tests` runs
 //! the comparisons, and `cargo bench -p engine-astrodynamics-tests --bench
 //! <name>` runs one criterion benchmark target (`src/benches/*.rs` — crate
-//! vs satkit timing on the same problems; omit `--bench` to run all),
+//! vs reference timing on the same problems; omit `--bench` to run all),
 //! while the reference dependencies stay out of every shipped build
 //! (nothing depends on this leaf crate). Keep all sources under `src/`
 //! with no `main.rs` — the parent crate auto-discovers `tests/*.rs` and
 //! `tests/*/main.rs` as its own integration-test targets.
+//!
+//! The two references overlap deliberately little in provenance: satkit is
+//! an independent C-heritage stack with its own DE reader and IERS-2010
+//! frames; astrodyn ports JEOD's IAU-76/FK5 RNP, Borkowski geodetic, and
+//! JEOD element/propagation pipelines, but shares anise with the crate —
+//! so its ephemeris comparison checks wiring (body mapping, units, frame
+//! chains) rather than Chebyshev math, and is correspondingly near-machine
+//! tight. The `*_astrodyn` modules mirror the satkit modules one domain
+//! each; astrodyn has no SGP4, so that domain stays satkit-only.
 //!
 //! [`data`] and [`support`] are public (not `#[cfg(test)]`) solely so the
 //! bench target — a separate crate root — can reuse the seeding and time
@@ -54,6 +64,51 @@ pub mod support {
     /// glam -> satkit vector bridge for handing both sides the same input.
     pub fn satkit_vec(v: glam::DVec3) -> satkit::Vector3 {
         satkit::Vector3::new([[v.x], [v.y], [v.z]])
+    }
+
+    /// Workspace glam (0.33) -> astrodyn glam (0.30) vector bridge. The
+    /// two glam majors carry identical `f64` fields; only the type
+    /// identity differs.
+    pub fn astrodyn_vec(v: glam::DVec3) -> glam030::DVec3 {
+        glam030::DVec3::new(v.x, v.y, v.z)
+    }
+
+    /// astrodyn glam (0.30) -> workspace glam (0.33) vector bridge.
+    pub fn from_astrodyn_vec(v: glam030::DVec3) -> glam::DVec3 {
+        glam::DVec3::new(v.x, v.y, v.z)
+    }
+
+    /// astrodyn rotation matrix -> workspace quaternion, column by column
+    /// (both glams are column-major, so the axes transfer directly).
+    pub fn quat_from_astrodyn_mat(m: glam030::DMat3) -> glam::DQuat {
+        glam::DQuat::from_mat3(&glam::DMat3::from_cols(
+            from_astrodyn_vec(m.x_axis),
+            from_astrodyn_vec(m.y_axis),
+            from_astrodyn_vec(m.z_axis),
+        ))
+    }
+
+    /// The astrodyn RNP's per-epoch time/EOP inputs, bridged from the
+    /// harness's satkit EOP table (the crate reads Earth orientation from
+    /// its BPC internally and exposes no EOP surface, so the reference
+    /// side's inputs come from the other reference's table): accumulated
+    /// GMST sidereal seconds since J2000 (via the JEOD Aoki polynomial
+    /// over UT1 = UTC + dUT1), TT Julian centuries since J2000, and polar
+    /// motion in radians.
+    pub fn astrodyn_rnp_inputs(epoch: Epoch) -> (f64, f64, (f64, f64)) {
+        crate::data::seed_satkit();
+        let eop = satkit::earth_orientation_params::get(&satkit_instant(epoch))
+            .expect("EOP available for comparison epoch");
+        let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
+        let mjd_ut1 = epoch.to_mjd_utc_days() + eop[0] / 86400.0;
+        let gmst_seconds =
+            astrodyn_time::time_converter_ut1_gmst::ut1_to_gmst_seconds(mjd_ut1 - 51_544.5);
+        let tt_centuries = (epoch.to_mjd_tai_days() + 32.184 / 86400.0 - 51_544.5) / 36_525.0;
+        (
+            gmst_seconds,
+            tt_centuries,
+            (eop[1] * arcsec, eop[2] * arcsec),
+        )
     }
 }
 
@@ -709,6 +764,482 @@ mod propagation {
         assert!(
             pos_diff <= FULL_MODEL_TOL_M,
             "6-hour backward position differs by {pos_diff:.2} m"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ephemeris_astrodyn {
+    use astrodyn_ephemeris::EphemerisBody;
+    use engine_astrodynamics::Epoch;
+    use engine_astrodynamics::ephemeris::{self, Body};
+    use glam::DVec3;
+
+    use crate::support::from_astrodyn_vec;
+
+    /// Test-owned body mapping onto the astrodyn reference, independent of
+    /// the crate's private NAIF-id table (same rationale as the satkit
+    /// mapping above). astrodyn resolves Earth (399) and Moon (301) as
+    /// true body centers through anise's chain, so no Luna barycenter
+    /// assembly is needed on this side.
+    const BODIES: [(Body, EphemerisBody); 11] = [
+        (Body::Sol, EphemerisBody::Sun),
+        (Body::Mercury, EphemerisBody::Mercury),
+        (Body::Venus, EphemerisBody::Venus),
+        (
+            Body::TerraLunaBarycenter,
+            EphemerisBody::EarthMoonBarycenter,
+        ),
+        (Body::Luna, EphemerisBody::Moon),
+        (Body::Mars, EphemerisBody::Mars),
+        (Body::Jupiter, EphemerisBody::Jupiter),
+        (Body::Saturn, EphemerisBody::Saturn),
+        (Body::Uranus, EphemerisBody::Uranus),
+        (Body::Neptune, EphemerisBody::Neptune),
+        (Body::Pluto, EphemerisBody::Pluto),
+    ];
+
+    /// Same epoch spread as the satkit ephemeris module; all inside the
+    /// DE440s excerpt span (1849-2150) both sides read.
+    fn epochs() -> [Epoch; 4] {
+        [
+            (1980, 6, 1, 0, 0, 0),
+            (2000, 1, 1, 12, 0, 0),
+            (2012, 3, 15, 6, 30, 0),
+            (2024, 1, 15, 12, 30, 0),
+        ]
+        .map(|(year, month, day, hour, minute, second)| {
+            Epoch::from_gregorian_utc(year, month, day, hour, minute, second, 0)
+        })
+    }
+
+    /// Both sides run anise over byte-identical DE440 Chebyshev data and
+    /// take the same `Epoch` value (one shared hifitime), so this bound is
+    /// near-machine: it checks body mapping, km->m conversion, and frame
+    /// chains, not evaluation math. Measured worst 2026-07-22: 2.2e-16 —
+    /// the two stacks agree to the last bit or one ulp.
+    const EPHEMERIS_REL_TOL: f64 = 1e-13;
+
+    fn assert_vec_close(label: &str, got: DVec3, want: DVec3, rel_tol: f64) {
+        let tolerance = rel_tol * want.length().max(1.0);
+        let difference = (got - want).abs().max_element();
+        assert!(
+            difference <= tolerance,
+            "{label}: got {got:?}, want {want:?}, |diff| {difference} > {tolerance}"
+        );
+    }
+
+    #[test]
+    fn geocentric_state_matches_astrodyn() {
+        let eph = crate::data::astrodyn_eph();
+        for (epoch_index, &epoch) in epochs().iter().enumerate() {
+            for (body, reference) in BODIES {
+                let label = format!("{body:?} geocentric_state, epoch {epoch_index}");
+                let (got_pos, got_vel) =
+                    ephemeris::geocentric_state(crate::data::astro(), body, epoch)
+                        .unwrap_or_else(|e| panic!("{label}: {e}"));
+                let (want_pos, want_vel) = eph
+                    .get_state_typed_epoch(reference, EphemerisBody::Earth, epoch)
+                    .unwrap_or_else(|e| panic!("{label} (astrodyn): {e}"));
+                assert_vec_close(
+                    &format!("{label} pos"),
+                    got_pos,
+                    from_astrodyn_vec(want_pos.raw_si()),
+                    EPHEMERIS_REL_TOL,
+                );
+                assert_vec_close(
+                    &format!("{label} vel"),
+                    got_vel,
+                    from_astrodyn_vec(want_vel.raw_si()),
+                    EPHEMERIS_REL_TOL,
+                );
+            }
+        }
+    }
+
+    /// Also pins the crate's true-solar-system-barycenter contract against
+    /// an independently wired anise chain (astrodyn resolves Luna's
+    /// 301 -> EMB -> SSB path itself; no EMRAT assembly like the satkit
+    /// module needs).
+    #[test]
+    fn barycentric_state_matches_astrodyn() {
+        let eph = crate::data::astrodyn_eph();
+        for (epoch_index, &epoch) in epochs().iter().enumerate() {
+            for (body, reference) in BODIES {
+                let label = format!("{body:?} barycentric_state, epoch {epoch_index}");
+                let (got_pos, got_vel) =
+                    ephemeris::barycentric_state(crate::data::astro(), body, epoch)
+                        .unwrap_or_else(|e| panic!("{label}: {e}"));
+                let (want_pos, want_vel) = eph
+                    .get_state_typed_epoch(reference, EphemerisBody::SolarSystemBarycenter, epoch)
+                    .unwrap_or_else(|e| panic!("{label} (astrodyn): {e}"));
+                assert_vec_close(
+                    &format!("{label} pos"),
+                    got_pos,
+                    from_astrodyn_vec(want_pos.raw_si()),
+                    EPHEMERIS_REL_TOL,
+                );
+                assert_vec_close(
+                    &format!("{label} vel"),
+                    got_vel,
+                    from_astrodyn_vec(want_vel.raw_si()),
+                    EPHEMERIS_REL_TOL,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod frames_astrodyn {
+    use engine_astrodynamics::{Epoch, frames};
+    use glam::DQuat;
+
+    use crate::support::{astrodyn_rnp_inputs, quat_from_astrodyn_mat};
+
+    /// The crate's ITRF93 BPC vs astrodyn's JEOD RNP (IAU-76/FK5
+    /// precession + 1980 nutation + Aoki GMST + polar motion from the
+    /// satkit EOP table). Different Earth-orientation realizations AND a
+    /// different UT1 source, plus the ~23 mas J2000<->GCRF frame bias the
+    /// JEOD chain does not model. Measured worst 2026-07-22: 0.048 arcsec
+    /// (2024 epoch); ~4x headroom.
+    const GCRF_ITRF_ARCSEC: f64 = 0.2;
+
+    /// Post-1972 epochs only: the RNP inputs come from the satkit EOP
+    /// table, which zeroes the pre-1972 rubber-second regime (see the
+    /// pinned 1965 divergence test in the satkit frames module).
+    fn epochs() -> [Epoch; 4] {
+        [
+            (1980, 6, 1, 0, 0, 0),
+            (2000, 1, 1, 12, 0, 0),
+            (2012, 3, 15, 6, 30, 0),
+            (2024, 1, 15, 12, 30, 0),
+        ]
+        .map(|(year, month, day, hour, minute, second)| {
+            Epoch::from_gregorian_utc(year, month, day, hour, minute, second, 0)
+        })
+    }
+
+    fn relative_arcsec(a: DQuat, b: DQuat) -> f64 {
+        let rel = a * b.inverse();
+        2.0 * rel.w.abs().clamp(0.0, 1.0).acos().to_degrees() * 3600.0
+    }
+
+    #[test]
+    fn gcrf_itrf_matches_astrodyn_rnp() {
+        crate::data::seed_satkit();
+        for (index, &epoch) in epochs().iter().enumerate() {
+            let (gmst_seconds, tt_centuries, polar) = astrodyn_rnp_inputs(epoch);
+            let reference = quat_from_astrodyn_mat(
+                astrodyn_frames::rotation_j2000::compute_t_parent_this_with_polar(
+                    gmst_seconds,
+                    tt_centuries,
+                    Some(polar),
+                ),
+            );
+            let angle = relative_arcsec(frames::qgcrf2itrf(crate::data::astro(), epoch), reference);
+            assert!(
+                angle <= GCRF_ITRF_ARCSEC,
+                "qgcrf2itrf vs astrodyn RNP epoch {index}: {angle:.4} arcsec"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod geodetic_astrodyn {
+    use astrodyn_math::GeodeticState;
+    use engine_astrodynamics::geodetic::geodetic_from_itrf;
+    use glam::DVec3;
+
+    use crate::support::astrodyn_vec;
+
+    /// WGS84 semi-axes handed to astrodyn's planet-agnostic entry point
+    /// (the crate's constants are baked into its Vermeille closed form).
+    const WGS84_A_M: f64 = 6_378_137.0;
+    const WGS84_B_M: f64 = 6_356_752.314_245_179;
+
+    /// Same closed-form problem, same ellipsoid on both sides (Vermeille
+    /// vs JEOD's Borkowski iteration) - near-machine bounds, same as the
+    /// satkit module.
+    const ANGLE_TOL_RAD: f64 = 1e-9;
+    const ALTITUDE_TOL_M: f64 = 1e-3;
+
+    #[test]
+    fn matches_astrodyn_over_grid() {
+        for lat_deg in [-89.9, -60.0, -30.0, 0.0, 20.0, 45.0, 75.0, 89.9] {
+            for lon_deg in [-179.0, -90.0, 0.0, 60.0, 135.0] {
+                for alt_m in [-2_000.0_f64, 0.0, 400_000.0] {
+                    let (lat, lon) = (f64::to_radians(lat_deg), f64::to_radians(lon_deg));
+                    let radius = WGS84_A_M + alt_m;
+                    let v = DVec3::new(
+                        radius * lat.cos() * lon.cos(),
+                        radius * lat.cos() * lon.sin(),
+                        radius * lat.sin(),
+                    );
+                    let ours = geodetic_from_itrf(v);
+                    let theirs =
+                        GeodeticState::from_planet_fixed(astrodyn_vec(v), WGS84_A_M, WGS84_B_M);
+                    let label = format!("({lat_deg}, {lon_deg}, {alt_m})");
+                    assert!(
+                        (ours.latitude_rad - theirs.latitude).abs() < ANGLE_TOL_RAD,
+                        "lat at {label}: {} vs {}",
+                        ours.latitude_rad,
+                        theirs.latitude
+                    );
+                    assert!(
+                        (ours.longitude_rad - theirs.longitude).abs() < ANGLE_TOL_RAD,
+                        "lon at {label}: {} vs {}",
+                        ours.longitude_rad,
+                        theirs.longitude
+                    );
+                    assert!(
+                        (ours.altitude_m - theirs.altitude).abs() < ALTITUDE_TOL_M,
+                        "alt at {label}: {} vs {}",
+                        ours.altitude_m,
+                        theirs.altitude
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod kepler_astrodyn {
+    use astrodyn_math::OrbitalElements;
+    use astrodyn_quantities::frame::{Earth, PlanetInertial};
+    use astrodyn_quantities::prelude::*;
+    use engine_astrodynamics::kepler::Kepler;
+    use glam::DVec3;
+
+    use crate::support::astrodyn_vec;
+
+    /// Same mu-provenance reasoning as the satkit kepler module: astrodyn
+    /// is handed the satkit-class mu below, so the crate's pca-derived mu
+    /// differs by the same ~1.6e-8 relative gap, amplified into the
+    /// elements at a fixed perigee state (see that module's derivation).
+    const MU_PROVENANCE_REL: f64 = 1.61e-8;
+
+    fn sma_rel_tol(eccentricity: f64) -> f64 {
+        3.0 * MU_PROVENANCE_REL * (1.0 + eccentricity) / (1.0 - eccentricity)
+    }
+
+    fn period_rel_tol(eccentricity: f64) -> f64 {
+        3.0 * MU_PROVENANCE_REL * (1.5 * (1.0 + eccentricity) / (1.0 - eccentricity) + 0.5)
+    }
+
+    fn ecc_abs_tol(eccentricity: f64) -> f64 {
+        3.0 * MU_PROVENANCE_REL * (1.0 + eccentricity)
+    }
+
+    /// Terra's GM (m^3/s^2), for test states AND as astrodyn's handed mu.
+    const MU_M3_S2: f64 = 3.986004418e14;
+
+    fn perigee_state(radius_m: f64, eccentricity: f64) -> (DVec3, DVec3) {
+        let speed = (MU_M3_S2 * (1.0 + eccentricity) / radius_m).sqrt();
+        (DVec3::new(radius_m, 0.0, 0.0), DVec3::new(0.0, speed, 0.0))
+    }
+
+    fn astrodyn_elements(pos: DVec3, vel: DVec3) -> OrbitalElements<Earth> {
+        OrbitalElements::from_cartesian_typed(
+            MU_M3_S2.m3_per_s2_for::<Earth>(),
+            astrodyn_vec(pos).m_at::<PlanetInertial<Earth>>(),
+            astrodyn_vec(vel).m_per_s_at::<PlanetInertial<Earth>>(),
+        )
+        .expect("astrodyn elements")
+    }
+
+    /// e stops at 0.95 (not the satkit module's 0.99): JEOD declares
+    /// |e - 1| <= 0.01 parabolic and nulls the semi-major axis — see the
+    /// contract-difference test below.
+    #[test]
+    fn elements_match_astrodyn() {
+        for eccentricity in [0.0, 0.3, 0.7, 0.95] {
+            let (pos, vel) = perigee_state(6_778_000.0, eccentricity);
+            let ours = Kepler::from_pv(crate::data::astro(), pos, vel)
+                .unwrap_or_else(|e| panic!("crate elements at e = {eccentricity}: {e}"));
+            let theirs = astrodyn_elements(pos, vel);
+            let label = format!("e = {eccentricity}");
+            assert!(
+                (ours.semi_major_axis_m - theirs.semi_major_axis).abs() / theirs.semi_major_axis
+                    < sma_rel_tol(eccentricity),
+                "{label}: a {} vs {}",
+                ours.semi_major_axis_m,
+                theirs.semi_major_axis
+            );
+            assert!(
+                (ours.eccentricity - theirs.e_mag).abs() < ecc_abs_tol(eccentricity),
+                "{label}: e {} vs {}",
+                ours.eccentricity,
+                theirs.e_mag
+            );
+            let want_period = std::f64::consts::TAU / theirs.mean_motion;
+            assert!(
+                (ours.period_s - want_period).abs() / want_period < period_rel_tol(eccentricity),
+                "{label}: period {} vs {want_period}",
+                ours.period_s
+            );
+        }
+    }
+
+    /// Contract differences, pinned: the crate refuses escape states (its
+    /// e >= 1 gate) while JEOD's element set is defined for hyperbolic
+    /// orbits (negative semi-major axis) - astrodyn must succeed and
+    /// report the same eccentricity regime, not err. And inside JEOD's
+    /// parabolic band (|e - 1| <= its ORBIT_SWITCH_TOL of 1e-2) astrodyn
+    /// nulls the semi-major axis to 0.0 where the crate still returns the
+    /// finite ellipse - which is why the element comparison above stops
+    /// at e = 0.95.
+    #[test]
+    fn escape_and_parabolic_band_contract_differences() {
+        let (pos, vel) = perigee_state(6_778_000.0, 1.2);
+        assert!(Kepler::from_pv(crate::data::astro(), pos, vel).is_err());
+        let theirs = astrodyn_elements(pos, vel);
+        assert!(
+            theirs.e_mag > 1.0 && theirs.semi_major_axis < 0.0,
+            "astrodyn hyperbolic elements: e {} a {}",
+            theirs.e_mag,
+            theirs.semi_major_axis
+        );
+
+        let (pos, vel) = perigee_state(6_778_000.0, 0.99);
+        assert!(Kepler::from_pv(crate::data::astro(), pos, vel).is_ok());
+        let theirs = astrodyn_elements(pos, vel);
+        assert!(
+            theirs.semi_major_axis == 0.0 && theirs.semiparam > 0.0,
+            "astrodyn parabolic-band elements: a {} p {}",
+            theirs.semi_major_axis,
+            theirs.semiparam
+        );
+    }
+}
+
+#[cfg(test)]
+mod propagation_astrodyn {
+    use astrodyn::{
+        FrameUid, GravityControl, GravityGradient, SimulationBuilder, TranslationalStateTyped,
+        VehicleBuilder,
+    };
+    use astrodyn_quantities::frame::{Earth, PlanetInertial, RootInertial};
+    use astrodyn_quantities::prelude::*;
+    use engine_astrodynamics::kepler::Kepler;
+    use engine_astrodynamics::propagation::{OrbitState, Settings, propagate};
+    use engine_astrodynamics::{Duration, Epoch};
+    use glam::DVec3;
+
+    use crate::support::{astrodyn_vec, from_astrodyn_vec};
+
+    /// astrodyn's fixed RK4 step. At 5 s (~1100 steps/orbit) the RK4
+    /// truncation is far below the comparison bound, so the bound
+    /// measures model agreement, not integrator gap.
+    const ASTRODYN_DT_S: f64 = 5.0;
+
+    /// One day, mu-matched two-body problem on both sides (the crate at
+    /// point-mass degradation, astrodyn at point-mass gravity with its
+    /// source mu overwritten by the crate's own pca-derived value) - the
+    /// residual is pure integrator truncation. Measured 2026-07-22:
+    /// 0.0074 m position, 8e-6 m/s velocity over the day (~16 orbits).
+    const TWO_BODY_TOL_M: f64 = 0.1;
+
+    /// Same inclined LEO as the satkit propagation module.
+    fn leo_state() -> OrbitState {
+        let speed = 7_668.6;
+        let inclination = 51.6_f64.to_radians();
+        OrbitState {
+            pos_gcrf_m: DVec3::new(6_778_000.0, 0.0, 0.0),
+            vel_gcrf_m_s: DVec3::new(0.0, speed * inclination.cos(), speed * inclination.sin()),
+        }
+    }
+
+    /// The crate's central-body mu (m^3/s^2), recovered from its own
+    /// osculating elements (period = TAU sqrt(a^3/mu)) since the pca
+    /// value is not exposed directly. Machine-precision round trip.
+    fn crate_mu_m3_s2(state: &OrbitState) -> f64 {
+        let kepler = Kepler::from_pv(crate::data::astro(), state.pos_gcrf_m, state.vel_gcrf_m_s)
+            .expect("elliptic LEO state");
+        let a = kepler.semi_major_axis_m;
+        std::f64::consts::TAU.powi(2) * a.powi(3) / kepler.period_s.powi(2)
+    }
+
+    /// Point-mass-only crate settings: degree < 2 degrades EGM2008 to
+    /// point-mass, sun/moon/relativity off, no spacecraft - a pure
+    /// two-body problem.
+    fn two_body_settings() -> Settings {
+        Settings {
+            gravity_degree: 0,
+            gravity_order: 0,
+            abs_error: 1e-10,
+            rel_error: 1e-10,
+            use_sun_gravity: false,
+            use_moon_gravity: false,
+            use_relativistic_correction: false,
+            spacecraft: None,
+        }
+    }
+
+    /// One-day astrodyn two-body end state via the JEOD pipeline runner
+    /// (point-mass Earth at origin, RK4, epoch irrelevant to the physics).
+    pub(crate) fn astrodyn_two_body_end(
+        state: &OrbitState,
+        mu_m3_s2: f64,
+        span_s: f64,
+    ) -> (DVec3, DVec3) {
+        let mut entry = astrodyn::recipes::earth::point_mass();
+        entry.source.mu = mu_m3_s2;
+        let mut builder = SimulationBuilder::new(astrodyn::recipes::epoch::j2000(), ASTRODYN_DT_S);
+        builder.add_source("Earth", entry);
+        let vehicle = VehicleBuilder::new()
+            .vehicle_named("probe")
+            .with_translational(TranslationalStateTyped::<RootInertial> {
+                position: astrodyn_vec(state.pos_gcrf_m).m_at::<RootInertial>(),
+                velocity: astrodyn_vec(state.vel_gcrf_m_s).m_per_s_at::<RootInertial>(),
+            })
+            .three_dof_point_mass(1.0.kg())
+            .rk4()
+            .gravity(GravityControl::new_spherical(
+                FrameUid::of::<PlanetInertial<Earth>>(),
+                GravityGradient::Skip,
+            ))
+            .build();
+        builder.add_body(vehicle);
+        let mut sim =
+            astrodyn_runner::Simulation::from_builder(builder).expect("valid astrodyn simulation");
+        sim.step_until(span_s).expect("astrodyn propagation");
+        // With the single source at the origin the integration frame and
+        // the root inertial frame coincide, so the integrated state IS
+        // the inertial state (no integ-origin shift to apply).
+        let out = sim.body(0);
+        (
+            from_astrodyn_vec(out.trans.position.raw_si()),
+            from_astrodyn_vec(out.trans.velocity.raw_si()),
+        )
+    }
+
+    #[test]
+    fn two_body_day_matches_astrodyn() {
+        let state = leo_state();
+        let begin = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
+        let end = begin + Duration::from_seconds(86_400.0);
+        let ours = propagate(
+            crate::data::astro(),
+            &state,
+            begin,
+            end,
+            &two_body_settings(),
+        )
+        .expect("crate propagation")
+        .state_end();
+        let (want_pos, want_vel) = astrodyn_two_body_end(&state, crate_mu_m3_s2(&state), 86_400.0);
+        let pos_diff = (ours.pos_gcrf_m - want_pos).length();
+        let vel_diff = (ours.vel_gcrf_m_s - want_vel).length();
+        assert!(
+            pos_diff <= TWO_BODY_TOL_M,
+            "1-day two-body position differs by {pos_diff:.3} m"
+        );
+        assert!(
+            vel_diff <= TWO_BODY_TOL_M / 1000.0,
+            "1-day two-body velocity differs by {vel_diff:.5} m/s"
         );
     }
 }

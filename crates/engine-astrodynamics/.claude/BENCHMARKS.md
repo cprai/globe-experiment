@@ -1,8 +1,9 @@
 # Benchmark record (agent cache — read this instead of re-running)
 
 Criterion comparison benches: `engine-astrodynamics` vs reference satkit
-0.18 on the same problems. This file is the cache layer for those numbers
-— the benches take minutes to run, so consult this record first.
+0.18 and reference astrodyn 0.2 (the pure-Rust NASA JEOD port; added
+2026-07-22) on the same problems. This file is the cache layer for those
+numbers — the benches take minutes to run, so consult this record first.
 Maintenance policy (also stated in CLAUDE.md):
 
 - **Any time a bench target is run, update its rows here** (mid estimate
@@ -33,22 +34,28 @@ Bench profile (inherits release). Measured 2026-07-22: ALL SIX targets
 re-run in one sweep on the final post-fast-path code (segments.rs landing,
 below).
 
-## Results (2026-07-22, post fast-path, full re-run)
+## Results (2026-07-22, post fast-path; astrodyn columns added same day)
 
-| Group | crate | satkit | crate/satkit |
-|---|---|---|---|
-| `ephemeris_luna_geocentric_state` | 352 ns | 82.0 ns | 4.3x slower |
-| `frames_qgcrf2itrf` | 347 ns | 46.1 µs | **133x faster** |
-| `frames_qteme2gcrf` | 1.27 µs | 373 ns | 3.4x slower (fidelity gap, see below) |
-| `geodetic_from_itrf` | 70.4 ns | 330 ns | **4.7x faster** |
-| `kepler_from_pv` (e = 0.7) | 31.3 ns | 43.7 ns | **1.4x faster** |
-| `sgp4_iss_113_samples` | 23.1 µs | 22.8 µs | parity |
-| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 367.9 µs | 408.9 µs | **1.11x faster** |
-| `interp_batch_500_samples` | 25.0 µs | 22.5 µs | ~parity |
+All rows except `sgp4` re-run 2026-07-22 when the astrodyn reference rows
+landed; `sgp4` kept its earlier same-day sweep number (astrodyn has no
+SGP4 — target untouched). "—" = no comparable astrodyn surface.
+
+| Group | crate | satkit | astrodyn | crate/satkit | crate/astrodyn |
+|---|---|---|---|---|---|
+| `ephemeris_luna_geocentric_state` | 352 ns | 81.9 ns | 2.25 µs | 4.3x slower | **6.4x faster** |
+| `frames_qgcrf2itrf` | 348 ns | 46.3 µs | 1.38 µs | **133x faster** | **4.0x faster** |
+| `frames_qteme2gcrf` | 1.26 µs | 372 ns | — | 3.4x slower (fidelity gap, see below) | — |
+| `geodetic_from_itrf` | 81.8 ns | 329 ns | 116 ns | **4.0x faster** | **1.4x faster** |
+| `kepler_from_pv` (e = 0.7) | 31.3 ns | 44.1 ns | 59.5 ns | **1.4x faster** | **1.9x faster** |
+| `sgp4_iss_113_samples` | 23.1 µs | 22.8 µs | — | parity | — |
+| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 366.7 µs | 408.4 µs | — | **1.11x faster** | — |
+| `propagate_two_body_one_day` (point-mass, mu-matched) | 297.5 µs | — | 30.3 ms | — | **~100x faster** |
+| `interp_batch_500_samples` | 25.0 µs | 22.6 µs | — | ~parity | — |
 
 The sgp4 crate row moved 21.3 → 23.1 µs across the day with its pure code
 path untouched — codegen-layout/environment jitter, the observed
-run-to-run scale for this sandbox. Prior generation (same day,
+run-to-run scale for this sandbox (geodetic's 70.4 → 81.8 ns move in the
+astrodyn re-run is the same effect). Prior generation (same day,
 pre-fast-path), for scale: Luna 2.25 µs (26.9x slower), qgcrf2itrf
 2.88 µs, qteme2gcrf 8.55 µs (19.6x slower), kepler 291 ns (6.6x slower),
 propagate 2.17 ms (5.3x slower).
@@ -82,6 +89,26 @@ propagate 2.17 ms (5.3x slower).
   per-call evaluation is now cheap enough.
 - **SGP4 and `interp_batch` (the engine's per-frame trail path) are at
   parity** — untouched pure paths.
+- **The astrodyn columns (added 2026-07-22)** compare against the JEOD
+  port where a comparable surface exists. Luna geocentric: astrodyn runs
+  anise's GENERIC almanac path over the same DE440 bytes — its 2.25 µs is
+  exactly the pre-fast-path crate number, so this column measures what
+  the segments.rs pre-resolution buys (6.4x). qgcrf2itrf: astrodyn's
+  1.38 µs is the JEOD RNP (IAU-76 precession + 106-term 1980 nutation +
+  Aoki GMST + polar motion) INCLUDING the per-epoch satkit-EOP lookup and
+  GMST/TT derivation its API demands from the caller (harness
+  `astrodyn_rnp_inputs`; measured agreement 0.048"). geodetic: JEOD's
+  iterative Borkowski vs the crate's closed-form Vermeille. kepler:
+  JEOD's element set computes more outputs (all anomalies + diagnostics);
+  the crate's one-pass subset is what the engine consumes.
+  `propagate_two_body_one_day` is mu-matched point-mass on both sides
+  (measured end-state agreement 7.4 mm): the crate's adaptive DOP853
+  takes large steps on the smooth problem while astrodyn's fixed 5 s RK4
+  pays 17280 pipeline steps — a step-size-policy gap, not waste in
+  either; the dt is pinned by the accuracy the `cargo test` comparison
+  proved. No astrodyn full-model row: its Earth field is GGM05C (vs
+  EGM2008) and wiring its ephemeris/rotation pipeline for a matched-model
+  arc buys no additional signal over the satkit full-model row.
 
 ## Fast-path implementation record (2026-07-22, segments.rs)
 

@@ -9,7 +9,7 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use engine_astrodynamics::{Epoch, frames};
 use engine_astrodynamics_tests::data::{astro, seed_satkit};
-use engine_astrodynamics_tests::support::satkit_instant;
+use engine_astrodynamics_tests::support::{astrodyn_rnp_inputs, satkit_instant};
 
 fn bench_frames(c: &mut Criterion) {
     seed_satkit();
@@ -23,6 +23,22 @@ fn bench_frames(c: &mut Criterion) {
     });
     group.bench_function("satkit", |b| {
         b.iter(|| satkit::frametransform::qgcrf2itrf(black_box(&instant)));
+    });
+    // The full JEOD RNP (precession + 1980 nutation + GAST + polar
+    // motion). The timed closure includes the per-epoch EOP lookup and
+    // GMST/TT derivation (`astrodyn_rnp_inputs`) because astrodyn's API
+    // demands those as caller-supplied inputs — that is the honest
+    // per-epoch cost of driving it, mirroring the EOP work the other two
+    // rows do internally.
+    group.bench_function("astrodyn", |b| {
+        b.iter(|| {
+            let (gmst_seconds, tt_centuries, polar) = astrodyn_rnp_inputs(black_box(epoch));
+            astrodyn_frames::rotation_j2000::compute_t_parent_this_with_polar(
+                gmst_seconds,
+                tt_centuries,
+                Some(polar),
+            )
+        });
     });
     group.finish();
 

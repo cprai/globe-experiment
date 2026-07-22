@@ -1,5 +1,5 @@
 # Verification harness: compares engine-astrodynamics against reference
-# implementations (raw satkit today, other astrodynamics crates later).
+# implementations (raw satkit + the astrodyn JEOD port).
 # Leaf crate — nothing depends on it, so its reference deps are never
 # compiled into shipped builds; they live only here.
 [package]
@@ -23,6 +23,21 @@ glam = "0.33.1"
 # off drops satkit's runtime data fetch; the harness's own build script
 # downloads and `data::seed_satkit` embeds.
 satkit = { version = "0.18", default-features = false }
+# Second reference: the astrodyn family (pure-Rust port of NASA JEOD).
+# Unlike satkit it shares anise with the crate under test, so its ephemeris
+# comparison checks wiring (body mapping, units, frame chains), not the
+# Chebyshev math; the frames/geodetic/kepler/propagation sides are
+# independent JEOD ports and genuine cross-implementations.
+astrodyn = "0.2"
+astrodyn_runner = "0.2"
+astrodyn_ephemeris = "0.2"
+astrodyn_frames = "0.2"
+astrodyn_time = "0.2"
+astrodyn_math = "0.2"
+astrodyn_quantities = "0.2"
+# astrodyn's public surface speaks glam 0.30 (the workspace is on 0.33);
+# the renamed dep exists solely to construct its input vectors.
+glam030 = { package = "glam", version = "0.30" }
 
 [dev-dependencies]
 criterion = "0.8"

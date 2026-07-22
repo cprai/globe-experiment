@@ -251,6 +251,168 @@ dependencies = [
 ]
 
 [[package]]
+name = "astrodyn"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3288f9c277cc4006d6210a126c732bbdb67c6c134330414e33c9223c3d4aad65"
+dependencies = [
+ "astrodyn_atmosphere",
+ "astrodyn_dynamics",
+ "astrodyn_ephemeris",
+ "astrodyn_frames",
+ "astrodyn_gravity",
+ "astrodyn_interactions",
+ "astrodyn_math",
+ "astrodyn_planet",
+ "astrodyn_quantities",
+ "astrodyn_time",
+ "glam 0.30.10",
+ "log",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_atmosphere"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af795dc850eeb9316381dd00f30eca6d37bdcb557309b3ce411c02d1edfd9152"
+dependencies = [
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_dynamics"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d53c233e2dc2afc3a0dd8f10c5a6500658256c93e68e4d4163e651762b051cf"
+dependencies = [
+ "astrodyn_frames",
+ "astrodyn_math",
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_ephemeris"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d917eca5c0895fba68af1eb8c59c1fd4e0e78d6bb2cdaa620361db8ccfc2d057"
+dependencies = [
+ "anise",
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "sha2",
+ "thiserror 2.0.18",
+ "ureq",
+]
+
+[[package]]
+name = "astrodyn_frames"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0c7a632b0afc390811f35c76f10a24af126d2e6e99fccb1756652b6dfce5beb"
+dependencies = [
+ "astrodyn_math",
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "astrodyn_gravity"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64f35ab25c94c4ffe43086d21bb86171c158c571c7ac97581f52f3fa1ecb1e46"
+dependencies = [
+ "astrodyn_dynamics",
+ "astrodyn_math",
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "log",
+ "sha2",
+ "thiserror 2.0.18",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_interactions"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc6b630f668df3e5cdd42101c320962134e410755d62ec653b927798bf136df"
+dependencies = [
+ "astrodyn_atmosphere",
+ "astrodyn_dynamics",
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_math"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4781e636506848fd48099d416193c480db6b23c12febeb9644c5a5341a62af2"
+dependencies = [
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "thiserror 2.0.18",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_planet"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae2dda4a279404d6ad6714b83db0ec940b9273470f43b22b3e4d9a68abe9da0f"
+dependencies = [
+ "astrodyn_quantities",
+ "glam 0.30.10",
+ "regex",
+ "sha2",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_quantities"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5596021a799ffdd26807179305a4aa102e5f61c0f5dbba7ca522040403615b3c"
+dependencies = [
+ "glam 0.30.10",
+ "thiserror 2.0.18",
+ "typenum",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_runner"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "505b1ee210a0b48f2b5f5e000b2960de78c1557bf29bbbe8714c325dc6bcc35e"
+dependencies = [
+ "astrodyn",
+ "glam 0.30.10",
+ "log",
+ "uom",
+]
+
+[[package]]
+name = "astrodyn_time"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8199cc4c9e128c71da4da1cb94bc31976407e201dca8d19c457f25989fd1e316"
+dependencies = [
+ "astrodyn_quantities",
+ "log",
+ "sha2",
+ "thiserror 2.0.18",
+ "uom",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -294,6 +456,15 @@ name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+
+[[package]]
+name = "block-buffer"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+dependencies = [
+ "hybrid-array",
+]
 
 [[package]]
 name = "block2"
@@ -570,6 +741,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
 name = "const_format"
 version = "0.2.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +814,15 @@ checksum = "45390e6114f68f718cc7a830514a96f903cccd70d02a8f6d9f643ac4ba45afaf"
 dependencies = [
  "bitflags 1.3.2",
  "core-foundation 0.9.4",
+ "libc",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
+dependencies = [
  "libc",
 ]
 
@@ -716,6 +902,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "crypto-common"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -762,6 +957,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer",
+ "const-oid",
+ "crypto-common",
 ]
 
 [[package]]
@@ -965,8 +1171,16 @@ dependencies = [
 name = "engine-astrodynamics-tests"
 version = "0.0.0"
 dependencies = [
+ "astrodyn",
+ "astrodyn_ephemeris",
+ "astrodyn_frames",
+ "astrodyn_math",
+ "astrodyn_quantities",
+ "astrodyn_runner",
+ "astrodyn_time",
  "criterion",
  "engine-astrodynamics",
+ "glam 0.30.10",
  "glam 0.33.1",
  "satkit",
  "ureq",
@@ -1544,6 +1758,15 @@ name = "humantime"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
+name = "hybrid-array"
+version = "0.4.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
+dependencies = [
+ "typenum",
+]
 
 [[package]]
 name = "icu_collections"
@@ -3262,6 +3485,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3782,6 +4016,16 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "uom"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a739f83872836c82a4f2527d4e54b37007b3de68cafe7edde95fd695968bf4b9"
+dependencies = [
+ "num-traits",
+ "typenum",
+]
 
 [[package]]
 name = "ureq"

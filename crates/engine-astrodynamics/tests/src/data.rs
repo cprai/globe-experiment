@@ -21,6 +21,19 @@ pub fn astro() -> &'static AstroData {
     DATA.get_or_init(AstroData::load)
 }
 
+/// The astrodyn reference side's ephemeris, the same DE440 excerpt the
+/// crate embeds but in SPICE `.bsp` layout. astrodyn delegates to anise
+/// like the crate does, so this comparison side cross-checks body mapping,
+/// units, and frame wiring rather than the Chebyshev evaluation itself.
+/// Per-process `OnceLock` for the same reason as [`astro`].
+pub fn astrodyn_eph() -> &'static astrodyn_ephemeris::Ephemeris {
+    static EPH: OnceLock<astrodyn_ephemeris::Ephemeris> = OnceLock::new();
+    EPH.get_or_init(|| {
+        astrodyn_ephemeris::Ephemeris::from_bsp_bytes(DE440S)
+            .expect("parse embedded de440s.bsp for the astrodyn reference")
+    })
+}
+
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
 /// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s with
 /// an unaligned-unsafe `copy_nonoverlapping`; the JPL record layout is
@@ -47,6 +60,13 @@ const TAB5D: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tab5.2d.txt"));
 
 /// ICGEM EGM96 gravity coefficients, for satkit's orbit propagator.
 const EGM96: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/EGM96.gfc"));
+
+/// The DE440 excerpt in SPICE `.bsp` layout for the astrodyn reference.
+/// 8-aligned like the satkit ephemeris above: anise's DAF views read
+/// packed `f64`s relative to the byte base.
+static DE440S_ALIGNED: &Align8<[u8]> =
+    &Align8(*include_bytes!(concat!(env!("OUT_DIR"), "/de440s.bsp")));
+const DE440S: &[u8] = &DE440S_ALIGNED.0;
 
 /// Seeds ALL FOUR satkit global stores from embedded bytes: DE440
 /// ephemeris, EOP table (+ out-of-range warning disabled; such lookups

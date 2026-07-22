@@ -17,8 +17,9 @@
     `engine` lib harness).
 - **`engine-astrodynamics-tests`** (`crates/engine-astrodynamics/tests/`, a
   nested workspace-member test-only lib crate) compares
-  `engine-astrodynamics` against reference implementations — raw satkit
-  today, other astrodynamics crates later. Reference deps go ONLY there
+  `engine-astrodynamics` against two reference implementations — raw
+  satkit and the astrodyn family (pure-Rust NASA JEOD port, `*_astrodyn`
+  modules). Reference deps go ONLY there
   (leaf crate, never reaches shipped builds). Covered by `cargo test
   --workspace`, or alone via `cargo test -p engine-astrodynamics-tests`.
   Seed reference satkit only through the harness's own `Once`-guarded
@@ -26,9 +27,9 @@
   its sources under `src/` with no `main.rs`, and its build script at
   `src/build.rs` via the manifest `build` key (the parent auto-discovers
   `tests/*.rs` and `tests/*/main.rs` as bogus integration-test targets).
-  The harness also owns the criterion comparison benches (crate vs satkit
-  timing on the same problems), one target per domain so each runs alone
-  in seconds: `cargo bench -p engine-astrodynamics-tests --bench
+  The harness also owns the criterion comparison benches (crate vs
+  references' timing on the same problems), one target per domain so each
+  runs alone in seconds: `cargo bench -p engine-astrodynamics-tests --bench
   <ephemeris|frames|geodetic|kepler|sgp4|propagation>` (omit `--bench` to
   run all; sources at `tests/src/benches/*.rs`, kept under `src/` for the
   same discovery-glob reason). Measured numbers are cached in
