@@ -29,31 +29,34 @@ pairings is proven by the harness's `cargo test` comparisons.
 Dev sandbox: x86_64 Linux container (see platform.md; wall-clock noise is
 possible — criterion's intervals were tight, ±1% or better). Warm process:
 satkit seeded, the crate's `AstroData` loaded eagerly before measurement.
-Bench profile (inherits release). Measured 2026-07-22, after the
-segments.rs fast-path landing (below); `sgp4`/`geodetic` rows are from the
-same-day pre-fast-path run (their pure code paths are untouched).
+Bench profile (inherits release). Measured 2026-07-22: ALL SIX targets
+re-run in one sweep on the final post-fast-path code (segments.rs landing,
+below).
 
-## Results (2026-07-22, post fast-path)
+## Results (2026-07-22, post fast-path, full re-run)
 
 | Group | crate | satkit | crate/satkit |
 |---|---|---|---|
-| `ephemeris_luna_geocentric_state` | 356 ns | 82.7 ns | 4.3x slower |
-| `frames_qgcrf2itrf` | 352 ns | 46.3 µs | **131x faster** |
-| `frames_qteme2gcrf` | 1.26 µs | 377 ns | 3.3x slower (fidelity gap, see below) |
-| `geodetic_from_itrf` | 70.7 ns | 328 ns | **4.6x faster** |
-| `kepler_from_pv` (e = 0.7) | 31.1 ns | 43.5 ns | **1.4x faster** |
-| `sgp4_iss_113_samples` | 21.3 µs | 22.7 µs | parity |
-| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 369.8 µs | 409 µs | **1.11x faster** |
-| `interp_batch_500_samples` | 24.8 µs | 22.7 µs | ~parity |
+| `ephemeris_luna_geocentric_state` | 352 ns | 82.0 ns | 4.3x slower |
+| `frames_qgcrf2itrf` | 347 ns | 46.1 µs | **133x faster** |
+| `frames_qteme2gcrf` | 1.27 µs | 373 ns | 3.4x slower (fidelity gap, see below) |
+| `geodetic_from_itrf` | 70.4 ns | 330 ns | **4.7x faster** |
+| `kepler_from_pv` (e = 0.7) | 31.3 ns | 43.7 ns | **1.4x faster** |
+| `sgp4_iss_113_samples` | 23.1 µs | 22.8 µs | parity |
+| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 367.9 µs | 408.9 µs | **1.11x faster** |
+| `interp_batch_500_samples` | 25.0 µs | 22.5 µs | ~parity |
 
-Prior generation (same day, pre-fast-path), for scale: Luna 2.25 µs
-(26.9x slower), qgcrf2itrf 2.88 µs, qteme2gcrf 8.55 µs (19.6x slower),
-kepler 291 ns (6.6x slower), propagate 2.17 ms (5.3x slower).
+The sgp4 crate row moved 21.3 → 23.1 µs across the day with its pure code
+path untouched — codegen-layout/environment jitter, the observed
+run-to-run scale for this sandbox. Prior generation (same day,
+pre-fast-path), for scale: Luna 2.25 µs (26.9x slower), qgcrf2itrf
+2.88 µs, qteme2gcrf 8.55 µs (19.6x slower), kepler 291 ns (6.6x slower),
+propagate 2.17 ms (5.3x slower).
 
 ## Reading the numbers (2026-07-22, post fast-path)
 
-- **Every former slow row is fixed; propagate now BEATS satkit** (369.8 µs
-  vs 409 µs for the same one-orbit problem) with zero caching and zero
+- **Every former slow row is fixed; propagate now BEATS satkit** (367.9 µs
+  vs 408.9 µs for the same one-orbit problem) with zero caching and zero
   accuracy change — the fix was precomputation only (see the
   implementation record below). The in-crate machine-agreement tests pin
   the fast paths to the anise almanac results; the harness bounds vs
@@ -61,14 +64,14 @@ kepler 291 ns (6.6x slower), propagate 2.17 ms (5.3x slower).
 - **Luna geocentric at 4.3x is structural, not waste**: DE440 stores Luna
   geocentrically so satkit's Moon lookup is ONE preloaded Chebyshev eval;
   the crate evaluates the honest two-leg tree (301-wrt-3 + 399-wrt-3),
-  pays one Epoch→ET conversion, and returns velocity too. ~356 ns/call
+  pays one Epoch→ET conversion, and returns velocity too. ~350 ns/call
   is far below any hot-loop threshold that matters here.
-- **TEME at 3.3x is a fidelity gap, not overhead**: the crate runs the
+- **TEME at 3.4x is a fidelity gap, not overhead**: the crate runs the
   full IAU-76/FK5 chain (106-term IAU-1980 nutation series, once);
-  satkit's 377 ns is Vallado's ~1-arcsec 2-term nutation approximation.
+  satkit's 373 ns is Vallado's ~1-arcsec 2-term nutation approximation.
   Same-accuracy comparison isn't available from satkit; the harness
   measured 0.22" agreement with the crate as the full-series side.
-- **GCRF↔ITRF at 131x faster** is the pre-resolved BPC segment evaluation
+- **GCRF↔ITRF at 133x faster** is the pre-resolved BPC segment evaluation
   (degree-20 Chebyshev over 1-day records) vs satkit's full IERS-2010
   series; **geodetic ~5x faster** (Vermeille closed form).
 - **propagate's remaining budget is force math, not plumbing**: the three
