@@ -31,7 +31,9 @@
   in seconds: `cargo bench -p engine-astrodynamics-tests --bench
   <ephemeris|frames|geodetic|kepler|sgp4|propagation>` (omit `--bench` to
   run all; sources at `tests/src/benches/*.rs`, kept under `src/` for the
-  same discovery-glob reason).
+  same discovery-glob reason). Measured numbers are cached in
+  `crates/engine-astrodynamics/.claude/BENCHMARKS.md` — read that instead
+  of re-running, and keep it current per the policy stated there.
 - **`cargo clippy`** — run heavily, aim warning-free. It does not validate
   WGSL: after every shader edit run `naga --compact --capabilities none
   crates/engine/src/shaders/scene.wgsl` (authoritative — a clean `cargo build` proves nothing

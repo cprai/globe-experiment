@@ -380,20 +380,24 @@ triggers). API differences the engine migration must absorb:
   Luna 301, Mars..Pluto 4..9 (system barycenters — DE440 has outer
   planets only as barycenters; same semantics as the satkit era).
 
-Performance (criterion, warm, 1-orbit LEO, default 4×4, measured
-2026-07-22): `propagate` ~2.2 ms vs satkit ~0.4 ms (~5x — the earlier
-"~75 ms" probe figure was NOT warm: it included the one-time lazy anise
-kernel parse on the first ephemeris query, which criterion's warm-up
-excludes; satkit's figure was unchanged, confirming the attribution). The
-remaining gap is anise per-evaluation `translate`/`rotate` frame
-resolution (3 calls/derivative); `interp_batch` (the engine's per-frame
-trail path) is comparable to satkit (~25 µs vs ~23 µs). Decision: no
-caching until a real profile shows propagate cost is user-visible;
-per-step Chebyshev caching of third-body states is the anticipated remedy.
-Criterion comparison benches live in the harness, one target per domain
-(ephemeris/frames/geodetic/kepler/sgp4/propagation):
-`cargo bench -p engine-astrodynamics-tests --bench <name>` (omit `--bench`
-to run all; sources at `tests/src/benches/*.rs`).
+Performance: measured criterion numbers live in `.claude/BENCHMARKS.md` —
+the agent-facing cache layer, since the benches take minutes. READ that
+file instead of re-running; UPDATE it any time a bench target is run; and
+RE-RUN the affected targets (then update it) after any change that could
+plausibly move performance (force model, integrator, trajectory/interp,
+ephemeris/frame plumbing, dependency bumps). The benches are one criterion
+target per domain in the harness:
+`cargo bench -p engine-astrodynamics-tests --bench
+<ephemeris|frames|geodetic|kepler|sgp4|propagation>` (omit `--bench` to
+run all; sources at `tests/src/benches/*.rs`). Headline (2026-07-22, warm,
+1-orbit LEO, default 4×4): `propagate` ~2.2 ms vs satkit ~0.4 ms — ~5x,
+NOT the ~150x once recorded here (the old "~75 ms" probe figure included
+the one-time lazy anise kernel parse; criterion's warm-up excludes it),
+dominated by anise per-evaluation `translate`/`rotate` frame resolution
+(3 calls/derivative); `interp_batch` (the engine's per-frame trail path)
+is at parity. Decision: no caching until a real profile shows propagate
+cost is user-visible; per-step Chebyshev caching of third-body states is
+the anticipated remedy.
 
 ## Verification
 
