@@ -11,11 +11,11 @@ use crate::propagation::bodies::GravityField;
 /// to overflow; erring here (spec §2) beats a silent NaN inside DOP853.
 const MIN_RADIUS_M: f64 = 1.0;
 
-pub(crate) struct CentralGravity {
-    pub field: Box<dyn GravityField>,
+pub(crate) struct CentralGravity<'a> {
+    pub field: Box<dyn GravityField + 'a>,
 }
 
-impl ForceModel for CentralGravity {
+impl ForceModel for CentralGravity<'_> {
     fn acceleration_can(
         &self,
         ctx: &EvalContext,

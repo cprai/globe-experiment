@@ -22,13 +22,15 @@ use glam::{DQuat, DVec3};
 use hifitime::Epoch;
 
 use super::units::CanonicalUnits;
+use crate::data::AstroData;
 use central::CentralGravity;
 
 /// Everything a force needs at one derivative evaluation. Sun/Luna
 /// geocentric positions are fetched at most once per evaluation and shared
 /// (third-body gravity and the solid-tide hook want the same lookups -
 /// ephemeris queries are the hot path, spec §4/§6).
-pub(crate) struct EvalContext {
+pub(crate) struct EvalContext<'a> {
+    pub data: &'a AstroData,
     pub units: CanonicalUnits,
     pub epoch: Epoch,
     /// The segment's central body: the observer of every ephemeris lookup
@@ -39,17 +41,19 @@ pub(crate) struct EvalContext {
     earth_rotation: OnceCell<Result<(DQuat, DVec3), String>>,
 }
 
-impl EvalContext {
-    pub(crate) fn new(units: CanonicalUnits, epoch: Epoch) -> Self {
-        Self::about(units, epoch, crate::ephemeris::Body::Terra)
+impl<'a> EvalContext<'a> {
+    pub(crate) fn new(data: &'a AstroData, units: CanonicalUnits, epoch: Epoch) -> Self {
+        Self::about(data, units, epoch, crate::ephemeris::Body::Terra)
     }
 
     pub(crate) fn about(
+        data: &'a AstroData,
         units: CanonicalUnits,
         epoch: Epoch,
         central: crate::ephemeris::Body,
     ) -> Self {
         Self {
+            data,
             units,
             epoch,
             central,
@@ -69,7 +73,8 @@ impl EvalContext {
         use anise::constants::frames::{EARTH_ITRF93, EARTH_J2000};
         self.earth_rotation
             .get_or_init(|| {
-                let dcm = crate::data::context()
+                let dcm = self
+                    .data
                     .almanac
                     .rotate(EARTH_J2000, EARTH_ITRF93, self.epoch)
                     .map_err(|error| format!("body-fixed rotation at {}: {error}", self.epoch))?;
@@ -95,7 +100,7 @@ impl EvalContext {
     pub(crate) fn geocentric_pos_m(&self, body: crate::ephemeris::Body) -> Result<DVec3, String> {
         use crate::ephemeris::Body;
         let fetch = || {
-            crate::ephemeris::relative_state(body, self.central, self.epoch)
+            crate::ephemeris::relative_state(self.data, body, self.central, self.epoch)
                 .map(|(position, _)| position)
                 .map_err(|error| error.to_string())
         };
@@ -118,25 +123,26 @@ pub(crate) trait ForceModel {
     ) -> Result<DVec3, String>;
 }
 
-/// The assembled dynamics of one segment: canonical units, the central
-/// field, and the enabled perturbations.
-pub(crate) struct DynamicsModel {
+/// The assembled dynamics of one segment: the data bundle, canonical
+/// units, the central field, and the enabled perturbations.
+pub(crate) struct DynamicsModel<'a> {
+    pub data: &'a AstroData,
     pub units: CanonicalUnits,
     /// The ephemeris identity of the central body - the observer of every
     /// third-body/SRP/tide lookup (spec §4.0).
     pub center: crate::ephemeris::Body,
-    pub central: CentralGravity,
-    pub perturbations: Vec<Box<dyn ForceModel>>,
+    pub central: CentralGravity<'a>,
+    pub perturbations: Vec<Box<dyn ForceModel + 'a>>,
 }
 
-impl DynamicsModel {
+impl DynamicsModel<'_> {
     pub(crate) fn acceleration_can(
         &self,
         epoch: Epoch,
         r_can: DVec3,
         v_can: DVec3,
     ) -> Result<DVec3, String> {
-        let ctx = EvalContext::about(self.units, epoch, self.center);
+        let ctx = EvalContext::about(self.data, self.units, epoch, self.center);
         let mut total = self.central.acceleration_can(&ctx, r_can, v_can)?;
         for force in &self.perturbations {
             total += force.acceleration_can(&ctx, r_can, v_can)?;

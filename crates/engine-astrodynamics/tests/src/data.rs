@@ -8,9 +8,18 @@
 //! any other satkit seeder (e.g. the engine's `init_satkit` - nothing
 //! links both today).
 
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
 
+use engine_astrodynamics::AstroData;
 use satkit::frametransform::{IersTableId, init_iers_table_from_bytes};
+
+/// The crate side's eagerly-loaded data, shared across the harness so the
+/// kernel parse happens once per test process (the crate API itself has no
+/// global - this `OnceLock` is harness convenience only).
+pub fn astro() -> &'static AstroData {
+    static DATA: OnceLock<AstroData> = OnceLock::new();
+    DATA.get_or_init(AstroData::load)
+}
 
 /// Forces 8-byte alignment on an embedded blob. `include_bytes!` yields
 /// alignment-1 data, but satkit's ephemeris parser reads packed `f64`s with

@@ -14,13 +14,14 @@
 //! bench target — a separate crate root — can reuse the seeding and time
 //! bridges; nothing outside this directory consumes them.
 //!
-//! Initialization rule: the harness owns the reference side's data. Seed
-//! satkit's process-wide set-once stores exclusively through the
-//! `Once`-guarded [`data::seed_satkit`] (the crate itself no longer
-//! touches satkit — its own kernels parse lazily). Never call satkit's
-//! `init_*` functions directly, and never combine this harness in one
-//! process with any other satkit seeder (e.g. the engine's
-//! `init_satkit`) — the stores accept one seeding per process.
+//! Initialization rule: the harness owns both sides' data. The crate side
+//! is one eagerly-loaded [`engine_astrodynamics::AstroData`], shared via
+//! [`data::astro`]. Seed satkit's process-wide set-once stores exclusively
+//! through the `Once`-guarded [`data::seed_satkit`] (the crate itself no
+//! longer touches satkit). Never call satkit's `init_*` functions
+//! directly, and never combine this harness in one process with any other
+//! satkit seeder (e.g. the engine's `init_satkit`) — the stores accept one
+//! seeding per process.
 
 pub mod data;
 
@@ -167,7 +168,7 @@ mod ephemeris {
         for (epoch_index, &epoch) in epochs().iter().enumerate() {
             for (body, reference) in BODIES {
                 let label = format!("{body:?} geocentric_pos, epoch {epoch_index}");
-                let got = ephemeris::geocentric_pos(body, epoch)
+                let got = ephemeris::geocentric_pos(crate::data::astro(), body, epoch)
                     .unwrap_or_else(|e| panic!("{label}: {e}"));
                 let want =
                     satkit::jplephem::geocentric_pos(reference, &satkit_instant_at_tdb(epoch))
@@ -183,7 +184,7 @@ mod ephemeris {
         for (epoch_index, &epoch) in epochs().iter().enumerate() {
             for (body, reference) in BODIES {
                 let label = format!("{body:?} barycentric_pos, epoch {epoch_index}");
-                let got = ephemeris::barycentric_pos(body, epoch)
+                let got = ephemeris::barycentric_pos(crate::data::astro(), body, epoch)
                     .unwrap_or_else(|e| panic!("{label}: {e}"));
                 let want = satkit_barycentric(body, reference, &satkit_instant_at_tdb(epoch));
                 assert_vec_close(&label, got, want, EPHEMERIS_REL_TOL);
@@ -197,8 +198,9 @@ mod ephemeris {
         for (epoch_index, &epoch) in epochs().iter().enumerate() {
             for (body, reference) in BODIES {
                 let label = format!("{body:?} geocentric_state, epoch {epoch_index}");
-                let (got_pos, got_vel) = ephemeris::geocentric_state(body, epoch)
-                    .unwrap_or_else(|e| panic!("{label}: {e}"));
+                let (got_pos, got_vel) =
+                    ephemeris::geocentric_state(crate::data::astro(), body, epoch)
+                        .unwrap_or_else(|e| panic!("{label}: {e}"));
                 let (want_pos, want_vel) =
                     satkit::jplephem::geocentric_state(reference, &satkit_instant_at_tdb(epoch))
                         .unwrap_or_else(|e| panic!("{label} (satkit): {e}"));
@@ -224,8 +226,9 @@ mod ephemeris {
         for (epoch_index, &epoch) in epochs().iter().enumerate() {
             for (body, reference) in BODIES {
                 let label = format!("{body:?} barycentric_state, epoch {epoch_index}");
-                let (got_pos, got_vel) = ephemeris::barycentric_state(body, epoch)
-                    .unwrap_or_else(|e| panic!("{label}: {e}"));
+                let (got_pos, got_vel) =
+                    ephemeris::barycentric_state(crate::data::astro(), body, epoch)
+                        .unwrap_or_else(|e| panic!("{label}: {e}"));
                 let (want_pos, want_vel) =
                     satkit_barycentric_state(body, reference, &satkit_instant_at_tdb(epoch));
                 assert_vec_close(
@@ -292,7 +295,7 @@ mod frames {
         crate::data::seed_satkit();
         for (index, &epoch) in epochs().iter().enumerate() {
             let angle = relative_arcsec(
-                frames::qgcrf2itrf(epoch),
+                frames::qgcrf2itrf(crate::data::astro(), epoch),
                 quat(satkit::frametransform::qgcrf2itrf(&satkit_instant(epoch))),
             );
             assert!(
@@ -317,7 +320,7 @@ mod frames {
         crate::data::seed_satkit();
         let epoch = Epoch::from_gregorian_utc(1965, 6, 1, 0, 0, 0, 0);
         let angle = relative_arcsec(
-            frames::qgcrf2itrf(epoch),
+            frames::qgcrf2itrf(crate::data::astro(), epoch),
             quat(satkit::frametransform::qgcrf2itrf(&satkit_instant(epoch))),
         );
         let predicted = 15.041 * (3.640_130 + 151.0 * 0.001_296);
@@ -333,7 +336,7 @@ mod frames {
         for (index, &epoch) in epochs().iter().enumerate() {
             let instant = satkit_instant(epoch);
             let to_gcrf = relative_arcsec(
-                frames::qteme2gcrf(epoch),
+                frames::qteme2gcrf(crate::data::astro(), epoch),
                 quat(satkit::frametransform::qteme2gcrf(&instant)),
             );
             assert!(
@@ -341,7 +344,7 @@ mod frames {
                 "qteme2gcrf epoch {index}: {to_gcrf:.4} arcsec"
             );
             let to_itrf = relative_arcsec(
-                frames::qteme2itrf(epoch),
+                frames::qteme2itrf(crate::data::astro(), epoch),
                 quat(satkit::frametransform::qteme2itrf(&instant)),
             );
             assert!(
@@ -450,7 +453,7 @@ mod kepler {
         crate::data::seed_satkit();
         for eccentricity in [0.0, 0.3, 0.7, 0.99] {
             let (pos, vel) = perigee_state(6_778_000.0, eccentricity);
-            let ours = Kepler::from_pv(pos, vel)
+            let ours = Kepler::from_pv(crate::data::astro(), pos, vel)
                 .unwrap_or_else(|e| panic!("crate elements at e = {eccentricity}: {e}"));
             let theirs = satkit::Kepler::from_pv(satkit_vec(pos), satkit_vec(vel))
                 .unwrap_or_else(|e| panic!("satkit elements at e = {eccentricity}: {e}"));
@@ -482,7 +485,7 @@ mod kepler {
     fn escape_state_errs_on_both_sides() {
         crate::data::seed_satkit();
         let (pos, vel) = perigee_state(6_778_000.0, 1.2);
-        assert!(Kepler::from_pv(pos, vel).is_err());
+        assert!(Kepler::from_pv(crate::data::astro(), pos, vel).is_err());
         assert!(satkit::Kepler::from_pv(satkit_vec(pos), satkit_vec(vel)).is_err());
     }
 }
@@ -637,9 +640,15 @@ mod propagation {
         let state = leo_state();
         let begin = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
         let end = begin + Duration::from_seconds(86_400.0);
-        let ours = propagate(&state, begin, end, &crate_settings(4, true, true))
-            .expect("crate propagation")
-            .state_end();
+        let ours = propagate(
+            crate::data::astro(),
+            &state,
+            begin,
+            end,
+            &crate_settings(4, true, true),
+        )
+        .expect("crate propagation")
+        .state_end();
         let (want_pos, want_vel) =
             satkit_end_state(&state, begin, end, &satkit_settings(4, true, true));
         let pos_diff = (ours.pos_gcrf_m - want_pos).length();
@@ -660,9 +669,15 @@ mod propagation {
         let state = leo_state();
         let begin = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
         let end = begin + Duration::from_seconds(86_400.0);
-        let ours = propagate(&state, begin, end, &crate_settings(2, false, false))
-            .expect("crate propagation")
-            .state_end();
+        let ours = propagate(
+            crate::data::astro(),
+            &state,
+            begin,
+            end,
+            &crate_settings(2, false, false),
+        )
+        .expect("crate propagation")
+        .state_end();
         let (want_pos, _) = satkit_end_state(&state, begin, end, &satkit_settings(2, false, false));
         let pos_diff = (ours.pos_gcrf_m - want_pos).length();
         assert!(
@@ -680,9 +695,15 @@ mod propagation {
         let state = leo_state();
         let begin = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
         let end = begin - Duration::from_seconds(6.0 * 3600.0);
-        let ours = propagate(&state, begin, end, &crate_settings(4, true, true))
-            .expect("crate propagation")
-            .state_end();
+        let ours = propagate(
+            crate::data::astro(),
+            &state,
+            begin,
+            end,
+            &crate_settings(4, true, true),
+        )
+        .expect("crate propagation")
+        .state_end();
         let (want_pos, _) = satkit_end_state(&state, begin, end, &satkit_settings(4, true, true));
         let pos_diff = (ours.pos_gcrf_m - want_pos).length();
         assert!(

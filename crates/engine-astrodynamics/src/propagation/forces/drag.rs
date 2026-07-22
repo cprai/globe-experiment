@@ -14,12 +14,12 @@ use super::{EvalContext, ForceModel};
 use crate::propagation::bodies::AtmosphereModel;
 use crate::propagation::spacecraft::SpacecraftModel;
 
-pub(crate) struct AtmosphericDrag {
+pub(crate) struct AtmosphericDrag<'a> {
     pub spacecraft: SpacecraftModel,
-    pub atmosphere: Box<dyn AtmosphereModel>,
+    pub atmosphere: Box<dyn AtmosphereModel + 'a>,
 }
 
-impl ForceModel for AtmosphericDrag {
+impl ForceModel for AtmosphericDrag<'_> {
     fn acceleration_can(
         &self,
         ctx: &EvalContext,
@@ -58,15 +58,15 @@ mod tests {
     use crate::propagation::units::CanonicalUnits;
     use hifitime::Epoch;
 
-    fn context() -> EvalContext {
-        crate::init();
+    fn context() -> EvalContext<'static> {
         EvalContext::new(
+            crate::data::test_data(),
             CanonicalUnits::new(3.986_004_418e14, 6_378_137.0),
             Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0),
         )
     }
 
-    fn drag() -> AtmosphericDrag {
+    fn drag() -> AtmosphericDrag<'static> {
         AtmosphericDrag {
             spacecraft: SpacecraftModel {
                 mass_kg: 157.0,
@@ -74,7 +74,9 @@ mod tests {
                 c_r: 1.3,
                 c_d: 2.2,
             },
-            atmosphere: Box::new(EarthAtmosphere::new()),
+            atmosphere: Box::new(EarthAtmosphere::new(
+                &crate::data::test_data().space_weather,
+            )),
         }
     }
 

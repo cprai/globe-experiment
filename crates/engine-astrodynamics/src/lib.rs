@@ -6,9 +6,10 @@
 //! ([`propagation`]). Standalone - not yet consumed by `engine`, which
 //! still runs on satkit until its migration.
 //!
-//! No process-global state: queries parse the embedded kernels lazily on
-//! first touch, and [`init`] merely front-loads that (keeping the cost out
-//! of a first frame). Call it or don't - repeat calls are free.
+//! No process-global state and no lazy loading: [`AstroData::load`] parses
+//! every embedded kernel and table up front, and each data-dependent API
+//! function takes `&AstroData` as its first argument - the caller owns the
+//! data and decides when the one-time parse cost is paid.
 
 mod data;
 pub mod ephemeris;
@@ -19,7 +20,7 @@ pub mod propagation;
 pub mod sgp4;
 pub mod tle;
 
-pub use data::init;
+pub use data::AstroData;
 /// The crate's time vocabulary, re-exported from hifitime: integer-backed
 /// (centuries + nanoseconds), exact arithmetic, TAI/TT/TDB/UTC built in.
 pub use hifitime::{Duration, Epoch, TimeScale};

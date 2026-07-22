@@ -15,12 +15,13 @@ use std::time::Duration as StdDuration;
 use criterion::{Criterion, criterion_group, criterion_main};
 use engine_astrodynamics::propagation::{OrbitState, Settings, propagate};
 use engine_astrodynamics::{Duration, Epoch};
-use engine_astrodynamics_tests::data::seed_satkit;
+use engine_astrodynamics_tests::data::{astro, seed_satkit};
 use engine_astrodynamics_tests::support::satkit_instant;
 use glam::DVec3;
 
 fn bench_propagation(c: &mut Criterion) {
     seed_satkit();
+    let data = astro();
     let state = OrbitState {
         pos_gcrf_m: DVec3::new(6_778_000.0, 0.0, 0.0),
         vel_gcrf_m_s: DVec3::new(0.0, 4_764.0, 6_009.0),
@@ -60,7 +61,7 @@ fn bench_propagation(c: &mut Criterion) {
     let mut group = c.benchmark_group("propagate_leo_one_orbit");
     group.measurement_time(StdDuration::from_secs(15));
     group.bench_function("crate", |b| {
-        b.iter(|| propagate(&state, begin, end, black_box(&crate_settings)).unwrap());
+        b.iter(|| propagate(data, &state, begin, end, black_box(&crate_settings)).unwrap());
     });
     group.bench_function("satkit", |b| {
         b.iter(|| {
@@ -80,7 +81,7 @@ fn bench_propagation(c: &mut Criterion) {
         .map(|i| begin + Duration::from_seconds(5_400.0 * f64::from(i) / 500.0))
         .collect();
     let instants: Vec<satkit::Instant> = samples.iter().map(|&e| satkit_instant(e)).collect();
-    let ours = propagate(&state, begin, end, &crate_settings).expect("crate propagation");
+    let ours = propagate(data, &state, begin, end, &crate_settings).expect("crate propagation");
     let theirs =
         satkit::orbitprop::propagate(&packed, &satkit_begin, &satkit_end, &satkit_settings, None)
             .expect("satkit propagation");

@@ -13,11 +13,19 @@ section's content is preserved in this file.
 
 Public API: glam `DVec3`/`DQuat`, SI meters, `hifitime::{Epoch, Duration,
 TimeScale}` re-exported, every `Epoch` by value (`Copy`). nalgebra and
-chrono never appear in public signatures. No process-global state anywhere:
-`data::Context` (the composed `Almanac`) is a `LazyLock`, forced eagerly by
-`init()` or lazily by the first query. The old "must not share a process
-with the engine's `init_satkit`" rule is DEAD for this crate; it survives
-only inside `tests/` (the harness seeds reference satkit itself).
+chrono never appear in public signatures. No process-global state and NO
+LAZY LOADING (owner decision 2026-07-22, replacing the earlier
+`LazyLock`+`init()` design): `AstroData::load()` eagerly parses every
+embedded kernel and table (almanac + EGM2008 + space weather, ~100 ms
+once), and every data-dependent API function takes `&AstroData` as its
+FIRST argument — `ephemeris::*`, `frames::q*`, `Kepler::from_pv`,
+`propagate`. `sgp4`/`tle`/`geodetic` are pure and take no data. The caller
+owns the one `AstroData`. Unit tests share one instance via the
+`cfg(test)`-only `data::test_data()` (`OnceLock` — harness twin:
+`tests data::astro()`); production paths have no global. The old "must not
+share a process with the engine's `init_satkit`" rule is DEAD for this
+crate; it survives only inside `tests/` (the harness seeds reference
+satkit itself).
 
 ## Accuracy target and numeric policy (spec §0, settled — do not revisit)
 
@@ -341,14 +349,20 @@ metaload/analysis: ureq/rayon/csv — unneeded for embedded parsing).
 
 ## Facade contract (propagation/mod.rs) + engine migration notes
 
-`propagate(&OrbitState, begin: Epoch, end: Epoch, &Settings) →
+`propagate(&AstroData, &OrbitState, begin: Epoch, end: Epoch, &Settings) →
 Propagation { time_begin, time_end, state_end, interp, interp_batch,
 shadow_boundaries }`; GCRF meters; backward spans first-class; zero-
-duration returns the input exactly. `Settings { gravity_degree/order
+duration returns the input exactly. (`Propagation` is self-contained —
+interpolation needs no `AstroData`.) `Settings { gravity_degree/order
 (EGM2008 ≤ 360; < 2 degrades to point-mass), abs/rel_error (default 1e-8),
 use_sun/moon_gravity, use_relativistic_correction, spacecraft }`; solid
 tides always on. Facade is Cowell-only (LEO never trips the switch
 triggers). API differences the engine migration must absorb:
+- **Explicit data**: the engine constructs one `AstroData` (via
+  `AstroData::load()`, eager ~100 ms — do it at scene init, not per
+  frame) and passes `&AstroData` as the first argument to every
+  ephemeris/frames/kepler/propagate call. There is no `init()` and no
+  global to warm.
 - Time: `Epoch` by value everywhere; satkit `Instant` gone.
 - `sgp4(&Tle, &[Epoch])` — `&mut` gone (Constants built at parse; element
   errors surface at LOAD, earlier than satkit); a sub-surface sample errs

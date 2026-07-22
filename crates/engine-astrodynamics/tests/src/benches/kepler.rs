@@ -7,12 +7,13 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use engine_astrodynamics::kepler::Kepler;
-use engine_astrodynamics_tests::data::seed_satkit;
+use engine_astrodynamics_tests::data::{astro, seed_satkit};
 use engine_astrodynamics_tests::support::satkit_vec;
 use glam::DVec3;
 
 fn bench_kepler(c: &mut Criterion) {
     seed_satkit();
+    let data = astro();
     // Perigee state at e = 0.7 (same construction as the comparison test):
     // v_perigee = sqrt(mu (1 + e) / r).
     let mu_m3_s2 = 3.986004418e14_f64;
@@ -22,7 +23,7 @@ fn bench_kepler(c: &mut Criterion) {
     let (reference_pos, reference_vel) = (satkit_vec(pos), satkit_vec(vel));
     let mut group = c.benchmark_group("kepler_from_pv");
     group.bench_function("crate", |b| {
-        b.iter(|| Kepler::from_pv(black_box(pos), black_box(vel)).unwrap());
+        b.iter(|| Kepler::from_pv(data, black_box(pos), black_box(vel)).unwrap());
     });
     group.bench_function("satkit", |b| {
         b.iter(|| {

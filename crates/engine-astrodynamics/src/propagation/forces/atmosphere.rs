@@ -10,13 +10,12 @@
 //! FAILS LOUDLY instead of substituting defaults. Delete the cached
 //! `SW-All.csv` in `OUT_DIR` and rebuild to refresh the snapshot.
 
-use std::sync::LazyLock;
-
 use glam::DVec3;
 use hifitime::Epoch;
 use tobari::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use tobari::space_weather::ConstantWeather;
 
+use crate::data::AstroData;
 use crate::propagation::bodies::{AtmosphereModel, CentralBody, Vacuum};
 
 /// NRLMSISE-00's validity ceiling; above it the drag term is skipped
@@ -26,7 +25,7 @@ const MODEL_CEILING_KM: f64 = 1000.0;
 
 /// The parsed `SW-All.csv`: one record per day, plus the 3-hourly Ap
 /// series flattened for O(1) history lookups.
-struct SpaceWeatherTable {
+pub(crate) struct SpaceWeatherTable {
     /// MJD (UTC) of the first record.
     first_mjd: i64,
     /// Daily observed F10.7 (`F10.7_OBS`), one per day.
@@ -38,9 +37,6 @@ struct SpaceWeatherTable {
     /// 3-hourly Ap (`AP1..AP8`), eight per day, day-major.
     ap_3hourly: Vec<f64>,
 }
-
-static SPACE_WEATHER: LazyLock<SpaceWeatherTable> =
-    LazyLock::new(|| SpaceWeatherTable::parse(crate::data::SPACE_WEATHER_CSV));
 
 /// Gregorian (UTC) calendar date to Modified Julian Day number
 /// (Fliegel-Van Flandern).
@@ -55,7 +51,7 @@ fn mjd_from_ymd(year: i64, month: i64, day: i64) -> i64 {
 impl SpaceWeatherTable {
     /// Panics on malformed data (a broken build) - the embedded snapshot
     /// either parses or the crate should not ship.
-    fn parse(csv: &[u8]) -> Self {
+    pub(crate) fn parse(csv: &[u8]) -> Self {
         let text = std::str::from_utf8(csv).expect("SW-All.csv is UTF-8");
         let mut lines = text.lines();
         let header: Vec<&str> = lines
@@ -174,21 +170,24 @@ impl SpaceWeatherTable {
     }
 }
 
-/// NRLMSISE-00 for Earth. The tobari model is driven through its
-/// low-level numeric input; the placeholder provider is never consulted.
-pub(crate) struct EarthAtmosphere {
+/// NRLMSISE-00 for Earth over the caller's pre-parsed space-weather table
+/// (from [`AstroData`]). The tobari model is driven through its low-level
+/// numeric input; the placeholder provider is never consulted.
+pub(crate) struct EarthAtmosphere<'a> {
     model: Nrlmsise00<ConstantWeather>,
+    weather: &'a SpaceWeatherTable,
 }
 
-impl EarthAtmosphere {
-    pub(crate) fn new() -> Self {
+impl<'a> EarthAtmosphere<'a> {
+    pub(crate) fn new(weather: &'a SpaceWeatherTable) -> Self {
         Self {
             model: Nrlmsise00::new(ConstantWeather::new(0.0, 0.0)),
+            weather,
         }
     }
 }
 
-impl AtmosphereModel for EarthAtmosphere {
+impl AtmosphereModel for EarthAtmosphere<'_> {
     fn density_kg_m3(&self, body_fixed_m: DVec3, epoch: Epoch) -> Result<Option<f64>, String> {
         // Geodetic (not geocentric) coordinates, via the crate's own WGS84
         // conversion (spec §4.7).
@@ -198,7 +197,7 @@ impl AtmosphereModel for EarthAtmosphere {
             return Ok(None);
         }
 
-        let (f107_daily, f107_avg, ap_daily, ap_array) = SPACE_WEATHER.weather_at(epoch)?;
+        let (f107_daily, f107_avg, ap_daily, ap_array) = self.weather.weather_at(epoch)?;
         let (_, _, _, hour, minute, second, nanos) = epoch.to_gregorian_utc();
         let ut_seconds = f64::from(hour) * 3600.0
             + f64::from(minute) * 60.0
@@ -226,9 +225,12 @@ impl AtmosphereModel for EarthAtmosphere {
 /// The atmosphere registry (spec §4.7, same pattern as gravity): vacuum is
 /// the universal default; Earth resolves to NRLMSISE-00. A Mars/Venus/
 /// Titan model later is a new arm here, zero changes to the drag force.
-pub(crate) fn atmosphere_for(central: &CentralBody) -> Box<dyn AtmosphereModel> {
+pub(crate) fn atmosphere_for<'a>(
+    data: &'a AstroData,
+    central: &CentralBody,
+) -> Box<dyn AtmosphereModel + 'a> {
     if central.naif_id == 399 {
-        Box::new(EarthAtmosphere::new())
+        Box::new(EarthAtmosphere::new(&data.space_weather))
     } else {
         Box::new(Vacuum)
     }
@@ -242,7 +244,7 @@ mod tests {
     /// with altitude, and the ceiling cut returns None.
     #[test]
     fn density_envelope_and_ceiling() {
-        let atmosphere = EarthAtmosphere::new();
+        let atmosphere = EarthAtmosphere::new(&crate::data::test_data().space_weather);
         let epoch = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
         let at = |altitude_m: f64| {
             atmosphere
@@ -263,7 +265,7 @@ mod tests {
     /// observed span - both far future (predictions) and pre-table past.
     #[test]
     fn observed_only_policy_fails_loudly() {
-        let atmosphere = EarthAtmosphere::new();
+        let atmosphere = EarthAtmosphere::new(&crate::data::test_data().space_weather);
         let position = DVec3::new(6_378_137.0 + 400e3, 0.0, 0.0);
         for epoch in [
             Epoch::from_gregorian_utc(2050, 1, 1, 0, 0, 0, 0),
@@ -281,7 +283,7 @@ mod tests {
     /// into the model.
     #[test]
     fn solar_cycle_visible_in_density() {
-        let atmosphere = EarthAtmosphere::new();
+        let atmosphere = EarthAtmosphere::new(&crate::data::test_data().space_weather);
         let position = DVec3::new(6_378_137.0 + 400e3, 0.0, 0.0);
         let solar_max = atmosphere
             .density_kg_m3(position, Epoch::from_gregorian_utc(1990, 3, 1, 12, 0, 0, 0))

@@ -28,24 +28,32 @@ pairings is proven by the harness's `cargo test` comparisons.
 
 Dev sandbox: x86_64 Linux container (see platform.md; wall-clock noise is
 possible — criterion's intervals were tight, ±1% or better). Warm process:
-satkit seeded, anise kernels parsed before measurement. Bench profile
-(inherits release). Measured 2026-07-22.
+satkit seeded, the crate's `AstroData` loaded eagerly before measurement.
+Bench profile (inherits release). Measured 2026-07-22, after the
+explicit-`AstroData` refactor (no lazy loading; data passed as the first
+argument).
 
-## Results (2026-07-22)
+## Results (2026-07-22, post-AstroData refactor)
 
 | Group | crate | satkit | crate/satkit |
 |---|---|---|---|
-| `ephemeris_luna_geocentric_state` | 2.27 µs | 85.0 ns | 26.7x slower |
-| `frames_qgcrf2itrf` | 3.14 µs | 46.2 µs | **14.7x faster** |
-| `frames_qteme2gcrf` | 8.77 µs | 370 ns | 23.7x slower |
-| `geodetic_from_itrf` | 69.9 ns | 328 ns | **4.7x faster** |
-| `kepler_from_pv` (e = 0.7) | 299 ns | 43.8 ns | 6.8x slower |
-| `sgp4_iss_113_samples` | 21.8 µs | 22.8 µs | parity |
-| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 2.18 ms | 413 µs | 5.3x slower |
-| `interp_batch_500_samples` | 24.9 µs | 22.6 µs | ~parity |
+| `ephemeris_luna_geocentric_state` | 2.25 µs | 83.7 ns | 26.9x slower |
+| `frames_qgcrf2itrf` | 2.88 µs | 46.4 µs | **16.1x faster** |
+| `frames_qteme2gcrf` | 8.55 µs | 437 ns | 19.6x slower |
+| `geodetic_from_itrf` | 70.7 ns | 328 ns | **4.6x faster** |
+| `kepler_from_pv` (e = 0.7) | 291 ns | 43.9 ns | 6.6x slower |
+| `sgp4_iss_113_samples` | 21.3 µs | 22.7 µs | parity |
+| `propagate_leo_one_orbit` (4×4 + sun/moon + rel, 1e-8) | 2.17 ms | 408 µs | 5.3x slower |
+| `interp_batch_500_samples` | 25.1 µs | 22.4 µs | ~parity |
 
 ## Reading the numbers (2026-07-22 analysis)
 
+- **The explicit-`AstroData` refactor moved nothing** (same-day re-run,
+  all rows within noise of the pre-refactor measurements; the largest
+  shifts — qgcrf2itrf 3.14→2.88 µs, satkit's qteme2gcrf 370→437 ns — are
+  environment jitter, not code). Expected: the refactor only replaced a
+  `LazyLock` deref with a passed reference; anise's per-call resolution
+  (below) is untouched.
 - **`propagate` is ~5x, not the ~150x once recorded.** The old "~75 ms"
   probe figure included the one-time lazy anise kernel parse inside the
   first timed call; criterion's warm-up excludes it (satkit's figure was

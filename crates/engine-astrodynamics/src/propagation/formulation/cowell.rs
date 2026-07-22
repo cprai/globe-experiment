@@ -10,7 +10,7 @@ use crate::propagation::forces::DynamicsModel;
 use crate::propagation::integrator::Dynamics;
 
 pub(crate) struct CowellSystem<'a> {
-    pub model: &'a DynamicsModel,
+    pub model: &'a DynamicsModel<'a>,
     /// The segment anchor; the integrator variable is the canonical time
     /// offset from it (spec §5 - never absolute seconds).
     pub anchor: Epoch,
@@ -60,9 +60,10 @@ mod tests {
     }
 
     /// Two-body model in canonical units (mu = 1 by construction).
-    fn two_body(mu_m3_s2: f64, du_m: f64) -> DynamicsModel {
+    fn two_body(mu_m3_s2: f64, du_m: f64) -> DynamicsModel<'static> {
         let units = CanonicalUnits::new(mu_m3_s2, du_m);
         DynamicsModel {
+            data: crate::data::test_data(),
             units,
             center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
@@ -214,6 +215,7 @@ mod tests {
         };
         let advance = |with_relativity: bool| {
             let mut model = DynamicsModel {
+                data: crate::data::test_data(),
                 units,
                 center: crate::ephemeris::Body::Terra,
                 central: CentralGravity {

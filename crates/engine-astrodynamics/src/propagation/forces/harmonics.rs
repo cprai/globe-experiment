@@ -28,10 +28,10 @@
 //! total field falls out of one code path.
 
 use std::cell::{Cell, RefCell};
-use std::sync::LazyLock;
 
 use glam::DVec3;
 
+use crate::data::AstroData;
 use crate::propagation::bodies::{CentralBody, GravityField, PointMass};
 
 /// The parsed packed-EGM2008 table (see `build.rs` for the format).
@@ -49,7 +49,8 @@ fn coefficient_index(n: usize, m: usize) -> usize {
 }
 
 impl EgmTable {
-    fn parse(packed: &[u8]) -> Self {
+    /// Panics on malformed data (a broken build).
+    pub(crate) fn parse(packed: &[u8]) -> Self {
         let read_u32 = |at: usize| u32::from_le_bytes(packed[at..at + 4].try_into().unwrap());
         let read_f64 = |at: usize| f64::from_le_bytes(packed[at..at + 8].try_into().unwrap());
         assert_eq!(&packed[..8], b"EGM2008\0", "packed EGM2008 magic");
@@ -74,10 +75,6 @@ impl EgmTable {
     }
 }
 
-/// The embedded table, parsed once per process.
-pub(crate) static EGM2008: LazyLock<EgmTable> =
-    LazyLock::new(|| EgmTable::parse(crate::data::EGM2008_PACKED));
-
 /// IERS 2010 nominal (elastic) degree-2 Love numbers, k20/k21/k22.
 const LOVE_K2: [f64; 3] = [0.295_25, 0.294_70, 0.298_01];
 /// GM ratios perturber/Earth for the tide sum (DE440-class values).
@@ -85,9 +82,10 @@ const GM_RATIO_SUN: f64 = 332_946.048_7;
 const GM_RATIO_MOON: f64 = 1.0 / 81.300_568_221_497_22;
 
 /// EGM2008 truncated to `degree` x `order`, with optional degree-2 solid
-/// tides. Registered for Earth; every other body stays point-mass.
-pub(crate) struct Egm2008Gravity {
-    table: &'static EgmTable,
+/// tides. Registered for Earth; every other body stays point-mass. Borrows
+/// the caller's pre-parsed table (from [`AstroData`]).
+pub(crate) struct Egm2008Gravity<'a> {
+    table: &'a EgmTable,
     degree: usize,
     order: usize,
     solid_tides: bool,
@@ -123,9 +121,8 @@ fn lambda(n: usize, m: usize) -> f64 {
     }
 }
 
-impl Egm2008Gravity {
-    pub(crate) fn new(degree: usize, order: usize, solid_tides: bool) -> Self {
-        let table = &*EGM2008;
+impl<'a> Egm2008Gravity<'a> {
+    pub(crate) fn new(table: &'a EgmTable, degree: usize, order: usize, solid_tides: bool) -> Self {
         Self {
             table,
             degree: degree.min(table.n_max),
@@ -181,7 +178,7 @@ impl Egm2008Gravity {
     }
 }
 
-impl GravityField for Egm2008Gravity {
+impl GravityField for Egm2008Gravity<'_> {
     fn acceleration_m_s2(&self, r_m: DVec3) -> DVec3 {
         let table = self.table;
         let n_max = self.degree;
@@ -298,14 +295,16 @@ impl GravityField for Egm2008Gravity {
 /// default; Earth (NAIF 399) resolves to EGM2008 when a harmonic degree is
 /// requested. Adding a body-specific model later is a new arm here, zero
 /// changes elsewhere.
-pub(crate) fn field_for(
+pub(crate) fn field_for<'a>(
+    data: &'a AstroData,
     central: &CentralBody,
     degree: u16,
     order: u16,
     solid_tides: bool,
-) -> Box<dyn GravityField> {
+) -> Box<dyn GravityField + 'a> {
     if central.naif_id == 399 && degree >= 2 {
         Box::new(Egm2008Gravity::new(
+            &data.egm2008,
             degree as usize,
             order as usize,
             solid_tides,
@@ -385,7 +384,7 @@ mod tests {
     /// reproduce point-mass gravity (with ITS OWN GM) to machine precision.
     #[test]
     fn degree_zero_is_point_mass() {
-        let field = Egm2008Gravity::new(0, 0, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 0, 0, false);
         let r = DVec3::new(5.1e6, -3.3e6, 2.2e6);
         let got = field.acceleration_m_s2(r);
         let want = -field.table.gm_m3_s2 / r.length().powi(3) * r;
@@ -400,7 +399,7 @@ mod tests {
     /// (J2 = -sqrt(5) C_bar_20).
     #[test]
     fn degree_two_matches_analytic_j2() {
-        let field = Egm2008Gravity::new(2, 0, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 2, 0, false);
         let table = field.table;
         let j2 = -5.0_f64.sqrt() * table.c_bar[coefficient_index(2, 0)];
         assert!((j2 - 1.0826e-3).abs() < 1e-6, "J2 = {j2}");
@@ -435,7 +434,7 @@ mod tests {
     /// orders live, at LEO radius and near-pole geometry.
     #[test]
     fn acceleration_is_gradient_of_potential() {
-        let field = Egm2008Gravity::new(8, 8, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 8, 8, false);
         for r in [
             DVec3::new(6.9e6, 1.2e6, 0.8e6),
             DVec3::new(-1.5e6, -6.6e6, 2.4e6),
@@ -456,7 +455,7 @@ mod tests {
     /// has no polar singularity by construction.
     #[test]
     fn poles_are_regular() {
-        let field = Egm2008Gravity::new(36, 36, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 36, 36, false);
         for z in [7.0e6, -7.0e6] {
             let a = field.acceleration_m_s2(DVec3::new(0.0, 0.0, z));
             assert!(a.is_finite(), "pole acceleration {a:?}");
@@ -475,7 +474,7 @@ mod tests {
     /// pole ~9.83 m/s^2) - an absolute scale anchor.
     #[test]
     fn surface_gravity_envelope() {
-        let field = Egm2008Gravity::new(8, 8, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 8, 8, false);
         let equator = field
             .acceleration_m_s2(DVec3::new(6.378e6, 0.0, 0.0))
             .length();
@@ -492,7 +491,7 @@ mod tests {
     /// (~1e-8), with the expected signs for an equatorial perturber.
     #[test]
     fn solid_tide_deltas_have_iers_magnitude() {
-        let field = Egm2008Gravity::new(4, 4, true);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 4, 4, true);
         field.update_time_dependence(
             DVec3::new(1.4959787e11, 0.0, 0.0),
             DVec3::new(3.844e8, 0.0, 0.0),
@@ -530,13 +529,13 @@ mod secular_tests {
     /// (Static field, no tides/rotation coupling: the J2 model itself.)
     #[test]
     fn degree_two_reproduces_j2_nodal_regression() {
-        crate::init();
-        let field = Egm2008Gravity::new(2, 0, false);
+        let field = Egm2008Gravity::new(&crate::data::test_data().egm2008, 2, 0, false);
         let j2 = -5.0_f64.sqrt() * field.table.c_bar[coefficient_index(2, 0)];
         let (gm, re) = (field.table.gm_m3_s2, field.table.radius_m);
         let radius = 7.0e6;
         let units = CanonicalUnits::new(gm, radius);
         let model = DynamicsModel {
+            data: crate::data::test_data(),
             units,
             center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
@@ -581,8 +580,8 @@ mod secular_tests {
     /// textbook secular-rate formula assumes an axisymmetric field, and
     /// degree 2 order 0 IS axisymmetric - only the body-fixed flag must
     /// not rotate the evaluation.
-    struct NonRotatingJ2(Egm2008Gravity);
-    impl GravityField for NonRotatingJ2 {
+    struct NonRotatingJ2<'a>(Egm2008Gravity<'a>);
+    impl GravityField for NonRotatingJ2<'_> {
         fn acceleration_m_s2(&self, r_m: DVec3) -> DVec3 {
             self.0.acceleration_m_s2(r_m)
         }

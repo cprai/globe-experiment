@@ -231,12 +231,19 @@ mod tests {
         Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0)
     }
 
-    fn model_about(center: Body, mu_m3_s2: f64, radius_m: f64, du_m: f64) -> DynamicsModel {
+    fn model_about(
+        center: Body,
+        mu_m3_s2: f64,
+        radius_m: f64,
+        du_m: f64,
+    ) -> DynamicsModel<'static> {
         DynamicsModel {
+            data: crate::data::test_data(),
             units: CanonicalUnits::new(mu_m3_s2, du_m),
             center,
             central: CentralGravity {
                 field: crate::propagation::forces::harmonics::field_for(
+                    crate::data::test_data(),
                     &CentralBody {
                         naif_id: match center {
                             Body::Terra => 399,
@@ -262,9 +269,9 @@ mod tests {
     /// being the outlier means conversion or restart logic is wrong.)
     #[test]
     fn flyby_three_ways_agree() {
-        crate::init();
         let mu = 3.986_004_418e14;
         let model = DynamicsModel {
+            data: crate::data::test_data(),
             units: CanonicalUnits::new(mu, 7.0e6),
             center: Body::Terra,
             central: CentralGravity {
@@ -312,9 +319,9 @@ mod tests {
     /// constant, so ANY switch here is chatter.
     #[test]
     fn hysteresis_band_prevents_chatter() {
-        crate::init();
         let mu = 3.986_004_418e14;
         let model = DynamicsModel {
+            data: crate::data::test_data(),
             units: CanonicalUnits::new(mu, 7.0e6),
             center: Body::Terra,
             central: CentralGravity {
@@ -380,7 +387,6 @@ mod tests {
     /// pick up its harmonic field; everyone else falls back to point-mass.
     #[test]
     fn multi_body_genericity() {
-        crate::init();
         #[allow(clippy::type_complexity)] // (center, mu, radius, third body)
         let bodies: [(Body, f64, f64, Option<(Body, f64)>); 4] = [
             (
@@ -440,18 +446,20 @@ mod tests {
     /// relativistic, and the run without it must be visibly worse.
     #[test]
     fn mercury_tracks_the_ephemeris_over_thirty_days() {
-        crate::init();
+        let data = crate::data::test_data();
         let t0 = anchor();
         let days = 30.0;
         let tf_epoch = t0 + Duration::from_seconds(days * 86_400.0);
         let units = CanonicalUnits::new(1.327_124_400_18e20, 1.495_978_707e11);
-        let (r0_m, v0_m) = crate::ephemeris::relative_state(Body::Mercury, Body::Sol, t0).unwrap();
+        let (r0_m, v0_m) =
+            crate::ephemeris::relative_state(data, Body::Mercury, Body::Sol, t0).unwrap();
         let (rf_m, _) =
-            crate::ephemeris::relative_state(Body::Mercury, Body::Sol, tf_epoch).unwrap();
+            crate::ephemeris::relative_state(data, Body::Mercury, Body::Sol, tf_epoch).unwrap();
         let tf_can = units.time_to_can(days * 86_400.0);
 
         let run = |relativity: bool| {
             let mut model = DynamicsModel {
+                data,
                 units,
                 center: Body::Sol,
                 central: CentralGravity {

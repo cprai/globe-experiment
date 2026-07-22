@@ -6,7 +6,7 @@
 //! facade the satkit era exposed (glam state vectors, GCRF meters).
 
 mod bodies;
-mod forces;
+pub(crate) mod forces;
 mod formulation;
 mod integrator;
 mod spacecraft;
@@ -22,7 +22,7 @@ use hifitime::Epoch;
 use hifitime::Duration;
 use nalgebra::SVector;
 
-use crate::data::context;
+use crate::data::AstroData;
 use crate::ephemeris::Body;
 use bodies::CentralBody;
 use forces::albedo_ir::{PlanetaryRadiation, bond_albedo};
@@ -153,12 +153,13 @@ impl Propagation {
 /// loudly). Adaptive dense-output integrator. The returned [`Propagation`]
 /// carries the end state and interpolation over the span.
 pub fn propagate(
+    data: &AstroData,
     state: &OrbitState,
     begin: Epoch,
     end: Epoch,
     settings: &Settings,
 ) -> Result<Propagation> {
-    let almanac = &context().almanac;
+    let almanac = &data.almanac;
     let mu_of = |frame| -> Result<f64> {
         let info = almanac.frame_info(frame).map_err(err)?;
         Ok(info.mu_km3_s2().map_err(err)? * 1e9)
@@ -213,17 +214,19 @@ pub fn propagate(
             }));
             perturbations.push(Box::new(AtmosphericDrag {
                 spacecraft,
-                atmosphere: atmosphere_for(&central),
+                atmosphere: atmosphere_for(data, &central),
             }));
             Some(srp)
         }
         None => None,
     };
     let model = DynamicsModel {
+        data,
         units,
         center: crate::ephemeris::Body::Terra,
         central: CentralGravity {
             field: forces::harmonics::field_for(
+                data,
                 &central,
                 settings.gravity_degree,
                 settings.gravity_order,
@@ -248,7 +251,9 @@ pub fn propagate(
         dense_points_per_step: 2,
     };
     let (arc, shadow_boundaries) = match &srp {
-        Some(srp) => solve_with_shadow_events(&system, tf_can, y0, &config, srp, units, begin)?,
+        Some(srp) => {
+            solve_with_shadow_events(data, &system, tf_can, y0, &config, srp, units, begin)?
+        }
         None => (
             solve_arc(&system, 0.0, tf_can, y0, &config).map_err(PropagationError)?,
             Vec::new(),
@@ -273,7 +278,9 @@ pub fn propagate(
 /// shadow-boundary crossing, record it, restart exactly at the crossing
 /// state, and stitch the arcs - the integrator never steps through the
 /// SRP discontinuity's neighborhood unchecked.
+#[allow(clippy::too_many_arguments)] // the facade's one internal driver
 fn solve_with_shadow_events(
+    data: &AstroData,
     system: &CowellSystem,
     tf_can: f64,
     y0: SVector<f64, 6>,
@@ -286,7 +293,11 @@ fn solve_with_shadow_events(
     // boundary" - the dynamics hit the same failure on the same epoch and
     // surface the real error through the solve itself.
     let boundary = |t: f64, y: &SVector<f64, 6>, pick_inner: bool| {
-        let ctx = EvalContext::new(units, anchor + Duration::from_seconds(units.time_to_s(t)));
+        let ctx = EvalContext::new(
+            data,
+            units,
+            anchor + Duration::from_seconds(units.time_to_s(t)),
+        );
         let (r_can, _) = unpack(y);
         match srp.boundary_functions(&ctx, r_can) {
             Ok((outer, inner)) => {
@@ -389,7 +400,7 @@ fn err<E: std::fmt::Display>(error: E) -> PropagationError {
 mod tests {
     use super::*;
     use crate::Duration;
-    use crate::init;
+    use crate::data::test_data;
 
     /// Terra's GM (m^3/s^2) - only to construct the test state's
     /// circular speed; the propagator brings its own force model.
@@ -412,11 +423,10 @@ mod tests {
     /// two-body construction) while moving well along track.
     #[test]
     fn propagation_holds_circular_leo() {
-        init();
         let (state, t0) = circular_leo();
         let t1 = t0 + Duration::from_seconds(600.0);
 
-        let end = propagate(&state, t0, t1, &Settings::default())
+        let end = propagate(test_data(), &state, t0, t1, &Settings::default())
             .expect("LEO propagation")
             .state_end();
         assert!(
@@ -439,10 +449,10 @@ mod tests {
     /// radius, and the span endpoints match the propagation's own states.
     #[test]
     fn dense_output_interpolates_within_span() {
-        init();
         let (state, t0) = circular_leo();
         let t1 = t0 + Duration::from_seconds(600.0);
-        let result = propagate(&state, t0, t1, &Settings::default()).expect("LEO propagation");
+        let result =
+            propagate(test_data(), &state, t0, t1, &Settings::default()).expect("LEO propagation");
 
         let times: Vec<Epoch> = (0..=10)
             .map(|i| t0 + Duration::from_seconds(60.0 * f64::from(i)))
@@ -463,9 +473,8 @@ mod tests {
     /// A zero-duration propagation returns the initial state unchanged.
     #[test]
     fn zero_duration_returns_initial_state() {
-        init();
         let (state, t0) = circular_leo();
-        let end = propagate(&state, t0, t0, &Settings::default())
+        let end = propagate(test_data(), &state, t0, t0, &Settings::default())
             .expect("zero-duration propagation")
             .state_end();
         assert_eq!(end, state);
@@ -476,10 +485,9 @@ mod tests {
     /// by a physically plausible amount versus the parameter-less run.
     #[test]
     fn srp_displaces_a_day_long_arc() {
-        init();
         let (state, t0) = circular_leo();
         let t1 = t0 + Duration::from_seconds(86_400.0);
-        let without = propagate(&state, t0, t1, &Settings::default())
+        let without = propagate(test_data(), &state, t0, t1, &Settings::default())
             .expect("parameter-less propagation")
             .state_end();
         let with_spacecraft = Settings {
@@ -491,7 +499,7 @@ mod tests {
             }),
             ..Settings::default()
         };
-        let with = propagate(&state, t0, t1, &with_spacecraft)
+        let with = propagate(test_data(), &state, t0, t1, &with_spacecraft)
             .expect("spacecraft propagation")
             .state_end();
         let displacement = (with.pos_gcrf_m - without.pos_gcrf_m).length();
@@ -507,7 +515,6 @@ mod tests {
     /// meters at most; the shrink is drag's signature).
     #[test]
     fn drag_decays_a_low_orbit() {
-        init();
         let radius = 6_378_137.0 + 300e3;
         let speed = (MU_M3_S2 / radius).sqrt();
         let inclination = 51.6_f64.to_radians();
@@ -518,12 +525,12 @@ mod tests {
         let t0 = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
         let t1 = t0 + Duration::from_seconds(6.0 * 3600.0);
         let semi_major = |state: &OrbitState| {
-            crate::kepler::Kepler::from_pv(state.pos_gcrf_m, state.vel_gcrf_m_s)
+            crate::kepler::Kepler::from_pv(test_data(), state.pos_gcrf_m, state.vel_gcrf_m_s)
                 .expect("bound orbit")
                 .semi_major_axis_m
         };
 
-        let without = propagate(&state, t0, t1, &Settings::default())
+        let without = propagate(test_data(), &state, t0, t1, &Settings::default())
             .expect("drag-free propagation")
             .state_end();
         let with_spacecraft = Settings {
@@ -535,7 +542,7 @@ mod tests {
             }),
             ..Settings::default()
         };
-        let with = propagate(&state, t0, t1, &with_spacecraft)
+        let with = propagate(test_data(), &state, t0, t1, &with_spacecraft)
             .expect("dragged propagation")
             .state_end();
         let shrink = semi_major(&without) - semi_major(&with);
@@ -551,9 +558,9 @@ mod tests {
     /// on a root of the shadow-boundary function.
     #[test]
     fn eclipse_boundaries_are_detected_and_exact() {
-        init();
+        let data = test_data();
         let t0 = Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0);
-        let sun_dir = crate::ephemeris::geocentric_pos(Body::Sol, t0)
+        let sun_dir = crate::ephemeris::geocentric_pos(data, Body::Sol, t0)
             .expect("sun position")
             .normalize();
         let radius = 6_778_000.0;
@@ -574,7 +581,7 @@ mod tests {
         };
         let period = std::f64::consts::TAU * (radius.powi(3) / 3.986_004_418e14).sqrt();
         let t1 = t0 + Duration::from_seconds(3.0 * period);
-        let result = propagate(&state, t0, t1, &settings).expect("eclipsing propagation");
+        let result = propagate(data, &state, t0, t1, &settings).expect("eclipsing propagation");
 
         let boundaries = result.shadow_boundaries();
         assert!(
@@ -585,7 +592,7 @@ mod tests {
 
         // Rebuild the facade's shadow configuration and check every
         // recorded epoch sits on a root of the boundary function.
-        let almanac = &context().almanac;
+        let almanac = &data.almanac;
         let earth = almanac.frame_info(EARTH_J2000).unwrap();
         let moon = almanac.frame_info(MOON_J2000).unwrap();
         let units = CanonicalUnits::new(
@@ -605,7 +612,7 @@ mod tests {
         };
         for &epoch in boundaries {
             let sample = result.interp(epoch).expect("state at boundary");
-            let ctx = EvalContext::new(units, epoch);
+            let ctx = EvalContext::new(data, units, epoch);
             let (outer, inner) = srp
                 .boundary_functions(&ctx, units.length_to_can(sample.pos_gcrf_m))
                 .unwrap();
@@ -628,7 +635,6 @@ mod tests {
     /// they accumulate millimeters - the machinery converges).
     #[test]
     fn backward_span_round_trips_with_spacecraft() {
-        init();
         let (state, t0) = circular_leo();
         let settings = Settings {
             abs_error: 1e-11,
@@ -642,10 +648,10 @@ mod tests {
             ..Settings::default()
         };
         let t_back = t0 - Duration::from_seconds(3.0 * 3600.0);
-        let back = propagate(&state, t0, t_back, &settings)
+        let back = propagate(test_data(), &state, t0, t_back, &settings)
             .expect("backward propagation")
             .state_end();
-        let forward = propagate(&back, t_back, t0, &settings)
+        let forward = propagate(test_data(), &back, t_back, t0, &settings)
             .expect("forward propagation")
             .state_end();
         assert!(
@@ -659,13 +665,12 @@ mod tests {
     /// and land on the starting state to sub-meter agreement.
     #[test]
     fn backward_span_round_trips() {
-        init();
         let (state, t0) = circular_leo();
         let t_back = t0 - Duration::from_seconds(1800.0);
-        let back = propagate(&state, t0, t_back, &Settings::default())
+        let back = propagate(test_data(), &state, t0, t_back, &Settings::default())
             .expect("backward propagation")
             .state_end();
-        let forward = propagate(&back, t_back, t0, &Settings::default())
+        let forward = propagate(test_data(), &back, t_back, t0, &Settings::default())
             .expect("forward propagation")
             .state_end();
         assert!(

@@ -154,6 +154,7 @@ mod tests {
         let mu = 3.986_004_418e14;
         let units = CanonicalUnits::new(mu, 6.678e6);
         let model = DynamicsModel {
+            data: crate::data::test_data(),
             units,
             center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
@@ -216,6 +217,7 @@ mod tests {
         let mu = 3.986_004_418e14;
         let units = CanonicalUnits::new(mu, 6.678e6);
         let model = DynamicsModel {
+            data: crate::data::test_data(),
             units,
             center: crate::ephemeris::Body::Terra,
             central: CentralGravity {

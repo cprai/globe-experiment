@@ -6,7 +6,7 @@ use anise::constants::frames::EARTH_J2000;
 use glam::DVec3;
 use hifitime::Epoch;
 
-use crate::data::context;
+use crate::data::AstroData;
 
 /// Osculating elements of an elliptic orbit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,8 +19,8 @@ pub struct Kepler {
 impl Kepler {
     /// Elements from an inertial (GCRF) position (m) + velocity (m/s).
     /// Errs for a non-elliptic (e >= 1, escape) state, which has no period.
-    pub fn from_pv(pos_m: DVec3, vel_m_s: DVec3) -> Result<Self> {
-        let frame = context().almanac.frame_info(EARTH_J2000).map_err(err)?;
+    pub fn from_pv(data: &AstroData, pos_m: DVec3, vel_m_s: DVec3) -> Result<Self> {
+        let frame = data.almanac.frame_info(EARTH_J2000).map_err(err)?;
         // Osculating elements are epoch-free; the placeholder never leaves
         // this function.
         let epoch = Epoch::from_gregorian_utc(2000, 1, 1, 12, 0, 0, 0);
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn circular_orbit_elements() {
         let (pos, vel) = circular_pv();
-        let kepler = Kepler::from_pv(pos, vel).expect("elliptic state");
+        let kepler = Kepler::from_pv(crate::data::test_data(), pos, vel).expect("elliptic state");
         assert!(
             (kepler.semi_major_axis_m - RADIUS_M).abs() < 10_000.0,
             "a = {:.1} km",
@@ -112,6 +112,6 @@ mod tests {
     fn escape_state_errs() {
         let (pos, mut vel) = circular_pv();
         vel *= 2.0; // well past escape velocity
-        assert!(Kepler::from_pv(pos, vel).is_err());
+        assert!(Kepler::from_pv(crate::data::test_data(), pos, vel).is_err());
     }
 }

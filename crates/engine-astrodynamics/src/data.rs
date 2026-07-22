@@ -1,13 +1,15 @@
 //! Embedded astronomical data (DE440 SPKs, the 1962-2125 Earth PCK,
-//! planetary constants, packed EGM2008) and the lazy anise [`Context`]
-//! over it. No process-global state: `Almanac` is a plain struct over the
-//! embedded bytes, built on first query (or eagerly via [`init`]).
-
-use std::sync::LazyLock;
+//! planetary constants, packed EGM2008, space weather) and [`AstroData`],
+//! the eagerly-loaded bundle over it. No process-global state and no lazy
+//! parsing: [`AstroData::load`] parses everything up front, and every
+//! data-dependent API function takes `&AstroData` as its first argument.
 
 use anise::almanac::Almanac;
 use anise::prelude::{BPC, SPK};
 use anise::structure::PlanetaryDataSet;
+
+use crate::propagation::forces::atmosphere::SpaceWeatherTable;
+use crate::propagation::forces::harmonics::EgmTable;
 
 /// Forces 8-byte alignment on an embedded blob: anise's zero-copy DAF
 /// parser casts the base to `[f64]` and errors on a misaligned start,
@@ -17,7 +19,7 @@ struct Align8<T: ?Sized>(T);
 
 /// JPL DE440 excerpt (1849-2150) and full span (1550-2650), anise `.bsp`
 /// format. The two are byte-identical where they overlap;
-/// [`Context::build`] loads full-then-excerpt so the excerpt serves the
+/// [`AstroData::load`] loads full-then-excerpt so the excerpt serves the
 /// overlap and the full file everything outside it.
 static DE440S_ALIGNED: &Align8<[u8]> =
     &Align8(*include_bytes!(concat!(env!("OUT_DIR"), "/de440s.bsp")));
@@ -40,31 +42,34 @@ static PCK11: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pck11.pca"));
 
 /// EGM2008 to degree/order 360, packed by `build.rs` into the crate-owned
 /// little-endian format (40-byte header carrying the model's own GM and
-/// reference radius, then the C-bar/S-bar triangular arrays). Parsed by
-/// the harmonic-gravity loader (`propagation::forces::harmonics`).
+/// reference radius, then the C-bar/S-bar triangular arrays). Parsed into
+/// [`AstroData::egm2008`] by [`AstroData::load`].
 pub(crate) static EGM2008_PACKED: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/egm2008_n360.le64"));
 
 /// CelesTrak `SW-All.csv` space weather (F10.7, Ap, observed/predicted
-/// flags), parsed lazily by the drag model's space-weather table - only
-/// drag touches it.
+/// flags), parsed into [`AstroData::space_weather`] by [`AstroData::load`]
+/// - only drag reads it.
 pub(crate) static SPACE_WEATHER_CSV: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/SW-All.csv"));
 
-/// The crate-internal anise query context.
-pub(crate) struct Context {
+/// The crate's astronomical data, parsed from the embedded kernels and
+/// tables in one eager [`load`](Self::load). Every API function that
+/// touches data takes `&AstroData`; the caller owns exactly one and
+/// decides when the (one-time, ~100 ms) parse cost is paid.
+pub struct AstroData {
     pub(crate) almanac: Almanac,
+    pub(crate) egm2008: EgmTable,
+    pub(crate) space_weather: SpaceWeatherTable,
 }
 
-static CONTEXT: LazyLock<Context> = LazyLock::new(Context::build);
-
-pub(crate) fn context() -> &'static Context {
-    &CONTEXT
-}
-
-impl Context {
-    /// Panics on parse failure (a broken build).
-    fn build() -> Self {
+impl AstroData {
+    /// Parses ALL embedded data up front: the DE440 SPKs, the Earth PCK,
+    /// the planetary-constants kernel, the packed EGM2008 table, and the
+    /// space-weather snapshot. Nothing is deferred - queries over the
+    /// returned value never parse. Panics on parse failure (a broken
+    /// build).
+    pub fn load() -> Self {
         let de440 = SPK::from_static(&DE440).expect("parse embedded de440.bsp");
         let de440s = SPK::from_static(&DE440S).expect("parse embedded de440s.bsp");
         let bpc = BPC::from_static(&EARTH_BPC).expect("parse embedded 1962-2125 Earth BPC");
@@ -87,16 +92,22 @@ impl Context {
             .with_spk(de440s)
             .with_bpc(bpc)
             .with_planetary_data(pca);
-        Self { almanac }
+        Self {
+            almanac,
+            egm2008: EgmTable::parse(EGM2008_PACKED),
+            space_weather: SpaceWeatherTable::parse(SPACE_WEATHER_CSV),
+        }
     }
 }
 
-/// Eagerly parses the embedded kernels (queries otherwise do it lazily on
-/// first touch) - an optional warm-up that keeps the cost out of a first
-/// frame. Idempotent and free on repeat calls. Panics on parse failure
-/// (a broken build).
-pub fn init() {
-    LazyLock::force(&CONTEXT);
+/// Test-only shared instance so the unit-test suite parses the kernels
+/// once per process instead of once per test. Production code paths never
+/// touch this - the public API has no global.
+#[cfg(test)]
+pub(crate) fn test_data() -> &'static AstroData {
+    use std::sync::OnceLock;
+    static DATA: OnceLock<AstroData> = OnceLock::new();
+    DATA.get_or_init(AstroData::load)
 }
 
 #[cfg(test)]
@@ -107,14 +118,13 @@ mod tests {
 
     use super::*;
 
-    /// Luna's geocentric distance through the context lands in the true
+    /// Luna's geocentric distance through the loaded data lands in the true
     /// perigee..apogee envelope - the kernels resolve and the frames are
     /// sane. (The tight cross-implementation comparison lives in the
     /// harness, against reference satkit.)
     #[test]
-    fn context_luna_distance_plausible() {
-        init();
-        let state = context()
+    fn loaded_luna_distance_plausible() {
+        let state = test_data()
             .almanac
             .translate(
                 MOON_J2000,
@@ -163,8 +173,8 @@ mod tests {
     /// surface relies on: rotations resolve across 1962-2125 and error
     /// outside (anise never extrapolates a binary PCK).
     #[test]
-    fn context_bpc_covers_1962_2125_only() {
-        let rotate = |epoch: Epoch| context().almanac.rotate(EARTH_J2000, EARTH_ITRF93, epoch);
+    fn loaded_bpc_covers_1962_2125_only() {
+        let rotate = |epoch: Epoch| test_data().almanac.rotate(EARTH_J2000, EARTH_ITRF93, epoch);
         assert!(rotate(Epoch::from_gregorian_utc(1962, 6, 1, 0, 0, 0, 0)).is_ok());
         assert!(rotate(Epoch::from_gregorian_utc(2100, 1, 1, 0, 0, 0, 0)).is_ok());
         assert!(rotate(Epoch::from_gregorian_utc(1950, 1, 1, 0, 0, 0, 0)).is_err());

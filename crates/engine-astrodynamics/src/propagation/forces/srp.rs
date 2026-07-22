@@ -132,9 +132,9 @@ mod tests {
     use crate::propagation::units::CanonicalUnits;
     use hifitime::Epoch;
 
-    fn context() -> EvalContext {
-        crate::init();
+    fn context() -> EvalContext<'static> {
         EvalContext::new(
+            crate::data::test_data(),
             CanonicalUnits::new(3.986_004_418e14, 6_378_137.0),
             Epoch::from_gregorian_utc(2024, 1, 15, 12, 0, 0, 0),
         )

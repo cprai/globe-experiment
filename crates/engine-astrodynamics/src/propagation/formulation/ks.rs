@@ -85,7 +85,7 @@ pub(crate) fn bilinear_constraint(y: &SVector<f64, 10>) -> f64 {
 
 /// The KS equations of motion over the shared force model.
 pub(crate) struct KsSystem<'a> {
-    pub model: &'a DynamicsModel,
+    pub model: &'a DynamicsModel<'a>,
     pub anchor: Epoch,
 }
 
@@ -192,9 +192,10 @@ mod tests {
 
     const TAU: f64 = std::f64::consts::TAU;
 
-    fn two_body() -> DynamicsModel {
+    fn two_body() -> DynamicsModel<'static> {
         let mu = 3.986_004_418e14;
         DynamicsModel {
+            data: crate::data::test_data(),
             units: CanonicalUnits::new(mu, 7.0e6),
             center: crate::ephemeris::Body::Terra,
             central: CentralGravity {
