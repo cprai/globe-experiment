@@ -1,7 +1,7 @@
 //! Frame-rotation timing, crate vs reference satkit: the GCRF->ITRF and
 //! TEME->GCRF quaternions at one modern epoch. Timing only — the
-//! `cargo test` comparisons in `lib.rs` prove the pairings; inputs are
-//! prepared outside the timed closures and both data stacks are loaded
+//! `cargo test` comparisons in `src/tests/frames.rs` prove the pairings; inputs
+//! are prepared outside the timed closures and both data stacks are loaded
 //! before measurement (satkit seeding + the crate's eager `data::astro`).
 
 use std::hint::black_box;

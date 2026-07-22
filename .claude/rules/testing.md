@@ -18,8 +18,10 @@
 - **`engine-astrodynamics-tests`** (`crates/engine-astrodynamics/tests/`, a
   nested workspace-member test-only lib crate) compares
   `engine-astrodynamics` against two reference implementations — raw
-  satkit and the astrodyn family (pure-Rust NASA JEOD port, `*_astrodyn`
-  modules). Reference deps go ONLY there
+  satkit and the astrodyn family (pure-Rust NASA JEOD port) — one test
+  module file per domain (`src/tests/<domain>.rs`, same split as the
+  benches), one nested module per reference (`satkit`, `astrodyn`; future
+  comparison crates land as siblings). Reference deps go ONLY there
   (leaf crate, never reaches shipped builds). Covered by `cargo test
   --workspace`, or alone via `cargo test -p engine-astrodynamics-tests`.
   Seed reference satkit only through the harness's own `Once`-guarded

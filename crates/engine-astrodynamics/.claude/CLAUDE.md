@@ -472,7 +472,8 @@ roundoff), which stays valid pre-1972 where UTC labels diverge between
 the libraries.
 
 Second reference (added 2026-07-22): the **astrodyn 0.2 family** (pure-
-Rust NASA JEOD port), `*_astrodyn` harness modules + bench rows. It
+Rust NASA JEOD port), `astrodyn` harness modules (one per domain test
+file, sibling to each `satkit` module) + bench rows. It
 shares anise with the crate, so its ephemeris comparison (same de440s
 bytes via the harness's own `.bsp` embed) checks WIRING at near-machine
 tightness (1e-13 bound, measured 2.2e-16); the genuinely independent

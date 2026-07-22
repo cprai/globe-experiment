@@ -1,6 +1,6 @@
 //! Geodetic-conversion timing, crate (Vermeille closed form) vs reference
 //! satkit, ITRF vector -> latitude/longitude/altitude. Timing only — the
-//! `cargo test` grid comparison in `lib.rs` proves the pairing.
+//! `cargo test` grid comparison in `src/tests/geodetic.rs` proves the pairing.
 
 use std::hint::black_box;
 

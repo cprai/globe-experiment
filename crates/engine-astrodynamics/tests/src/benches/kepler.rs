@@ -1,6 +1,6 @@
 //! Osculating-elements timing, crate vs reference satkit: Keplerian
 //! elements from a position/velocity state. Timing only — the `cargo test`
-//! comparison in `lib.rs` proves the pairing (and documents the mu
+//! comparison in `src/tests/kepler.rs` proves the pairing (and documents the mu
 //! provenance gap between the two).
 
 use std::hint::black_box;

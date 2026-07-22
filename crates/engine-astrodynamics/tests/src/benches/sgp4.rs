@@ -1,8 +1,8 @@
 //! SGP4 timing, crate vs reference satkit: the ISS TLE over the comparison
 //! test's +-1 week window (113 samples). Timing only — the `cargo test`
-//! comparison in `lib.rs` proves the pairing. satkit builds and caches its
-//! SGP4 constants inside the TLE on first use (hence `&mut`), so one warm
-//! call precedes the loop to match the crate side, which builds constants
+//! comparison in `src/tests/sgp4.rs` proves the pairing. satkit builds and
+//! caches its SGP4 constants inside the TLE on first use (hence `&mut`), so one
+//! warm call precedes the loop to match the crate side, which builds constants
 //! at parse.
 
 use std::hint::black_box;

@@ -1,8 +1,8 @@
 //! Ephemeris query timing, crate vs reference satkit vs reference
 //! astrodyn. Luna geocentric state: the fastest-moving standard query
 //! (the celestial sphere's per-frame kind of lookup). Timing only — the
-//! `cargo test` comparisons in `lib.rs` prove the sides solve the same
-//! problem. Inputs are prepared outside the timed closures; the satkit
+//! `cargo test` comparisons in `src/tests/ephemeris.rs` prove the sides solve
+//! the same problem. Inputs are prepared outside the timed closures; the satkit
 //! side is seeded once (`data::seed_satkit`) and the crate/astrodyn data
 //! is loaded eagerly before the timed loops (`data::astro` /
 //! `data::astrodyn_eph` — astrodyn runs anise's generic almanac over the

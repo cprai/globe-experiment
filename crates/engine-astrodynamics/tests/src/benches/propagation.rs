@@ -6,10 +6,10 @@
 //! an already-computed propagation), plus a mu-matched two-body day
 //! against reference astrodyn's JEOD pipeline (its comparable surface —
 //! its Earth field is GGM05C, so the full-model groups stay satkit-only).
-//! Timing only — the `cargo test` comparisons in `lib.rs` prove the
-//! pairings. This is the slowest bench target (~1.5 min): the propagate
-//! iterations run milliseconds, so those groups get a longer measurement
-//! window than criterion's 5 s default.
+//! Timing only — the `cargo test` comparisons in `src/tests/propagation.rs`
+//! prove the pairings. This is the slowest bench target (~1.5 min): the
+//! propagate iterations run milliseconds, so those groups get a longer
+//! measurement window than criterion's 5 s default.
 
 use std::hint::black_box;
 use std::time::Duration as StdDuration;
